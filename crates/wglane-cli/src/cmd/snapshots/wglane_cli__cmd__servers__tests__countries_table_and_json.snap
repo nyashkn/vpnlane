@@ -1,0 +1,6 @@
+---
+source: crates/wglane-cli/src/cmd/servers.rs
+expression: "render(&fake(), &args(None, 5), false).unwrap()"
+---
+DE  Germany
+ZA  South Africa
