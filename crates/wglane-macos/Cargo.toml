@@ -19,8 +19,10 @@ path = "src/bin/wglane-helper.rs"
 
 [dependencies]
 ipnet.workspace = true
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
 serde_json.workspace = true
 wglane-core.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

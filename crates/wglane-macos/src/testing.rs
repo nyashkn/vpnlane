@@ -15,6 +15,7 @@ use crate::{CommandOutput, CommandRunner};
 pub struct FakeRunner {
     replies: RefCell<VecDeque<CommandOutput>>,
     calls: RefCell<Vec<Vec<String>>>,
+    stdins: RefCell<Vec<Vec<u8>>>,
 }
 
 impl FakeRunner {
@@ -42,6 +43,11 @@ impl FakeRunner {
     pub fn calls(&self) -> Vec<Vec<String>> {
         self.calls.borrow().clone()
     }
+
+    /// Every stdin payload passed to `run_with_stdin`, in order.
+    pub fn stdins(&self) -> Vec<Vec<u8>> {
+        self.stdins.borrow().clone()
+    }
 }
 
 impl CommandRunner for FakeRunner {
@@ -57,6 +63,11 @@ impl CommandRunner for FakeRunner {
                 code: Some(0),
                 ..CommandOutput::default()
             }))
+    }
+
+    fn run_with_stdin(&self, program: &str, args: &[&str], stdin: &[u8]) -> Result<CommandOutput> {
+        self.stdins.borrow_mut().push(stdin.to_vec());
+        self.run(program, args)
     }
 }
 

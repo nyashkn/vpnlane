@@ -2635,9 +2635,11 @@ name = "wglane-macos"
 version = "0.0.1"
 dependencies = [
  "ipnet",
+ "rustix",
  "serde_json",
  "tempfile",
  "wglane-core",
+ "zeroize",
 ]
 
 [[package]]
