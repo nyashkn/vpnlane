@@ -19,10 +19,12 @@ path = "src/bin/wglane-helper.rs"
 
 [dependencies]
 ipnet.workspace = true
+rustix.workspace = true
 serde_json.workspace = true
 wglane-core.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 tempfile.workspace = true
 wglane-core = { workspace = true, features = ["testing"] }
 

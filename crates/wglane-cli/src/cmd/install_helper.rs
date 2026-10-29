@@ -1,6 +1,9 @@
 //! `wglane install-helper`: one-time setup for passwordless up/down.
 
+use std::path::{Path, PathBuf};
+
 use color_eyre::Result;
+use color_eyre::eyre::eyre;
 
 use crate::context::Context;
 
@@ -23,10 +26,55 @@ pub(crate) struct Args {
     pub(crate) uninstall: bool,
 }
 
-pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
-    // TODO(bead): cli-install-helper: locate wglane-helper next to current_exe();
-    // wglane_macos::install_helper; render_sudoers_rule for $SUDO_USER; --uninstall
-    // removes both. Refuse without root with "run: sudo wglane install-helper".
-    let _ = (ctx, args);
-    Err(wglane_core::Error::NotImplemented("wglane install-helper").into())
+pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
+    if args.uninstall {
+        wglane_macos::uninstall_helper()?;
+        println!(
+            "removed {} and {}",
+            wglane_macos::HELPER_PATH,
+            wglane_macos::SUDOERS_PATH
+        );
+        return Ok(());
+    }
+    let user = std::env::var("SUDO_USER").map_err(|_| {
+        eyre!("SUDO_USER is not set: run `sudo wglane install-helper` from your own account")
+    })?;
+    let source = helper_next_to(&std::env::current_exe()?)?;
+    wglane_macos::install_helper(&wglane_macos::SystemRunner, &user, &source)?;
+    println!("installed {} for user {user}", wglane_macos::HELPER_PATH);
+    Ok(())
+}
+
+/// `wglane-helper` in the same directory as the running `wglane` binary.
+fn helper_next_to(exe: &Path) -> Result<PathBuf> {
+    let helper = exe.with_file_name("wglane-helper");
+    if helper.is_file() {
+        Ok(helper)
+    } else {
+        Err(eyre!(
+            "{} not found: reinstall wglane so both binaries are together",
+            helper.display()
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_sibling_helper_or_explains() {
+        let d = std::env::temp_dir().join(format!("wglane-ih-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let exe = d.join("wglane");
+        assert!(
+            helper_next_to(&exe)
+                .unwrap_err()
+                .to_string()
+                .contains("reinstall")
+        );
+        std::fs::write(d.join("wglane-helper"), b"x").unwrap();
+        assert_eq!(helper_next_to(&exe).unwrap(), d.join("wglane-helper"));
+        std::fs::remove_dir_all(&d).unwrap();
+    }
 }

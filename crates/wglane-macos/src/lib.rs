@@ -23,7 +23,7 @@ pub use bypass::{StaticBypass, TailscaleBypass};
 pub use command::{CommandOutput, CommandRunner, SystemRunner};
 pub use conf_store::ConfStore;
 pub use helper::{HELPER_PATH, HelperClient, HelperVerb};
-pub use privilege::{SUDOERS_PATH, install_helper, render_sudoers_rule};
+pub use privilege::{SUDOERS_PATH, install_helper, render_sudoers_rule, uninstall_helper};
 pub use probe::TailscalePing;
 pub use routes::RouteTable;
 pub use tunnel::WgQuick;

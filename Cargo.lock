@@ -2634,7 +2634,9 @@ dependencies = [
 name = "wglane-macos"
 version = "0.0.1"
 dependencies = [
+ "insta",
  "ipnet",
+ "rustix",
  "serde_json",
  "tempfile",
  "wglane-core",
