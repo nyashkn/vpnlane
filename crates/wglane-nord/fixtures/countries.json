@@ -1,0 +1,35 @@
+[
+  {
+    "id": 1,
+    "name": "Germany",
+    "code": "DE",
+    "cities": [
+      {
+        "id": 10,
+        "name": "Frankfurt"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "South Africa",
+    "code": "ZA",
+    "cities": [
+      {
+        "id": 20,
+        "name": "Johannesburg"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "name": "United States",
+    "code": "US",
+    "cities": [
+      {
+        "id": 30,
+        "name": "New York"
+      }
+    ]
+  }
+]

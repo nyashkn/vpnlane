@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wglane: plan (working name)</title>
+<style>
+:root{--bg:#faf9f5;--fg:#1f1e1b;--mut:#6b675e;--line:#e3dfd3;--card:#fff;--acc:#c15f3c;--ok:#3f7d58;--warn:#a9741a;--bad:#b3402f;--code:#f1eee4}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1a17;--fg:#ece9df;--mut:#9a958a;--line:#38352e;--card:#24221e;--acc:#e08a63;--ok:#7fc29a;--warn:#e2b25a;--bad:#e27c6b;--code:#2c2a25}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,system-ui,"Segoe UI",sans-serif}
+.wrap{max-width:60rem;margin:0 auto;padding:2rem 1.25rem 5rem}
+header{border-bottom:1px solid var(--line);padding-bottom:1.25rem;margin-bottom:1.5rem}
+h1{font-size:1.9rem;margin:.2rem 0 .4rem;letter-spacing:-.01em}
+h2{font-size:1.3rem;margin:2.6rem 0 .6rem;padding-top:.4rem;border-top:1px solid var(--line)}
+h3{font-size:1.02rem;margin:1.4rem 0 .3rem}
+p,li{max-width:70ch}
+.lede{color:var(--mut);font-size:1.05rem}
+.tag{display:inline-block;font:600 .72rem/1 ui-monospace,Menlo,monospace;padding:.28rem .5rem;border-radius:.4rem;border:1px solid var(--line);color:var(--mut);vertical-align:middle}
+.tag.ok{color:var(--ok);border-color:var(--ok)}.tag.warn{color:var(--warn);border-color:var(--warn)}.tag.q{color:var(--acc);border-color:var(--acc)}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);padding:.55rem 0;margin:0 0 1rem;z-index:2;display:flex;gap:.9rem;flex-wrap:wrap;font-size:.88rem}
+nav a{color:var(--mut);text-decoration:none}nav a:hover,nav a:focus-visible{color:var(--acc);text-decoration:underline}
+code{font:.88em ui-monospace,Menlo,monospace;background:var(--code);padding:.08rem .3rem;border-radius:.25rem;overflow-wrap:anywhere}
+.grid>*,.row>*{min-width:0}
+pre{background:var(--code);padding:.8rem 1rem;border-radius:.5rem;overflow-x:auto;font:.84rem/1.5 ui-monospace,Menlo,monospace}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:.5rem;background:var(--card)}
+table{border-collapse:collapse;width:100%;font-size:.9rem;min-width:36rem}
+th,td{text-align:left;padding:.55rem .75rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.76rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);background:var(--code)}
+tr:last-child td{border-bottom:0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:.8rem;margin:.8rem 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:.6rem;padding:.8rem 1rem}
+.card h3{margin:.1rem 0 .3rem}.card p{margin:.3rem 0;font-size:.92rem}
+.arch{display:grid;gap:.5rem;margin:.8rem 0}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:.5rem}
+.box{border:1px solid var(--line);background:var(--card);border-radius:.5rem;padding:.55rem .75rem;font-size:.88rem}
+.box b{display:block;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}
+.box.core{border-color:var(--acc)}
+.arrow{text-align:center;color:var(--mut);font-size:.8rem}
+ol.phases{list-style:none;padding:0;counter-reset:p}
+ol.phases>li{counter-increment:p;border-left:3px solid var(--line);padding:.2rem 0 .9rem 1rem;margin-left:.4rem;position:relative}
+ol.phases>li::before{content:"v0." counter(p);position:absolute;left:-.45rem;top:-.1rem;font:700 .75rem ui-monospace,monospace;background:var(--bg);color:var(--acc);padding:.1rem .3rem}
+ol.phases h3{margin:.1rem 0 .2rem}
+.callout{border-left:3px solid var(--warn);background:var(--card);padding:.6rem .9rem;border-radius:.3rem;margin:1rem 0;font-size:.93rem}
+@media(max-width:560px){h1{font-size:1.5rem}.wrap{padding:1.2rem .9rem 4rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <span class="tag q">DRAFT</span> <span class="tag">2026-10-30</span>
+  <h1>wglane</h1>
+  <p class="lede">An open-source Rust CLI (then TUI and menu bar) that manages NordLynx WireGuard tunnels on macOS <em>without breaking Tailscale or Headscale</em>. Grown from the working <code>nord-wg</code> script, diagnosed and proven on 2026-10-30.</p>
+</header>
+<nav aria-label="Sections">
+  <a href="#problem">Problem</a><a href="#landscape">Landscape</a><a href="#scope">Scope</a><a href="#arch">Architecture</a><a href="#privilege">Privilege</a><a href="#surfaces">Surfaces</a><a href="#cli">CLI &amp; DX</a><a href="#phases">Phases</a><a href="#risks">Risks</a><a href="#names">Names</a><a href="#questions">Open questions</a>
+</nav>
+
+<main>
+<h2 id="problem">1. Problem and proven fix</h2>
+<p>A full WireGuard tunnel on a Mac moves Tailscale's own underlay traffic (control server, DERP relays, direct-peer UDP) into the VPN. Tailscale's <code>netcheck</code> then reports UDP false and the tailnet dies, even though the <code>100.64.0.0/10</code> route is correct and Nord passes UDP, TCP and MTU normally.</p>
+<p><strong>Proven fix (tested with Kenya and US servers):</strong> host routes via the physical gateway for the control server IP and all DERP IPs. Tailnet recovers, exit IP stays the VPN's. The root cause (why Nord drops Tailscale's packets) is still unexplained and is listed as a risk.</p>
+<p>Also learned: the Nord Mac app and <code>wg-quick</code> with <code>DNS=</code> both clobber MagicDNS; the official <code>nordvpn</code> CLI is Linux only; South Africa is <code>ZA</code>.</p>
+
+<h2 id="landscape">2. Landscape</h2>
+<p><strong>NordGen</strong> (<code>mustafachyi/NordVPN-WireGuard-Config-Generator</code>, GPL-3.0, 459★, pushed 2026-10-23) is a Python CLI plus a Go port and a Cloudflare Worker web UI. It takes a 64-hex access token, calls the credentials endpoint with <code>Bearer token:&lt;token&gt;</code> to get <code>nordlynx_private_key</code>, filters <code>wireguard_udp</code> servers, sorts by load then distance, and writes <code>.conf</code> files per country and city. It is a config <em>generator</em>: no connect/disconnect, no macOS or Tailscale handling, and <code>--token</code> leaks via argv.</p>
+<div class="scroll"><table>
+<thead><tr><th>Repo</th><th>Lang</th><th>★ · license</th><th>What it does</th><th>Gap for us</th></tr></thead>
+<tbody>
+<tr><td>n-thumann/wg-nord</td><td>Rust</td><td>70 · MIT</td><td>CLI: token to NordLynx conf</td><td>Closest. Thin, no ranking or filters, ~11 months stale</td></tr>
+<tr><td>mustafachyi NordGen</td><td>Py / Go / Worker</td><td>459 · GPL-3.0</td><td>Bulk config generator with ranking</td><td>Generator only. GPL: reimplement, never copy</td></tr>
+<tr><td>qdm12/gluetun</td><td>Go</td><td>15.9k · MIT</td><td>VPN container with NordLynx</td><td>Container runtime, not a Mac tool</td></tr>
+<tr><td>phirecc/wgnord</td><td>POSIX sh</td><td>41 · MIT</td><td>NordLynx client via wg-quick</td><td>Linux centric</td></tr>
+<tr><td>ebowman/vpn-switch</td><td>Swift</td><td>0 · MIT</td><td>Mac menu bar, Tailscale DNS fix</td><td>Only Tailscale-aware one, but IKEv2, not WireGuard</td></tr>
+<tr><td>BirdRa1n/nordpilot</td><td>Swift</td><td>1 · MIT</td><td>Mac WireGuard with PF split tunnel</td><td>Swift, not Rust, tiny</td></tr>
+</tbody></table></div>
+<div class="callout"><strong>The gap:</strong> no Rust tool combines ranked server choice, token-to-config, <em>connect/disconnect</em> on macOS, and Tailscale-safe routing. Surveyed repos are from one search pass, so more may exist.</div>
+<p>API endpoints used by these tools: <code>GET /v1/users/services/credentials</code> (auth), <code>GET /v1/servers/recommendations</code> and <code>/v1/servers?filters[...]</code> (no auth), <code>GET /v1/helpers/ips/insights</code> (caller geo). They are undocumented by Nord and can change.</p>
+
+<h2 id="scope">3. Scope</h2>
+<div class="grid">
+<div class="card"><h3><span class="tag ok">AGREED</span> Token from <code>~/.config</code></h3><p>Read from the env or <code>~/.config/wglane/token</code> (mode 600). Never argv. Infisical dropped from scope.</p></div>
+<div class="card"><h3><span class="tag ok">AGREED</span> <code>status</code></h3><p>Active country, exit IP, tailnet ping, bypass-route count. <code>--json</code> for other surfaces.</p></div>
+<div class="card"><h3><span class="tag ok">AGREED</span> Passwordless privilege</h3><p>No sudo prompt per switch. Design in section 5.</p></div>
+<div class="card"><h3><span class="tag ok">AGREED</span> Completions and aliases</h3><p>clap-generated completions and man page; short aliases.</p></div>
+<div class="card"><h3><span class="tag ok">AGREED</span> Network-change watcher</h3><p>Re-apply bypass routes when the gateway changes. Push events from the system, not polling.</p></div>
+<div class="card"><h3><span class="tag ok">AGREED</span> Auto-gen on <code>up</code></h3><p>A missing or week-old config is rebuilt by <code>up</code> itself. No separate <code>gen</code> step needed.</p></div>
+<div class="card"><h3><span class="tag warn">NOT TAKEN</span> no-arg <code>up</code></h3><p>Proposed earlier (pick last-used or fastest country); not agreed. Left out unless you say otherwise.</p></div>
+</div>
+
+<h2 id="arch">4. Architecture</h2>
+<p>From your template note: a Cargo workspace of <strong>3 to 6 crates</strong>, hexagonal-lite (ports as traits in the core, adapters outside), <code>thiserror</code> in libraries and <code>anyhow</code> only in the binary, generics over <code>dyn</code>, no DDD ceremony. Crate boundaries are compiler-enforced; the platform adapter is the one boundary that is a real contract (a Linux adapter could follow).</p>
+<div class="arch" role="img" aria-label="Crate dependency diagram: cli depends on core, nord and macos; nord and macos depend on core">
+  <div class="row"><div class="box"><b>wglane-cli</b>clap commands, ratatui TUI (feature), output formatting. Binary. Wires adapters.</div><div class="box"><b>xtask</b>completions, man pages, release, fixtures.</div></div>
+  <div class="arrow">depends on ↓</div>
+  <div class="row"><div class="box"><b>wglane-nord</b>API client, server ranking, token sources (env, config-dir file).</div><div class="box"><b>wglane-macos</b>tunnel runner, route manager, bypass providers, network watcher, privilege client.</div></div>
+  <div class="arrow">implement ports from ↓</div>
+  <div class="row"><div class="box core"><b>wglane-core</b>domain types (Country, Server, TunnelConfig), ports (<code>ServerCatalog</code>, <code>TokenSource</code>, <code>Tunnel</code>, <code>RouteBypass</code>), pure logic, no I/O.</div></div>
+</div>
+<ul>
+<li><strong>Bypass providers</strong> are a trait: Tailscale/Headscale first (control host plus DERP map), plus user-listed hosts and CIDRs in config, so the tool is not Tailscale-only.</li>
+<li><strong>Tunnel engine:</strong> v0.1 shells out to <code>wg-quick</code> (brew dependency), as the proven script does. Later option: drive <code>wireguard-go</code> or <code>boringtun</code> directly.</li>
+<li><strong>Testing:</strong> hand-written fakes for the ports; <code>insta</code> snapshots for rendered configs and help text; recorded API fixtures.</li>
+<li><strong>Config</strong> files are written 0600; key material is zeroized in memory.</li>
+</ul>
+
+<h2 id="privilege">5. Passwordless privilege</h2>
+<p>Bringing up a <code>utun</code> interface and editing routes needs root. You asked not to sign with sudo each time.</p>
+<div class="scroll"><table>
+<thead><tr><th>Option</th><th>How</th><th>Security</th><th>Ease for open source</th></tr></thead>
+<tbody>
+<tr><td><strong>A. Root-owned helper + sudoers</strong></td><td>One-time <code>sudo wglane install-helper</code> copies a helper binary to a root-owned path and adds a <code>sudoers.d</code> rule for that binary only. Helper accepts fixed verbs (<code>up</code>, <code>down</code>, <code>bypass</code>) and reads configs only from a root-owned directory.</td><td>Sound if the helper is root-owned (not the user-writable Homebrew copy), no wildcards, strict argument validation.</td><td>Good. One command, no Apple signing.</td></tr>
+<tr><td>B. Launchd root daemon</td><td>Daemon plus a unix-socket protocol; CLI becomes a client. The proper long-term route (as Tailscale's tailscaled).</td><td>Strongest, and the right base for a menu bar app.</td><td>Heavier. Signed daemon and Login Items approval need a $99 Apple Developer ID.</td></tr>
+<tr><td>C. Plain sudo, cached</td><td>Keep prompting; rely on sudo's timeout.</td><td>No new attack surface.</td><td>What you want to leave.</td></tr>
+</tbody></table></div>
+<div class="callout"><strong>Decided: option A now, daemon (B) later.</strong> B is not needed now because its main reason was a menu bar, which is out of scope. Ship A in v0.1, designed so the helper's verb set becomes B's socket protocol later. A sudoers rule on a user-writable binary is a local privilege escalation, so the helper must be copied to a root-owned location at install time. This needs a security review before release.</div>
+
+<h2 id="surfaces">6. Surfaces: CLI, TUI, menu bar, Control Center</h2>
+<div class="scroll"><table>
+<thead><tr><th>Surface</th><th>Tech</th><th>Feasibility</th><th>Cost</th></tr></thead>
+<tbody>
+<tr><td>CLI</td><td>clap (derive)</td><td>Certain</td><td>Core of v0.1</td></tr>
+<tr><td>TUI with stats card</td><td>ratatui + crossterm; <code>Sparkline</code> and <code>Gauge</code> for latency and throughput</td><td>Certain. Ship as <code>wglane tui</code>, same binary behind a cargo feature</td><td>Moderate</td></tr>
+<tr><td>Menu bar item <span class="tag">LATER</span></td><td><code>tray-icon</code> + <code>muda</code> in pure Rust, or SwiftBar plugin fed by <code>status --json</code> as a zero-build start</td><td>Feasible. Needs the root daemon (option B) to be pleasant</td><td>Moderate; cask distribution wants signing</td></tr>
+<tr><td>Control Center tile <span class="tag warn">DROPPED FOR NOW</span></td><td>WidgetKit <code>ControlWidget</code> + App Intents, which Rust cannot write: a small Swift extension that calls the Rust core</td><td>Feasible on macOS 26 but not pure Rust</td><td>Highest: Xcode, Developer ID, notarization ($99/yr)</td></tr>
+</tbody></table></div>
+<p><strong>Decided: CLI and TUI only for now.</strong> No control panel or menu bar; revisit only if that changes. The Control Center tile is a late, optional extra, because it adds a second language and a paid signing requirement that cuts against ease of install.</p>
+
+<h2 id="cli">7. CLI design and DX</h2>
+<p>A new user should learn the tool from the tool. Rich help, not a bare usage line.</p>
+<pre>wglane up US            connect (switches if already connected)
+wglane down             disconnect and remove bypass routes
+wglane status [--json]  country, exit IP, tailnet check, routes
+wglane servers [CC]     ranked servers, by load and distance
+wglane gen CC...        write configs without connecting
+wglane doctor           check wireguard-tools, tailscale, helper, token
+wglane watch            re-apply bypass routes on network change
+wglane tui              full-screen dashboard
+wglane completions SH   shell completions (zsh, bash, fish)</pre>
+<ul>
+<li><code>after_help</code> examples on every subcommand; a short "why Tailscale breaks and what we do" in <code>--help</code> of <code>up</code>.</li>
+<li><code>doctor</code> prints exactly what to run to fix each failed check.</li>
+<li>Errors say what to do next. Color via <code>anstyle</code>; <code>color-eyre</code> in the binary; <code>tracing</code> with <code>-v</code>.</li>
+<li><code>xtask</code> generates man pages and completions; <code>cargo-dist</code> publishes a Homebrew tap formula.</li>
+</ul>
+
+<h2 id="phases">8. Phases</h2>
+<ol class="phases">
+<li><h3>Parity and safety</h3><p>Workspace, core ports, Nord client, auto-gen on <code>up</code>, token sources (env, config-dir file), <code>up</code>/<code>down</code>/<code>status</code>/<code>gen</code>, Tailscale bypass, helper install (option A), <code>doctor</code>. <strong>Done when:</strong> it reproduces today's script on a clean Mac and <code>status</code> reports a passing tailnet check.</p></li>
+<li><h3>Hands-off</h3><p>Network-change watcher, completions, aliases, man page, Homebrew tap via <code>cargo-dist</code>, README with the Tailscale explanation. <strong>Done when:</strong> switching Wi-Fi keeps the tailnet alive with the VPN on.</p></li>
+<li><h3>TUI</h3><p><code>wglane tui</code>: server list, connect, stats card with latency sparkline. <strong>Done when:</strong> every CLI action is reachable from it.</p></li>
+<li><h3>Later: menu bar and daemon</h3><p>Not planned now. If wanted, revisit the root daemon (option B) first.</p></li>
+</ol>
+
+<h2 id="risks">9. Risks</h2>
+<div class="scroll"><table>
+<thead><tr><th>Risk</th><th>Mitigation</th></tr></thead>
+<tbody>
+<tr><td>Trademark: "Nord" in the name or logo</td><td>Use a neutral name (see questions). Describe compatibility in the README only.</td></tr>
+<tr><td>Undocumented Nord API changes</td><td>Fixture-based tests, a version check in <code>doctor</code>, clear error on schema drift.</td></tr>
+<tr><td>Privileged helper is a local privilege escalation if built carelessly</td><td>Root-owned copy, fixed verbs, validated args, no wildcards; independent review before v0.1 release.</td></tr>
+<tr><td>Root cause of the Tailscale drop is unexplained</td><td>Keep the bypass as a provider, add a <code>doctor --trace</code> capture mode, and document the open question upstream.</td></tr>
+<tr><td>License contamination from NordGen (GPL-3.0)</td><td>Reimplement from the public API behaviour; do not copy code.</td></tr>
+<tr><td>Not verified: Control Center sandbox and entitlements on macOS 26; cargo-dist Homebrew details</td><td>Spike before committing to phase 5 and the tap.</td></tr>
+</tbody></table></div>
+
+<h2 id="names">10. Name candidates <span class="tag ok">DECIDED: wglane</span></h2>
+<p>None contain "Nord" (trademark). Checked against crates.io and Homebrew formula names only: all six are free on both. GitHub, domain and trademark searches are not done. Taken on crates.io, so ruled out: <code>detour</code>, <code>sluice</code>, <code>slipway</code>.</p>
+<div class="scroll"><table>
+<thead><tr><th>Name</th><th>Why it fits</th><th>Catch</th></tr></thead>
+<tbody>
+<tr><td><code>sidestep</code> <span class="tag ok">TOP PICK</span></td><td>Names the trick: traffic steps around the tunnel. Reads well as a command (<code>sidestep up US</code>).</td><td>Generic word; may be harder to search for.</td></tr>
+<tr><td><code>wglane</code></td><td>Short, says WireGuard, hints at keeping separate lanes for the VPN and tailnet.</td><td>Says less about the Tailscale value.</td></tr>
+<tr><td><code>twintun</code></td><td>Two tunnels (VPN and tailnet) living together.</td><td>Awkward to say aloud.</td></tr>
+<tr><td><code>wgbridge</code></td><td>Plain description: WireGuard bridging the VPN and the tailnet.</td><td>"Bridge" suggests bridged networking, which it isn't.</td></tr>
+<tr><td><code>wgferry</code></td><td>Carries traffic across; friendly and memorable.</td><td>Not clearly about Tailscale.</td></tr>
+<tr><td><code>lanewarden</code></td><td>Guards the lanes so the tunnels stay out of each other's way.</td><td>Long to type; alias needed.</td></tr>
+</tbody></table></div>
+
+<h2 id="questions">11. Open questions and decisions</h2>
+<h3>Decided (2026-10-30)</h3>
+<ul>
+<li><strong>Name:</strong> wglane.</li>
+<li><strong>Token:</strong> env or <code>~/.config/wglane/token</code>; Infisical dropped.</li>
+<li><strong>Privilege:</strong> option A, root-owned helper plus sudoers. Daemon is a later option, not needed now.</li>
+<li><strong>Surfaces:</strong> CLI and TUI only for now; no control panel or menu bar.</li>
+<li><strong>Auto-gen on <code>up</code>:</strong> in v0.1.</li>
+<li><strong>Defaults assumed unless you object:</strong> new repo under MIT, macOS first with a clean boundary for a Linux crate.</li>
+</ul>
+<h3>Still open</h3>
+<p>Nothing blocking.</p>
+</main>
+</div>
+</body>
+</html>

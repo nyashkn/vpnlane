@@ -1,0 +1,5 @@
+# Tests may unwrap; library code may not (see docs/STYLE.md).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# Product names that are not code identifiers.
+doc-valid-idents = ["WireGuard", "NordLynx", "MagicDNS", "..", "OpenVPN"]

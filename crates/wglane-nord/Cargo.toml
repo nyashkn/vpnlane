@@ -1,0 +1,23 @@
+[package]
+name = "wglane-nord"
+description = "Nord API adapter for wglane: server catalog, credentials, token sources."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ureq.workspace = true
+wglane-core.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wglane-core = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

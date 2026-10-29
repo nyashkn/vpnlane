@@ -1,0 +1,19 @@
+[package]
+name = "xtask"
+description = "Repo automation: completions, man pages, release. Run via `cargo xtask`."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish = false
+
+[dependencies]
+clap.workspace = true
+clap_complete.workspace = true
+clap_mangen.workspace = true
+color-eyre.workspace = true
+wglane-cli.workspace = true
+
+[lints]
+workspace = true

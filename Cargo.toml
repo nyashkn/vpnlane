@@ -1,0 +1,57 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+authors = ["KN"]
+description = "NordLynx/WireGuard tunnels on macOS that leave Tailscale/Headscale working"
+publish = false
+
+[workspace.dependencies]
+wglane-core = { path = "crates/wglane-core" }
+wglane-nord = { path = "crates/wglane-nord" }
+wglane-macos = { path = "crates/wglane-macos" }
+wglane-cli = { path = "crates/wglane-cli" }
+
+clap = { version = "4.6", features = ["derive", "wrap_help", "env"] }
+clap_complete = "4.6"
+clap_mangen = "0.3"
+color-eyre = "0.6"
+crossterm = "0.29"
+insta = "1.49"
+ipnet = { version = "2", features = ["serde"] }
+ratatui = "0.30"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# ureq: blocking, no async runtime; a CLI making ~3 HTTPS calls does not need tokio.
+ureq = { version = "3.5", default-features = false, features = ["json", "native-tls-no-default"] }
+zeroize = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+# Pedantic-lite: pedantic on, minus the lints that fight a stub-heavy codebase.
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+
+[profile.release]
+lto = "thin"
+strip = true

@@ -1,0 +1,51 @@
+---
+source: crates/wglane-cli/src/cli.rs
+expression: help
+---
+wglane 0.0.1
+NordLynx (WireGuard) tunnels on macOS that leave Tailscale/Headscale working.
+
+A full WireGuard tunnel swallows Tailscale's own underlay traffic (control
+server, DERP relays), so the tailnet dies. wglane brings the tunnel up and
+routes that underlay around it via your physical gateway.
+
+Usage: wglane [OPTIONS] <COMMAND>
+
+Commands:
+  up              Connect to a country (switches if already connected)
+  down            Disconnect and remove bypass routes
+  status          Show country, exit IP, tailnet health and bypass routes [alias: st]
+  servers         List countries, or ranked servers in one country [alias: ls]
+  gen             Write tunnel configs without connecting
+  doctor          Check prerequisites and print how to fix each problem
+  watch           Keep bypass routes correct across network changes
+  tui             Full-screen dashboard: servers, connect, live stats
+  completions     Print shell completions (zsh, bash, fish, ...)
+  install-helper  One-time setup: install the root helper for passwordless switching
+  help            Print this message or the help of the given subcommand(s)
+
+Options:
+      --json
+          Machine-readable JSON output (for scripts and status bars)
+
+  -v, --verbose...
+          More log output: -v info, -vv debug, -vvv trace. `RUST_LOG` overrides
+
+      --config-dir <DIR>
+          Config directory [default: ~/.config/wglane]
+          
+          [env: WGLANE_CONFIG_DIR]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Examples:
+  wglane up ZA          connect to South Africa (switches if already up)
+  wglane status         country, exit IP, tailnet check, bypass routes
+  wglane down           disconnect and remove bypass routes
+  wglane doctor         check prerequisites and print fixes
+
+Token: set WGLANE_TOKEN or write it to ~/.config/wglane/token (mode 600).

@@ -1,0 +1,30 @@
+[package]
+name = "wglane-macos"
+description = "macOS adapters for wglane: wg-quick, routes, bypass, watcher, privileged helper."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[features]
+# FakeRunner for other crates' tests.
+testing = []
+
+[[bin]]
+# Root-side helper; installed root-owned by `wglane install-helper`.
+name = "wglane-helper"
+path = "src/bin/wglane-helper.rs"
+
+[dependencies]
+ipnet.workspace = true
+serde_json.workspace = true
+wglane-core.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+wglane-core = { workspace = true, features = ["testing"] }
+
+[lints]
+workspace = true

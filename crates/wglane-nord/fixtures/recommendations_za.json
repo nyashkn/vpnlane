@@ -1,0 +1,117 @@
+[
+  {
+    "id": 101,
+    "name": "South Africa #1",
+    "hostname": "za0001.example.invalid",
+    "station": "192.0.2.11",
+    "load": 31,
+    "status": "online",
+    "locations": [
+      {
+        "country": {
+          "id": 2,
+          "name": "South Africa",
+          "code": "ZA",
+          "city": {
+            "id": 20,
+            "name": "Johannesburg"
+          }
+        },
+        "latitude": -26.2,
+        "longitude": 28.04
+      }
+    ],
+    "technologies": [
+      {
+        "id": 3,
+        "name": "OpenVPN UDP",
+        "identifier": "openvpn_udp",
+        "metadata": []
+      },
+      {
+        "id": 35,
+        "name": "Wireguard",
+        "identifier": "wireguard_udp",
+        "metadata": [
+          {
+            "name": "public_key",
+            "value": "U1lOVEhFVElDLVBFRVItUFVCTElDLUtFWS0wMDAx"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 102,
+    "name": "South Africa #2",
+    "hostname": "za0002.example.invalid",
+    "station": "192.0.2.12",
+    "load": 9,
+    "status": "online",
+    "locations": [
+      {
+        "country": {
+          "id": 2,
+          "name": "South Africa",
+          "code": "ZA",
+          "city": {
+            "id": 20,
+            "name": "Johannesburg"
+          }
+        },
+        "latitude": -26.2,
+        "longitude": 28.04
+      }
+    ],
+    "technologies": [
+      {
+        "id": 3,
+        "name": "OpenVPN UDP",
+        "identifier": "openvpn_udp",
+        "metadata": []
+      },
+      {
+        "id": 35,
+        "name": "Wireguard",
+        "identifier": "wireguard_udp",
+        "metadata": [
+          {
+            "name": "public_key",
+            "value": "U1lOVEhFVElDLVBFRVItUFVCTElDLUtFWS0wMDAy"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 103,
+    "name": "South Africa #3",
+    "hostname": "za0003.example.invalid",
+    "station": "192.0.2.13",
+    "load": 5,
+    "status": "online",
+    "locations": [
+      {
+        "country": {
+          "id": 2,
+          "name": "South Africa",
+          "code": "ZA",
+          "city": {
+            "id": 20,
+            "name": "Johannesburg"
+          }
+        },
+        "latitude": -26.2,
+        "longitude": 28.04
+      }
+    ],
+    "technologies": [
+      {
+        "id": 3,
+        "name": "OpenVPN UDP",
+        "identifier": "openvpn_udp",
+        "metadata": []
+      }
+    ]
+  }
+]

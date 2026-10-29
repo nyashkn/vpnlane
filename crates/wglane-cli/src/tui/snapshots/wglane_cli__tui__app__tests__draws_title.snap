@@ -1,0 +1,9 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: t.backend()
+---
+"┌ wglane ──────────────────────────────────────────────────┐"
+"│dashboard not built yet. Press q to quit.                 │"
+"│                                                          │"
+"│                                                          │"
+"└──────────────────────────────────────────────────────────┘"

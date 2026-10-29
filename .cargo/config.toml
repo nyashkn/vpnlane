@@ -1,0 +1,3 @@
+# `cargo xtask <task>` (pattern borrowed from levish0/AxumKit).
+[alias]
+xtask = "run --package xtask --"

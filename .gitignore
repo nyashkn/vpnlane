@@ -1,0 +1,7 @@
+/target
+**/*.snap.new
+**/*.pending-snap
+.DS_Store
+# never commit tokens or generated tunnel configs
+token
+*.conf

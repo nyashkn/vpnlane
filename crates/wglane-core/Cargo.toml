@@ -1,0 +1,25 @@
+[package]
+name = "wglane-core"
+description = "Domain types, port traits and pure logic for wglane. No I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+
+[features]
+# Hand-written fakes for every port, for use in other crates' tests.
+testing = []
+
+[dependencies]
+ipnet.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+
+[lints]
+workspace = true
