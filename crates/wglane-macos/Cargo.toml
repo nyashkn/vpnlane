@@ -22,6 +22,7 @@ ipnet.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 wglane-core.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
