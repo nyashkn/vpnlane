@@ -1,0 +1,8 @@
+---
+source: crates/wglane-cli/src/cmd/status.rs
+expression: "render(&s, false).unwrap()"
+---
+tunnel         none
+exit ip        unknown
+tailnet        tailscale not installed
+bypass routes  0

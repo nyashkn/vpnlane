@@ -1,0 +1,16 @@
+---
+source: crates/wglane-cli/src/cmd/status.rs
+expression: "render(&status(), true).unwrap()"
+---
+{
+  "active": [
+    "za"
+  ],
+  "exit_ip": "192.0.2.7",
+  "tailnet": {
+    "state": "reachable",
+    "peer": "peer.example.ts.net",
+    "latency_ms": 23
+  },
+  "bypass_routes": 3
+}
