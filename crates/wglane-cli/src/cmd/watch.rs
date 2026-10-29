@@ -1,6 +1,8 @@
 //! `wglane watch`: re-apply bypass routes on every network change.
 
 use color_eyre::Result;
+use wglane_core::ports::{BypassProvider, NetworkWatcher, RouteBypass, Tunnel};
+use wglane_macos::{HelperClient, RouteMonitor, SystemRunner, TailscaleBypass};
 
 use crate::context::Context;
 
@@ -19,10 +21,87 @@ Examples:
 )]
 pub(crate) struct Args {}
 
-pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
-    // TODO(bead): cli-watch: loop { RouteMonitor.wait_for_change()?; if a tunnel is
-    // active: gw = physical_gateway; collect bypass; HelperClient.apply }. Log each
-    // re-apply at info. Test the loop body with FakeWatcher/FakeRoutes.
-    let _ = (ctx, args);
-    Err(wglane_core::Error::NotImplemented("wglane watch").into())
+pub(crate) fn run(_ctx: &Context, _args: &Args) -> Result<()> {
+    // shortcut: only Tailscale bypass, no StaticBypass until config has a bypass list.
+    watch_loop(
+        &mut RouteMonitor::new(),
+        &HelperClient::new(SystemRunner),
+        &HelperClient::new(SystemRunner),
+        &TailscaleBypass::new(SystemRunner),
+    )
+}
+
+/// Re-applies the bypass routes after each network change while a tunnel is
+/// up. Ends only when the watcher fails; a failed re-apply is logged and the
+/// next change retries, because roaming leaves the network briefly gatewayless.
+fn watch_loop<W, T, R, B>(watcher: &mut W, tunnel: &T, routes: &R, bypass: &B) -> Result<()>
+where
+    W: NetworkWatcher,
+    T: Tunnel,
+    R: RouteBypass,
+    B: BypassProvider,
+{
+    loop {
+        watcher.wait_for_change()?;
+        match reapply(tunnel, routes, bypass) {
+            Ok(Some(n)) => tracing::info!("network changed: re-applied {n} bypass routes"),
+            Ok(None) => tracing::debug!("network changed: no tunnel up, nothing to do"),
+            Err(e) => tracing::warn!("network changed: could not re-apply bypass routes: {e}"),
+        }
+    }
+}
+
+/// `Some(count)` when routes were re-applied, `None` when no tunnel is active.
+fn reapply<T: Tunnel, R: RouteBypass, B: BypassProvider>(
+    tunnel: &T,
+    routes: &R,
+    bypass: &B,
+) -> wglane_core::Result<Option<usize>> {
+    if tunnel.active()?.is_empty() {
+        return Ok(None);
+    }
+    let gateway = routes.physical_gateway()?;
+    routes.apply(&bypass.collect()?, gateway).map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use wglane_core::testing::{FakeBypassProvider, FakeRoutes, FakeTunnel, FakeWatcher};
+
+    use super::*;
+
+    fn set() -> wglane_core::BypassSet {
+        ["203.0.113.5/32".parse().unwrap()].into_iter().collect()
+    }
+
+    #[test]
+    fn reapplies_on_every_change_while_tunnel_is_up() {
+        let tunnel = FakeTunnel::default();
+        tunnel.up(Path::new("us.conf")).unwrap();
+        let routes = FakeRoutes::new("192.168.1.1".parse().unwrap());
+        let mut watcher = FakeWatcher { changes: 2 };
+
+        let err = watch_loop(&mut watcher, &tunnel, &routes, &FakeBypassProvider(set()));
+
+        assert!(err.is_err(), "loop ends when the watcher is exhausted");
+        assert_eq!(routes.installed.borrow().len(), 1);
+        assert_eq!(routes.installed.borrow()[0].1.to_string(), "192.168.1.1");
+    }
+
+    #[test]
+    fn does_nothing_without_a_tunnel() {
+        let routes = FakeRoutes::new("192.168.1.1".parse().unwrap());
+        let mut watcher = FakeWatcher { changes: 3 };
+
+        let _ = watch_loop(
+            &mut watcher,
+            &FakeTunnel::default(),
+            &routes,
+            &FakeBypassProvider(set()),
+        );
+
+        assert!(routes.installed.borrow().is_empty());
+    }
 }
