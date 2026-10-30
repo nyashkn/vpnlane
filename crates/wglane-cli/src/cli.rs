@@ -96,7 +96,9 @@ mod tests {
         let help = Cli::command()
             .term_width(100)
             .render_long_help()
-            .to_string();
+            .to_string()
+            // The release flow bumps the version; the snapshot must not.
+            .replace(env!("CARGO_PKG_VERSION"), "X.Y.Z");
         insta::assert_snapshot!(help);
     }
 
