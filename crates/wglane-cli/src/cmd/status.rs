@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use color_eyre::Result;
 use wglane_core::ports::{ExitIpProbe, TailnetProbe, Tunnel};
-use wglane_core::{CountryCode, TailnetHealth, TunnelStatus};
+use wglane_core::{CountryCode, Overrides, TailnetHealth, TunnelStatus};
 use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
 use wglane_nord::NordApi;
 
@@ -33,18 +33,29 @@ Keys are stable; new keys may be added, none removed or renamed.",
     after_help = "\
 Examples:
   wglane status
-  wglane st --json | jq .protected",
+  wglane st --json | jq .protected
+  wglane status --exit-ip-check false   skip the exit ip lookup",
     visible_alias = "st"
 )]
-pub(crate) struct Args {}
+pub(crate) struct Args {
+    /// Look up the exit IP (true or false). Default: `exit_ip_check` in
+    /// `config.toml` or `WGLANE_EXIT_IP_CHECK`, else true.
+    #[arg(long, value_name = "BOOL")]
+    exit_ip_check: Option<bool>,
+}
 
-pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
+pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     let runner = SystemRunner;
+    let flags = Overrides {
+        exit_ip_check: args.exit_ip_check,
+        ..Overrides::default()
+    };
     let (status, known) = gather(
         &HelperClient::new(runner),
         &NordApi::new(),
         &TailscalePing::new(runner),
         ctx.recorded_routes(),
+        ctx.settings(flags)?.exit_ip_check.value,
     );
     println!("{}", render(&status, known, ctx.json)?);
     Ok(())
@@ -52,13 +63,15 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
 
 /// A failing probe is a field value, not a command failure. The flag is false
 /// when the helper could not say which tunnel is up (missing helper or sudo rule).
+/// With `exit_ip_check` off the exit ip is not looked up and reads as unknown.
 pub(crate) fn gather<T: Tunnel, E: ExitIpProbe, N: TailnetProbe>(
     tunnel: &T,
     exit: &E,
     tailnet: &N,
     bypass_routes: usize,
+    exit_ip_check: bool,
 ) -> (TunnelStatus, bool) {
-    let exit = exit.exit().ok();
+    let exit = exit_ip_check.then(|| exit.exit().ok()).flatten();
     let active = tunnel.active();
     let known = active.is_ok();
     let active = active.unwrap_or_default();
@@ -177,6 +190,7 @@ mod tests {
                 latency_ms: 23,
             }),
             3,
+            true,
         )
         .0
     }
@@ -239,6 +253,7 @@ mod tests {
             &FakeExitIp::at("192.0.2.7".parse().unwrap()),
             &FakeTailnet(TailnetHealth::NotInstalled),
             5,
+            true,
         )
         .0;
         assert_eq!(s.bypass_routes, 0);
@@ -263,10 +278,28 @@ mod tests {
             &FakeExitIp::at("192.0.2.7".parse().unwrap()),
             &FakeTailnet(TailnetHealth::NotInstalled),
             0,
+            true,
         );
         assert!(!known);
         let text = render(&s, known, false).unwrap();
         assert!(text.contains("unknown: run wglane doctor"), "{text}");
         assert!(!text.contains("none"), "{text}");
+    }
+
+    #[test]
+    fn exit_ip_check_off_skips_the_lookup() {
+        let tunnel = FakeTunnel::default();
+        let [on, off] = [true, false].map(|check| {
+            gather(
+                &tunnel,
+                &FakeExitIp("192.0.2.7".parse().unwrap()),
+                &FakeTailnet(TailnetHealth::NotInstalled),
+                0,
+                check,
+            )
+            .0
+            .exit_ip
+        });
+        assert_eq!((on.is_some(), off), (true, None));
     }
 }

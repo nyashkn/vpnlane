@@ -5,7 +5,8 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use color_eyre::eyre::{Result, eyre};
-use wglane_macos::ConfStore;
+use wglane_core::{Effective, FileConfig, Overrides};
+use wglane_macos::{ConfStore, StaticBypass};
 use wglane_nord::{EnvToken, FileToken, TokenChain};
 
 use crate::cli::GlobalArgs;
@@ -50,6 +51,33 @@ impl Context {
         ConfStore::new(&self.config_dir)
     }
 
+    /// `<config_dir>/config.toml`.
+    pub(crate) fn config_file(&self) -> PathBuf {
+        self.config_dir.join("config.toml")
+    }
+
+    /// The config file; a missing file is the defaults, never an error.
+    pub(crate) fn file_config(&self) -> Result<FileConfig> {
+        let path = self.config_file();
+        match fs::read_to_string(&path) {
+            Ok(text) => FileConfig::parse(&text).map_err(|e| eyre!("{}: {e}", path.display())),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(FileConfig::default()),
+            Err(e) => Err(eyre!("cannot read {}: {e}", path.display())),
+        }
+    }
+
+    /// Settings after precedence: `flags` > environment > file > default.
+    pub(crate) fn settings(&self, flags: Overrides) -> Result<Effective> {
+        let env = Overrides::from_env(|k| std::env::var(k).ok())?;
+        Ok(self.file_config()?.resolve(flags, env))
+    }
+
+    /// `bypass_extra` from the config file, as a bypass provider.
+    pub(crate) fn static_bypass(&self) -> Result<StaticBypass> {
+        let extra = self.settings(Overrides::default())?.bypass_extra.value;
+        Ok(StaticBypass(extra.into_iter().collect()))
+    }
+
     fn routes_record(&self) -> PathBuf {
         self.config_dir.join("bypass-routes")
     }
@@ -86,6 +114,19 @@ mod tests {
             verbose: 0,
             config_dir: dir.to_owned(),
         }
+    }
+
+    #[test]
+    fn missing_config_file_is_defaults_and_bad_one_names_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        assert_eq!(c.file_config().unwrap(), FileConfig::default());
+        fs::write(c.config_file(), "nope = 1\n").unwrap();
+        let e = c.file_config().unwrap_err().to_string();
+        assert!(
+            e.contains("config.toml") && e.contains("unknown field `nope`"),
+            "{e}"
+        );
     }
 
     #[test]

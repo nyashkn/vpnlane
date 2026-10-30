@@ -1,0 +1,12 @@
+---
+source: crates/wglane-cli/src/cmd/config.rs
+expression: "show(&eff(file, &env), false).unwrap()"
+---
+default_country        FR               env
+default_city (reserved) (unset)          default
+pick (reserved)        fastest          file
+bypass_extra           203.0.113.0/24   file
+exit_ip_check          false            file
+tui.start_expanded     false            default
+tui.graph_samples      60               default
+tui.warn_ratio         2.0              file

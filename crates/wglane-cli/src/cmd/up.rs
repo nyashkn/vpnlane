@@ -6,8 +6,10 @@ use std::time::Duration;
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use wglane_core::ports::{BypassProvider, RouteBypass, ServerCatalog, TokenSource, Tunnel};
-use wglane_core::{BypassSet, CountryCode, generate_config, is_stale, render_wg_conf};
-use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
+use wglane_core::{
+    BypassSet, CountryCode, Error, MAX_BYPASS, Overrides, generate_config, is_stale, render_wg_conf,
+};
+use wglane_macos::{HelperClient, SystemRunner, TailscaleBypass};
 use wglane_nord::NordApi;
 
 use crate::context::Context;
@@ -32,15 +34,27 @@ Why Tailscale breaks, and what wglane does:
 Examples:
   wglane up ZA          South Africa
   wglane up us          case does not matter
+  wglane up             use default_country from config.toml (or WGLANE_COUNTRY)
   wglane -v up DE       show each step"
 )]
 pub(crate) struct Args {
     /// Two-letter country code, e.g. US, DE, ZA (not UK: use GB).
-    pub(crate) country: CountryCode,
+    /// Default: `default_country` from `config.toml` or `WGLANE_COUNTRY`.
+    pub(crate) country: Option<CountryCode>,
 }
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
-    println!("{}", connect_real(ctx, args.country)?.summary(args.country));
+    let flags = Overrides {
+        country: args.country,
+        ..Overrides::default()
+    };
+    let cc = ctx.settings(flags)?.default_country.value.ok_or_else(|| {
+        eyre!(
+            "no country given: run `wglane up ZA`, or set default_country in {} (see `wglane config init`)",
+            ctx.config_file().display()
+        )
+    })?;
+    println!("{}", connect_real(ctx, cc)?.summary(cc));
     Ok(())
 }
 
@@ -48,7 +62,7 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
 pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> {
     let helper = HelperClient::new(SystemRunner);
     let tailscale = TailscaleBypass::new(SystemRunner);
-    let static_routes = StaticBypass::default();
+    let static_routes = ctx.static_bypass()?;
     connect_recorded(
         ctx,
         &helper,
@@ -58,6 +72,17 @@ pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> 
         &ctx.token_source(),
         cc,
     )
+}
+
+/// The helper takes at most [`MAX_BYPASS`] routes; say which setting to trim.
+pub(crate) fn check_limit(set: &BypassSet) -> wglane_core::Result<()> {
+    if set.len() > MAX_BYPASS {
+        return Err(Error::Config(format!(
+            "{} bypass routes, the limit is {MAX_BYPASS}: shorten bypass_extra in config.toml",
+            set.len()
+        )));
+    }
+    Ok(())
 }
 
 /// `connect` plus the config store and the route-count record `status` reads.
@@ -166,6 +191,7 @@ pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
         for p in providers {
             set.merge(p.collect()?);
         }
+        check_limit(&set)?;
         routes.apply(&set, gateway)
     })();
     let routes = match applied {

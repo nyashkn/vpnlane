@@ -4,6 +4,7 @@
 //! implement the traits in [`ports`], and the binary wires them together.
 
 mod bypass;
+mod config;
 mod country;
 mod error;
 mod generate;
@@ -19,6 +20,10 @@ pub mod testing;
 mod tunnel_config;
 
 pub use bypass::BypassSet;
+pub use config::{
+    DEFAULT_GRAPH_SAMPLES, DEFAULT_WARN_RATIO, Effective, FileConfig, MAX_BYPASS, Overrides, Pick,
+    SAMPLE_CONFIG, Setting, Source, TuiSettings,
+};
 pub use country::{Country, CountryCode};
 pub use error::{Error, Result};
 pub use generate::generate_config;

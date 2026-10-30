@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use ratatui::crossterm::event::{self, Event as Term, KeyEventKind};
+use wglane_core::Overrides;
 use wglane_core::ports::ServerCatalog;
 use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
 use wglane_nord::NordApi;
@@ -23,16 +24,16 @@ const TICK: Duration = Duration::from_secs(2);
 
 /// Runs the dashboard until the user quits.
 pub(crate) fn run(ctx: &Context) -> Result<()> {
+    let settings = ctx.settings(Overrides::default())?;
     let mut terminal = ratatui::init();
     let result = (|| -> Result<()> {
         // https://no-color.org: any non-empty value. Handled here, not by
         // crossterm: under NO_COLOR it turns each color change into an empty
         // SGR (a full reset), which drops bold and reverse mid-row.
         let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
-        let mut state = State {
-            no_color,
-            ..State::default()
-        };
+        let mut state = State::with_settings(&settings.tui);
+        state.no_color = no_color;
+        let exit_ip_check = settings.exit_ip_check.value;
         let mut effects: VecDeque<Effect> = app::init().into();
         loop {
             // Draw before blocking effects so "connecting..." is on screen.
@@ -41,7 +42,7 @@ pub(crate) fn run(ctx: &Context) -> Result<()> {
                 return Ok(());
             }
             let event = if let Some(effect) = effects.pop_front() {
-                execute(effect, ctx)
+                execute(effect, ctx, exit_ip_check)
             } else if event::poll(TICK)? {
                 match event::read()? {
                     Term::Key(k) if k.kind == KeyEventKind::Press => Event::Key(k.code),
@@ -60,7 +61,7 @@ pub(crate) fn run(ctx: &Context) -> Result<()> {
 }
 
 /// Runs one effect to completion and reports what happened.
-fn execute(effect: Effect, ctx: &Context) -> Event {
+fn execute(effect: Effect, ctx: &Context, exit_ip_check: bool) -> Event {
     match effect {
         Effect::LoadCountries => {
             Event::Countries(NordApi::new().countries().map_err(|e| e.to_string()))
@@ -72,6 +73,7 @@ fn execute(effect: Effect, ctx: &Context) -> Event {
                 &NordApi::new(),
                 &TailscalePing::new(runner),
                 ctx.recorded_routes(),
+                exit_ip_check,
             );
             Event::Status(st, known)
         }

@@ -18,6 +18,7 @@ Commands:
   servers         List countries, or ranked servers in one country [alias: ls]
   gen             Write tunnel configs without connecting
   doctor          Check prerequisites and print how to fix each problem
+  config          Show or create the saved-settings file (config.toml)
   watch           Keep bypass routes correct across network changes
   tui             Full-screen dashboard: servers, connect, live stats
   completions     Print shell completions (zsh, bash, fish, ...)
@@ -47,5 +48,6 @@ Examples:
   wglane status         country, exit IP, tailnet check, bypass routes
   wglane down           disconnect and remove bypass routes
   wglane doctor         check prerequisites and print fixes
+  wglane config show    saved settings in effect, and where each came from
 
 Token: set WGLANE_TOKEN or write it to ~/.config/wglane/token (mode 600).

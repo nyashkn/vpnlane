@@ -1,6 +1,7 @@
 //! `wglane watch`: re-apply bypass routes on every network change.
 
 use color_eyre::Result;
+use wglane_core::BypassSet;
 use wglane_core::ports::{BypassProvider, NetworkWatcher, RouteBypass, Tunnel};
 use wglane_macos::{HelperClient, RouteMonitor, SystemRunner, TailscaleBypass};
 
@@ -22,12 +23,12 @@ Examples:
 pub(crate) struct Args {}
 
 pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
-    // shortcut: only Tailscale bypass, no StaticBypass until config has a bypass list.
+    let static_routes = ctx.static_bypass()?;
     watch_loop(
         &mut RouteMonitor::new(),
         &HelperClient::new(SystemRunner),
         &HelperClient::new(SystemRunner),
-        &TailscaleBypass::new(SystemRunner),
+        &[&TailscaleBypass::new(SystemRunner), &static_routes],
         |n| ctx.record_routes(n),
     )
 }
@@ -35,18 +36,17 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
 /// Re-applies the bypass routes after each network change while a tunnel is
 /// up. Ends only when the watcher fails; a failed re-apply is logged and the
 /// next change retries, because roaming leaves the network briefly gatewayless.
-fn watch_loop<W, T, R, B>(
+fn watch_loop<W, T, R>(
     watcher: &mut W,
     tunnel: &T,
     routes: &R,
-    bypass: &B,
+    bypass: &[&dyn BypassProvider],
     record: impl Fn(usize) -> Result<()>,
 ) -> Result<()>
 where
     W: NetworkWatcher,
     T: Tunnel,
     R: RouteBypass,
-    B: BypassProvider,
 {
     loop {
         watcher.wait_for_change()?;
@@ -65,16 +65,21 @@ where
 }
 
 /// `Some(count)` when routes were re-applied, `None` when no tunnel is active.
-fn reapply<T: Tunnel, R: RouteBypass, B: BypassProvider>(
+fn reapply<T: Tunnel, R: RouteBypass>(
     tunnel: &T,
     routes: &R,
-    bypass: &B,
+    bypass: &[&dyn BypassProvider],
 ) -> wglane_core::Result<Option<usize>> {
     if tunnel.active()?.is_empty() {
         return Ok(None);
     }
     let gateway = routes.physical_gateway()?;
-    routes.apply(&bypass.collect()?, gateway).map(Some)
+    let mut set = BypassSet::new();
+    for p in bypass {
+        set.merge(p.collect()?);
+    }
+    super::up::check_limit(&set)?;
+    routes.apply(&set, gateway).map(Some)
 }
 
 #[cfg(test)]
@@ -101,7 +106,7 @@ mod tests {
             &mut watcher,
             &tunnel,
             &routes,
-            &FakeBypassProvider(set()),
+            &[&FakeBypassProvider(set())],
             |n| {
                 recorded.borrow_mut().push(n);
                 Ok(())
@@ -131,7 +136,7 @@ mod tests {
             &mut FakeWatcher { changes: 2 },
             &tunnel,
             &routes,
-            &FakeBypassProvider(set()),
+            &[&FakeBypassProvider(set())],
             |n| {
                 recorded.borrow_mut().push(n);
                 Ok(())
@@ -159,7 +164,7 @@ mod tests {
             &mut watcher,
             &FakeTunnel::default(),
             &routes,
-            &FakeBypassProvider(set()),
+            &[&FakeBypassProvider(set())],
             |_| panic!("nothing re-applied, nothing to record"),
         );
 
