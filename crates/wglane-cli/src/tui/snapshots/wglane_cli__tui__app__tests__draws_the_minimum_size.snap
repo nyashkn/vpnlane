@@ -7,6 +7,6 @@ expression: "render_sized(&up(loaded(), &[\"de\"], 41), MIN_SIZE.0, MIN_SIZE.1).
 "│  ▾ Europe (││exit ip  203.0.113.7    │"
 "│>   ● DE  Ge││tailnet  ok (nas, 41 ms)│"
 "│  ▸ North Am││                        │"
-"│            ││▁                       │"
+"│            ││▂                       │"
 "└────────────┘└────────────────────────┘"
 "? help  enter connect  d disconnect  / s"

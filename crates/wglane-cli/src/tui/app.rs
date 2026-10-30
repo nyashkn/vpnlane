@@ -6,7 +6,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Sparkline,
+    Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Sparkline, SparklineBar,
 };
 use wglane_core::{Country, CountryCode, TailnetHealth, TunnelStatus};
 
@@ -15,9 +15,11 @@ use super::continent::{Continent, continent};
 /// Latency samples kept for the sparkline.
 const HISTORY: usize = 60;
 /// Height of the latency graph in rows.
-const SPARK_ROWS: u16 = 4;
-/// Smallest scale ceiling in ms: a healthy link draws short bars, not full height.
-const SPARK_FLOOR_MS: u64 = 500;
+const SPARK_ROWS: u16 = 2;
+/// Bar levels the graph can draw (8 per row).
+const SPARK_LEVELS: u64 = 8 * SPARK_ROWS as u64;
+/// A sample above this multiple of the window median is drawn as a warning.
+const SPIKE_NUM_DEN: (u64, u64) = (3, 2);
 /// Below this the panels garble, so a size notice is drawn instead.
 const MIN_SIZE: (u16, u16) = (40, 8);
 
@@ -436,13 +438,26 @@ pub(crate) fn draw(s: &State, frame: &mut Frame) {
         Constraint::Min(0),
     ])
     .areas(inner);
-    frame.render_widget(Paragraph::new(stats_lines(s)), text);
-    // Sparkline scales to the data max when none is set, so one sample (or a
-    // flat series) filled the whole panel. Floor the scale and keep only the
-    // newest samples that fit the width.
-    let shown = &s.latency[s.latency.len().saturating_sub(usize::from(spark.width))..];
-    let ceiling = shown.iter().copied().max().unwrap_or(0).max(SPARK_FLOOR_MS);
-    frame.render_widget(Sparkline::default().data(shown).max(ceiling), spark);
+    let shown = shown_latency(s, spark.width);
+    frame.render_widget(Paragraph::new(stats_lines(s, text.width)), text);
+    // Scale to the visible window (min..max) so steady and wobbling links both
+    // show their shape; a flat series draws a low flat line, not a slab.
+    let lo = shown.iter().copied().min().unwrap_or(0);
+    let span = shown.iter().copied().max().unwrap_or(0) - lo;
+    let limit = median(shown) * SPIKE_NUM_DEN.0 / SPIKE_NUM_DEN.1;
+    let bars: Vec<SparklineBar> = shown
+        .iter()
+        .map(|&v| {
+            let level = 2 + (v - lo) * (SPARK_LEVELS - 2) / span.max(1);
+            let bar = SparklineBar::from(level);
+            if v > limit {
+                bar.style(s.fg(Color::Yellow))
+            } else {
+                bar
+            }
+        })
+        .collect();
+    frame.render_widget(Sparkline::default().data(bars).max(SPARK_LEVELS), spark);
 
     frame.render_widget(Paragraph::new(bottom_line(s)), bottom);
 
@@ -551,7 +566,18 @@ fn bottom_line(s: &State) -> Line<'static> {
     Line::from(vec![msg, Span::styled("  ? help", dim)])
 }
 
-fn stats_lines(s: &State) -> Vec<Line<'static>> {
+/// The newest samples that fit `width` columns.
+fn shown_latency(s: &State, width: u16) -> &[u64] {
+    &s.latency[s.latency.len().saturating_sub(usize::from(width))..]
+}
+
+fn median(samples: &[u64]) -> u64 {
+    let mut v = samples.to_vec();
+    v.sort_unstable();
+    v.get(v.len() / 2).copied().unwrap_or(0)
+}
+
+fn stats_lines(s: &State, width: u16) -> Vec<Line<'static>> {
     let bold = Modifier::BOLD;
     let tunnel = match (s.busy, s.active()) {
         (Some(Busy::Connecting(cc)), _) => Span::styled(
@@ -599,13 +625,23 @@ fn stats_lines(s: &State) -> Vec<Line<'static>> {
         Line::from(vec![Span::raw("tunnel   "), tunnel]),
         Line::from(format!("exit ip  {exit}")),
         Line::from(vec![Span::raw("tailnet  "), tailnet]),
-        Line::from(latency_label(&s.latency)),
+        Line::from(latency_label(shown_latency(s, width), usize::from(width))),
     ]
 }
 
-fn latency_label(samples: &[u64]) -> String {
+/// `latency  283 ms  min 282  max 353  (to tailnet peer, last N)`; the
+/// parenthetical is dropped first when the panel is too narrow.
+fn latency_label(samples: &[u64], width: usize) -> String {
     match (samples.last(), samples.iter().min(), samples.iter().max()) {
-        (Some(now), Some(lo), Some(hi)) => format!("latency  {now} ms  min {lo}  max {hi}"),
+        (Some(now), Some(lo), Some(hi)) => {
+            let base = format!("latency  {now} ms  min {lo}  max {hi}");
+            let full = format!("{base}  (to tailnet peer, last {})", samples.len());
+            if full.chars().count() <= width {
+                full
+            } else {
+                base
+            }
+        }
         _ => "latency  -".into(),
     }
 }
@@ -1155,6 +1191,35 @@ mod tests {
     fn draws_latency_with_variance() {
         let s = with_latency((0..30).map(|i| 280 + (i * 7) % 23));
         insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_steady() {
+        let s = with_latency((0..30).map(|i| 282 + (i * 5) % 8 * 9));
+        insta::assert_snapshot!(render_sized(&s, 120, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_with_one_spike() {
+        let s = with_latency((0..30).map(|i| if i == 20 { 900 } else { 300 + i % 4 }));
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    #[test]
+    fn spike_is_drawn_in_the_warning_color_unless_no_color() {
+        let mut s = with_latency((0..30).map(|i| if i == 20 { 900 } else { 300 }));
+        let yellow = |s: &State| {
+            render_sized(s, 70, 12)
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .filter(|c| c.fg == Color::Yellow)
+                .count()
+        };
+        assert!(yellow(&s) > 0);
+        s.no_color = true;
+        assert_eq!(yellow(&s), 0);
     }
 
     #[test]
