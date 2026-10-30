@@ -2,7 +2,7 @@
 source: crates/wglane-cli/src/cli.rs
 expression: help
 ---
-wglane 0.0.1
+wglane X.Y.Z
 NordLynx (WireGuard) tunnels on macOS that leave Tailscale/Headscale working.
 
 A full WireGuard tunnel swallows Tailscale's own underlay traffic (control

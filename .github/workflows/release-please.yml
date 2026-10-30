@@ -32,7 +32,8 @@ jobs:
       - name: Dispatch release-notes for the Release PR branch
         if: ${{ env.HAS_RP_TOKEN == 'true' && steps.rp.outputs.pr != '' }}
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # GITHUB_TOKEN may dispatch workflows (the PAT lacks Actions write); the job has actions: write.
+          GH_TOKEN: ${{ github.token }}
           PR_BRANCH: ${{ fromJSON(steps.rp.outputs.pr || '{}').headBranchName }}
         run: |
           if [ -n "$PR_BRANCH" ]; then
