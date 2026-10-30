@@ -1529,9 +1529,12 @@ mod tests {
         h.run(&args(&["down"]), &mut Cursor::new(vec![])).unwrap();
         // down also tears down the za conf: up, active, down.
         assert_eq!(*h.tunnel.raced.borrow(), [false, false, false]);
-        // And the lock is released afterwards.
-        let f = fs::File::open(&h.tunnel.lock).unwrap();
-        rustix::fs::flock(&f, rustix::fs::FlockOperation::NonBlockingLockExclusive).unwrap();
+        // And the lock is released afterwards. Take it blocking, not with
+        // `NonBlocking*`: a sibling test thread forking a child (before its
+        // exec closes the CLOEXEC fd) briefly co-owns the open file
+        // description, so a non-blocking try spuriously gets `WouldBlock`. A
+        // real leak would hang here instead.
+        assert!(h.lock(false).unwrap().is_some());
     }
 }
 
