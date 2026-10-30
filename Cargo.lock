@@ -2718,7 +2718,7 @@ dependencies = [
 
 [[package]]
 name = "wglane-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "clap_complete",
@@ -2736,7 +2736,7 @@ dependencies = [
 
 [[package]]
 name = "wglane-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "insta",
  "ipnet",
@@ -2750,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "wglane-macos"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "insta",
  "ipnet",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "wglane-nord"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2832,7 +2832,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "clap_complete",
