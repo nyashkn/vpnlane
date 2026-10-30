@@ -16,7 +16,7 @@ use wglane_core::{
 };
 use zeroize::Zeroizing;
 
-use crate::routes::is_bad_bypass;
+use crate::routes::{check_dest, is_bad_bypass};
 use crate::{CommandOutput, CommandRunner, RouteTable, WgQuick};
 
 /// Root-owned install location of `wglane-helper` (never the user-writable
@@ -91,7 +91,7 @@ impl UpRequest {
         let endpoint: SocketAddr = endpoint
             .parse()
             .map_err(|_| "endpoint is not ip:port".to_owned())?;
-        let ip = endpoint.ip();
+        let ip = endpoint.ip().to_canonical();
         if ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() {
             return Err("endpoint address is not a routable unicast address".into());
         }
@@ -201,6 +201,7 @@ fn parse_gateway(s: &str) -> Result<IpAddr, HelperError> {
     let ip: IpAddr = s
         .parse()
         .map_err(|_| HelperError::usage(format!("gateway {s:?} is not an IP address")))?;
+    let ip = ip.to_canonical();
     if ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() {
         return Err(HelperError::usage(format!(
             "gateway {s:?} is not a unicast address"
@@ -483,17 +484,17 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
                 stderr: format!("{gateway} is not the physical gateway ({real})"),
             }));
         }
+        // Refuse before recording or deleting anything.
+        for net in new.iter() {
+            check_dest(net, gateway)?;
+        }
         self.ensure_dir()?;
         let old = self.load_bypass()?;
-        let stale: BypassSet = old
-            .iter()
-            .filter(|n| !new.iter().any(|x| x == *n))
-            .copied()
-            .collect();
         // Record before installing, so a partial failure is still cleaned up by `down`.
         let json = serde_json::to_vec(new).map_err(|e| Error::Api(e.to_string()))?;
         write_private(&self.state_dir.join(BYPASS_STATE), &json)?;
-        self.routes.clear(&stale)?;
+        // Only routes recorded by an earlier bypass are ours to delete; `apply` never deletes.
+        self.routes.clear(&old)?;
         Ok(self.routes.apply(new, gateway)?)
     }
 
@@ -891,11 +892,42 @@ mod tests {
     }
 
     #[test]
+    fn mapped_loopback_and_unspecified_endpoints_are_refused() {
+        for ep in [
+            "[::ffff:127.0.0.1]:51820",
+            "[::ffff:0.0.0.0]:51820",
+            "[::ffff:224.0.0.1]:51820",
+        ] {
+            assert!(UpRequest::from_wire(&wire(ep)).is_err(), "{ep}");
+        }
+        assert!(parse_gateway("::ffff:127.0.0.1").is_err());
+        assert_eq!(
+            parse_gateway("::ffff:192.0.2.1").unwrap().to_string(),
+            "192.0.2.1"
+        );
+    }
+
+    #[test]
+    fn bypass_refuses_gateway_covering_cidr_before_touching_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = helper(dir.path());
+        let err = run(&h, &["bypass", GW, "1.2.3.4/32", "0.0.0.0/0"], "").unwrap_err();
+        assert!(err.contains("usage:"), "{err}");
+        let net = format!("{GW}/32");
+        let err = run(&h, &["bypass", GW, "1.2.3.4/32", &net], "").unwrap_err();
+        assert!(err.contains("contains the gateway"), "{err}");
+        assert!(!h.state_dir.exists());
+        assert!(h.routes.installed.borrow().is_empty());
+    }
+
+    #[test]
     fn oversized_stdin_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let h = helper(dir.path());
-        let big = "a".repeat(MAX_STDIN + 1);
-        assert!(run(&h, &["up", "ZA"], &big).is_err());
+        // Valid fields plus padding: the size is the only thing wrong.
+        let big = format!("{}{}", wire("192.0.2.10:51820"), "\n".repeat(MAX_STDIN));
+        let err = run(&h, &["up", "ZA"], &big).unwrap_err();
+        assert!(err.contains("not a short UTF-8 field list"), "{err}");
         assert!(h.tunnel.up.borrow().is_empty());
     }
 
@@ -1258,7 +1290,7 @@ mod props {
         fn gateway_is_canonical_unicast(s in "[0-9a-f:.]{0,20}") {
             if let Ok(ip) = parse_gateway(&s) {
                 prop_assert!(!ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast());
-                prop_assert_eq!(s.parse::<IpAddr>().unwrap(), ip);
+                prop_assert_eq!(s.parse::<IpAddr>().unwrap().to_canonical(), ip);
             }
         }
 
