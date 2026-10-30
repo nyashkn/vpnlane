@@ -1,73 +1,216 @@
 # Dashboard (`wglane tui`)
 
-`wglane tui` shows a one-line header on top, the server list on the left and tunnel status on the right. The status refreshes every 2 s. It needs a terminal of at least 40x8; smaller terminals get a notice until you resize. Build it with the default `tui` feature (`--no-default-features` drops it).
+`wglane tui` is palette-first. Home is a status HUD: tunnel state, safety, exit,
+tailnet, bypass, a latency graph, your presets and the fastest places right now.
+To go somewhere, press `space` (or `:`) and type a city, a country, a preset or
+an action. The continent tree is still there, one key away (`b`), for when you
+do not know the name. Build it with the default `tui` feature
+(`--no-default-features` drops it).
 
 ## Keys
 
-Press `?` in the dashboard to see this list.
+Press `?` for this list in the dashboard (any key closes it). The palette, the
+help overlay and the home keys read one action table (`tui/actions.rs`), so
+they cannot drift apart.
+
+**Home**
 
 | Key | Does |
 |---|---|
-| `enter` | on a city: connect to that city; on a country: connect to its least-loaded server; on a group: open/close it |
-| `space` | open/close a group or a country's cities (nothing on a city or a one-city country) |
-| `h` / `l` | `l` opens a group or country; `h` closes an open group or country; on a closed country `h` closes its group, on a city it closes the country |
-| left / right | left closes an open group or country, otherwise jumps up one level (city to country, country to group header); right opens a closed group or country, or steps into an open one |
-| `j` `k`, up/down | move |
-| `g` `G`, home/end | first / last row |
-| `/` | search by code, country name or city name; `enter` keeps the filter, `esc` clears it |
+| `space`, `:` | open the jump palette |
+| `1`-`9` | apply that preset now: reconnects at once, no preview |
+| `0` | repeat the last request (`wglane up -`) |
+| `p` | preview presets: the palette in preset mode, showing what each would change |
+| `f` | connect to the fastest place measured right now |
+| `b` | browse the continent tree |
+| `/` | browse with the tree filter open |
 | `d` | disconnect |
-| `r` | reload the server list (after a failed load) |
-| `esc` | clear the filter; with no filter, quit |
+| `r` | recheck: status, leak check, tailnet, and a new latency round |
+| `enter` | after an error: retry the change that failed |
+| `?` | help |
+| `q`, `esc` | quit |
+
+**Palette** (letters type; nothing quits)
+
+| Key | Does |
+|---|---|
+| type | filter places, presets and actions |
+| `@` / `>` first | only presets / only actions |
+| `tab` | cycle the kind: all, places, presets, actions |
+| up/down, `ctrl-j`/`ctrl-k` | move |
+| home/end | first / last row |
+| `enter` | go: connect the place, apply the preset (reconnects), run the action |
+| `esc` | close |
+
+**Browse** (`b`)
+
+| Key | Does |
+|---|---|
+| `enter` | on a country: connect its least-loaded server; on a city: that city; on a group: open/close |
+| `space`, `h` / `l`, left/right | open/close a group or a country's cities, or step in/out a level |
+| `j` `k`, up/down, `g` `G`, home/end | move, first / last row |
+| `/` | filter by code, country or city (`enter` keeps it, `esc` clears it) |
+| `:` | jump palette |
+| `r` | recheck (and reload the server list after a failed load) |
+| `d` | disconnect |
+| `esc` | clear the filter, then back home |
 | `q` | quit |
-| `?` | help; any key closes it |
 
-While you are searching, every key is part of the query, so `q`, `d`, `j` and the rest are typed as letters.
+Mouse input is not used.
 
-## Header and latency
+## Home
 
-The top line summarises the tunnel: `● up  US  283 ms ▁▂▃▂▁  exit 203.0.113.7`, `○ down` or `◐ connecting to US...`. On narrow terminals it drops the mini graph first, then the exit ip, then the latency. `NO_COLOR` removes its color too.
+```
+  ● up      Germany · Frankfurt                                        preset work
+            DE/Frankfurt · least-load · up 1h 12m
+  presets  0 last DE/Frankfurt   1 work ● active   2 stream   3 travel     p preview
 
-In the stats card, the `latency` line is the ping to the tailnet peer through the tunnel (the same value as the `tailnet ok (..)` line), with min and max over the samples shown. The 2-row graph below it is scaled to the min..max of those samples, so a steady link draws a low flat line and the shape of any wobble is visible; it is not an absolute scale. Samples above 1.5x the median are drawn in yellow.
+  exit      203.0.113.7 · DE · protected        tailnet   ok · nas 41 ms
+  bypass    14 routes                           checks    leak ok · udp 51820 sent
 
-## Server tree
+  latency   38 ms  min 35  max 61   to tailnet peer, last 92
+  ▆▂▆▂▇▃█▄█▄█▅█▆▂▆▂▇▃█▄█▄█▅█▆▂▆█▇▃█▄█▄█▅█▆▂
 
-Countries are grouped by continent: Africa, Asia, Europe, Middle East, North America, Oceania, South America. The groups come from a fixed table in `crates/wglane-cli/src/tui/continent.rs`, because Nord's API has no region field. A code the table does not know goes under **Other**, so a new Nord country still shows up. When that happens, add the code to the table and to the `NORD` list in its test.
+  fastest right now  of 5 measured
+  NL  Netherlands       27 ms ███▍   18% █▌··  fastest
+  GB  United Kingdom    31 ms ███▉   45% ███▌
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │ › jump to a city, country, preset or action             space  or  : │
+  └──────────────────────────────────────────────────────────────────────┘
+space jump  0-9 preset  p preview  f fastest  b browse  d disconnect  ? keys  q quit
+```
 
-The tree has three levels: continent, country, city. A country with more than one city shows `▸` (closed) or `▾` (open) after its name and lists its cities, with server counts, below it. A country with one city (or none listed) has no city level: its row connects directly and shows no chevron. `enter` on a country always connects its least-loaded server, open or not; `enter` on a city connects the least-loaded server in that city (and regenerates the config unless the cached one was made for that same city).
-
-All groups and countries start closed, except the connected one: its group opens, and the cursor starts on the connected city when `up` recorded it, else on the country. A closed group with the active tunnel in it shows `●`.
-
-While a filter is active, the query matches the country code, the country name and city names (case-insensitive substring, accents ignored; code-prefix hits come first). Only groups with matches are shown, all open, and the group with the best match comes first. A country with matching cities opens and lists only those cities. A country shown only because of its cities is not selectable, nor is a group header, so `enter` always connects something that matched; the toggle keys do nothing while a filter is active.
-
-The connected city comes from the `confs` map in `<config dir>/state.json` (`Context::recorded_city`), written when `up` generates the config. It is missing for configs made by `gen` or by an older wglane, and then only the country is shown.
+- **State line.** A symbol and a word, so it reads the same without colour.
+  The second line is the request behind the tunnel (`up` recorded it in
+  `state.json`) and how long ago it was applied.
+- **Presets strip.** Slot `0` is the last request, `1`-`9` the presets of
+  `config.toml` in key order. The active preset (the one the live connection
+  came from) is bold and marked `● active`. A number key reconnects at once;
+  `p` shows the preview first. The preview of a preset is core
+  `describe_change` on the resolved overlay (environment included), so it
+  names the country a preset without one would move you to, and the routes
+  it would remove.
+- **Safety.** A wrong exit country (`exit IP .. is in NL, not DE`) or Nord's
+  `protected = false` turns into a three-line reverse-red `LEAK RISK` block
+  with `d` and `r`, and the palette pins "disconnect" as its first row (typing
+  moves the cursor to the best match, so `enter` after a search never
+  disconnects by accident). With `exit_ip_check = false` a reverse-yellow
+  `leak check disabled` line is always shown, since nothing can tell.
+- **Fastest right now.** The best places measured so far: at start, the
+  countries in the connected (or last) country's continent plus every preset's
+  and the last request's country; then whatever the palette and the tree
+  measured. See [Latency and load](#latency-and-load).
+- **Graph.** The tailnet peer round trip, scaled to the visible window
+  (min..max), so a steady link draws a low flat line and the shape of a wobble
+  shows; it is not an absolute scale. Samples above `tui.warn_ratio` times the
+  median are yellow. The browse screen keeps the one-line version of it.
 
 ## States
 
-The `tunnel` line has a symbol, so it reads the same without color:
-
 | Shows | Means |
 |---|---|
-| `· checking...` | no probe has finished yet |
-| `○ down` | no wglane tunnel is up |
-| `◐ connecting to XX...` / `◐ disconnecting...` | a change is running (keys that start a change are ignored) |
-| `● up  XX  Name, City` | tunnel up; the country (and its city, when known) is also marked `●` in the list |
-| `? unknown (run wglane doctor)` | the helper could not say which tunnel is up |
+| `· checking` | no status yet |
+| `○ down  not connected` | no wglane tunnel; the second line names the last request |
+| `◐ connecting  Germany · Frankfurt` | a change is running; keys that change the tunnel wait, `space`, `b`, `?` still work |
+| `◐ disconnecting` | same |
+| `● up  Germany · Frankfurt` | tunnel up; `preset work` on the right when it came from a preset |
+| `? unknown  the helper did not answer` | the helper could not say which tunnel is up; `r` retries, `wglane doctor` in a shell says why |
 
-Errors appear in the bottom line, ahead of the key hints, starting with `error:`, so a narrow terminal cuts the hints first. Starting a new connect or disconnect clears the old message.
+**Errors.** A failed change shows three rows in the HUD: `error` (the
+message), `doctor` (the UDP 51820 check, run at once after a failure: `looks
+blocked on this network` in reverse yellow, or `leaves this machine; delivery
+cannot be tested`), and `next` (switch network when UDP is blocked; `enter`
+retries). The footer starts with the error, so a narrow terminal cuts the
+hints first.
 
-Color is limited to the 16 ANSI colors, so your terminal theme decides how they look. `NO_COLOR=1 wglane tui` turns color off; bold and reverse video still show state and the selected row (marked `>`).
+**Sizes.** 80 columns and up: two-column info rows. 60 to 79: one column.
+Below 60 columns or 14 rows: the tiny view (state, safety or exit, preset and
+tailnet, the jump hint). Below 30x6: `terminal too small`. Short terminals
+drop spacing first, then the graph, then the fastest list.
+
+**Colour.** 16 ANSI colours only, used for meaning: green ok, yellow busy or
+warning (load of 60% and up too), red fault or leak. `NO_COLOR=1 wglane tui`
+turns colour off; symbols, bold and reverse video still carry every state.
+
+**Logs.** While the dashboard holds the screen, log lines (`-v`, `RUST_LOG`)
+and warnings go to `<config dir>/tui.log` (mode 0600), never to the terminal.
+
+## Latency and load
+
+Every place row (palette, home, browse) shows a relative LATENCY bar and a
+LOAD bar, each with its number, scaled to the rows on screen; the lowest
+latency gets a `fastest` tag. A place's numbers come from one server: the one
+Nord recommends there (`recommended(cc, city, 1)`), its load as Nord reports
+it, its latency pinged now. Nothing is estimated: a place not measured shows
+`-`, one being measured `probing`.
+
+The palette ranks by match first (exact, prefix, word prefix, substring,
+letters in order from a word start), then, within the same match quality, by
+`probe::rank_with_probes`: measured latency, then failed, then not probed,
+load breaking ties. So the list re-sorts as results land; the cursor stays on
+the same row (`probe::cursor_after`).
+
+**While a tunnel is up**, pings are bound to the physical interface so they
+never measure the tunnel's own exit, and they often all fail. Then home says
+`latency unavailable while connected`, the lists sort by load, and `f`
+refuses. Disconnect to measure. (A follow-up adds temporary helper host routes
+for the probes; it replaces only `tui::probe` in `mod.rs`.)
+
+Probe rounds are numbered (`probe_epoch`). A finished connect or disconnect
+starts a new round over every sampled server, because the path changed; a
+result tagged with an older round is dropped, and a server lookup that lands
+late is probed again in the current round.
 
 ## Architecture
 
-`app.rs` keeps the state, the reducer (`update`: state + event to state + effects) and drawing; `mod.rs` owns the terminal and the event loop; `worker.rs` is a worker thread; `probe.rs` holds latency results and their ordering. The reducer stays pure. The loop never does I/O: it hands each `Effect` (load countries, refresh status, connect, disconnect, probe) to the worker over an `mpsc` channel and feeds each result back as an `Event`, so a connect shows `connecting...` while keys (move, search, toggle, help, quit) keep working. Effects run one at a time, in order. Keys that start another tunnel change are ignored while one runs, and ticks do not queue a second status refresh while one is pending.
+| File | Holds |
+|---|---|
+| `tui/mod.rs` | terminal, event loop, the two workers, effect execution, the prober |
+| `tui/app.rs` | `State`, `Event`, `Effect`, the pure `update`, the browse tree |
+| `tui/hud.rs` | home drawing, safety verdict, footer, tiny view |
+| `tui/palette.rs` | palette state, matcher, items, keys, drawing |
+| `tui/presets.rs` | preset slots, preview, apply, the strip |
+| `tui/places.rs` | place samples, ranking, bars |
+| `tui/actions.rs` | action registry (palette, help and home keys) |
+| `tui/probe.rs` | probe results, `rank_with_probes`, `cursor_after` |
+| `tui/worker.rs` | the effect thread |
 
-**Quitting during a connect or disconnect.** `q` always quits. The terminal is restored at once, then wglane prints `finishing the connect before exit...` and waits for that one change to finish (a tunnel is never abandoned half-built) and prints its error, if any. Effects still queued behind it are skipped. Quitting with nothing changing exits immediately; a read-only effect in flight (a status refresh, a probe) is dropped.
+The reducer is pure: `update(state, event) -> (state, effects)`. The loop
+never does I/O. Effects run on two worker threads: tunnel changes and status
+on one (in order, so a connect is never interleaved with a refresh), server
+lookups and probes on the other (so a slow probe round never delays a
+connect). Each result comes back as an `Event`.
 
-**Latency probes.** `Event::StartProbe(servers)` opens a round: `probe_epoch` goes up, `probes` is reset to `Pending` for those servers, and `Effect::Probe` asks the worker to ping them concurrently. Each answer comes back as `Event::ProbeResult { epoch, key, latency_ms }` (`None` = no reply). A result whose `epoch` is not the current one is dropped, so a slow answer from the previous country cannot land in the new list. `probe::rank_with_probes(servers, probes)` gives the display order (answered by latency, load breaking ties; then failed; then not probed) and the `fastest` server, and `probe::cursor_after` keeps the cursor on the same server when that order changes. Probes are bound to the physical interface while a tunnel is up, as for `up --fastest`. The list does not show probes yet.
+- `Effect::Connect(cc, city)`: a place, through `up::plan_from_last` (the last
+  request's bypass set and preset stay; the preset is marked overridden).
+- `Effect::Apply(Some(name))` / `Apply(None)`: `up --preset NAME` / `up -`,
+  the same code path as the CLI (`up::apply_real`), so a preset's `pick` holds.
+- `Effect::Sample { epoch, places }`: Nord lookups, 6 at a time, then a probe
+  of the servers found. `Effect::Probe` re-probes known servers.
+- `Effect::CheckUdp`: the doctor's UDP 51820 check (at start and after a
+  failed change, or from the palette).
+- `Effect::Refresh`: `status::gather` plus `state.json` (last request, active
+  preset).
+
+**Quitting during a connect or disconnect.** `q` always quits. The terminal is
+restored at once, then wglane prints `finishing the connect before exit...`
+and waits for that one change (a tunnel is never abandoned half-built). Lookups
+and probes in flight are dropped.
 
 ## Tests
 
-The reducer is pure, so key handling, probe rounds and epoch invalidation are tested without a terminal; `worker.rs` is tested with a fake executor and channels, no timing. Drawing is snapshot-tested with ratatui's `TestBackend` and [insta](https://insta.rs): each state above, the help overlay, search in the tree, and a terminal that is too small.
+The reducer is pure, so every key and mode is tested without a terminal:
+home, palette (search, kinds, no match, pinned disconnect), presets (number
+keys, `0`, preview, apply), browse, probe re-sort with a steady cursor, stale
+probe results dropped, the UDP hint and retry, and a deterministic random key
+walk across all modes (selection always valid, no panic, every size draws).
+Drawing is snapshot-tested with ratatui's `TestBackend` and
+[insta](https://insta.rs) for each state above: home connected, connecting,
+down, palette with city results and bars, palette while probing, empty
+palette, no match, preset preview, leak warning, leak check disabled, error
+with the UDP hint, unknown tunnel, help, 60x20 home and palette, 34x7, too
+small, and the browse tree. A test also renders every state under `NO_COLOR`
+and checks no cell carries a colour.
 
 ```sh
 cargo test -p wglane-cli tui            # run them
@@ -75,4 +218,11 @@ cargo insta review                      # accept or reject changed snapshots
 INSTA_UPDATE=always cargo test -p wglane-cli tui   # or accept them all
 ```
 
-Snapshots live in `crates/wglane-cli/src/tui/snapshots/`. Review the diff before you commit them.
+Snapshots live in `crates/wglane-cli/src/tui/snapshots/`. All data in them is
+made up (203.0.113.x, 198.51.100.x, invented hosts). Review the diff before you
+commit them.
+
+To look at it by hand without touching your tunnel, run it the way
+`demos/record.sh` does: a temp `HOME` and `WGLANE_CONFIG_DIR`, under
+`sandbox-exec` hiding `/private/var/run/wireguard` (the tunnel then reads
+`? unknown`), in a `tmux` window you resize to 100x30, 60x20 and 34x7.

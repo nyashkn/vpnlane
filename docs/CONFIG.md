@@ -291,7 +291,10 @@ that interface has no interface-scoped default route (common while a full
 tunnel is up) every probe fails and `fastest` falls back to the least loaded
 server. To measure, run `wglane down` first, or use `--pick least-load`.
 `wglane servers CC --probe` shows the same measurement as a PING column next
-to the load. The TUI does not probe on connect and ignores `pick`.
+to the load. A TUI connect to a place uses the least-loaded server there (it
+ignores `pick`); TUI number keys and the preset palette go through
+`up --preset`, so a preset's `pick` holds. The TUI's latency columns use the
+same bound probes, so they read `-` while connected for the same reason.
 
 A cached config is reused only for the same request: switching between a city
 and the whole country, or to another city, regenerates it.
