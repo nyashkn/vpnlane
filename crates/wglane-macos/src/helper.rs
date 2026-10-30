@@ -337,9 +337,7 @@ impl<R: CommandRunner> RouteBypass for HelperClient<R> {
     }
 
     fn apply(&self, set: &BypassSet, gateway: IpAddr) -> Result<usize> {
-        if set.is_empty() {
-            return Ok(0);
-        }
+        // Even an empty set must reach the helper: it also re-points the tunnel's endpoint route.
         let gateway = gateway.to_string();
         let cidrs: Vec<String> = set.iter().map(ToString::to_string).collect();
         let mut args = vec![HelperVerb::Bypass.as_str(), &gateway];
@@ -434,7 +432,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
             }
             Some(HelperVerb::Active) => Err(HelperError::usage("active takes no arguments")),
             Some(HelperVerb::Bypass) => match rest {
-                [gateway, cidrs @ ..] if !cidrs.is_empty() && cidrs.len() <= MAX_CIDRS => {
+                [gateway, cidrs @ ..] if cidrs.len() <= MAX_CIDRS => {
                     let cidrs: BypassSet = cidrs
                         .iter()
                         .map(|c| parse_cidr(c))
@@ -443,7 +441,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
                         .map(|n| format!("{n}\n"))
                 }
                 _ => Err(HelperError::usage(
-                    "bypass takes a gateway and 1..=1024 CIDRs",
+                    "bypass takes a gateway and 0..=1024 CIDRs",
                 )),
             },
             None => Err(HelperError::usage(format!("unknown verb {verb:?}"))),
@@ -962,7 +960,6 @@ mod tests {
             &["up", "US", "ZA"],
             &["down", "x"],
             &["bypass"],
-            &["bypass", GW],
             &["bypass", "x", "1.2.3.4/32"],
             &["bypass", GW, "0.0.0.0/0"],
             &["up", "../../etc"],
@@ -1130,6 +1127,15 @@ mod tests {
         let h = helper(dir.path());
         run(&h, &["down"], "").unwrap();
         assert!(!h.state_dir.exists());
+    }
+
+    #[test]
+    fn bypass_with_no_cidrs_clears_old_routes_and_still_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = helper(dir.path());
+        run(&h, &["bypass", GW, "1.2.3.4/32"], "").unwrap();
+        assert_eq!(run(&h, &["bypass", GW], "").unwrap(), "0\n");
+        assert!(h.routes.installed.borrow().is_empty());
     }
 
     #[test]
@@ -1419,13 +1425,15 @@ mod tests {
         assert_eq!(call[..5], [SUDO, "-n", HELPER_PATH, "bypass", GW]);
         assert_eq!(call[5..].len(), 2);
         assert!(call.iter().any(|a| a == "100.64.0.0/10"));
-        // Empty set never calls sudo.
-        let empty = HelperClient::new(FakeRunner::new());
+        // An empty set still calls the helper: it re-points the endpoint route.
+        let fake = FakeRunner::new();
+        fake.push_stdout("0\n");
+        let empty = HelperClient::new(fake);
         assert_eq!(
             empty.apply(&BypassSet::new(), GW.parse().unwrap()).unwrap(),
             0
         );
-        assert_eq!(empty.runner.calls(), Vec::<Vec<String>>::new());
+        assert_eq!(empty.runner.calls()[0][3..], ["bypass", GW]);
     }
 
     #[test]
