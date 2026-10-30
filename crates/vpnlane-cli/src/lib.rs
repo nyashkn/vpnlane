@@ -47,6 +47,7 @@ pub fn run() -> color_eyre::Result<()> {
         Command::Config(a) => cmd::config::run(&ctx, a),
         Command::Watch(a) => cmd::watch::run(&ctx, a),
         Command::Tui(a) => cmd::tui::run(&ctx, a),
+        Command::Alias(a) => cmd::alias::run(&ctx, a),
         Command::Completions(a) => cmd::completions::run(&ctx, a),
         Command::InstallHelper(a) => cmd::install_helper::run(&ctx, a),
     }

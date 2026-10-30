@@ -81,6 +81,7 @@ pub(crate) enum Command {
     Config(cmd::config::Args),
     Watch(cmd::watch::Args),
     Tui(cmd::tui::Args),
+    Alias(cmd::alias::Args),
     Completions(cmd::completions::Args),
     InstallHelper(cmd::install_helper::Args),
 }
