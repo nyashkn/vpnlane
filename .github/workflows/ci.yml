@@ -23,4 +23,5 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: just,cargo-deny
+      # `just ci` includes check-versions (release-please manifest vs Cargo.toml/Cargo.lock).
       - run: just ci
