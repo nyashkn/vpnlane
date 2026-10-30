@@ -15,6 +15,7 @@ echo demotoken0123456789 > /tmp/vpnlane-demo/token; chmod 600 /tmp/vpnlane-demo/
 # Made-up presets so the TUI strip and preview have something to show.
 cat > /tmp/vpnlane-demo/config.toml <<'TOML'
 location = "DE/Frankfurt"
+exit_ip_check = false   # the lookup would print the recorder real IP
 preset_order = ["work", "stream", "travel"]
 
 [presets.work]
@@ -35,7 +36,7 @@ if ! "$ROOT/target/debug/vpnlane" status --json 2>/dev/null | grep -q '"state": 
   exit 1
 fi
 export HOME="$W/home" VPNLANE_CONFIG_DIR=/tmp/vpnlane-demo PS1='$ ' \
-  PATH="$W/bin:/usr/bin:/bin:/opt/homebrew/bin" RUST_BACKTRACE=0 RUST_LOG=error
+  PATH="$W/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin" RUST_BACKTRACE=0 RUST_LOG=error
 unset TAILSCALE_AUTHKEY VPNLANE_TOKEN
 ONLY=${1:-all}
 [ "$ONLY" = tui ] || vhs demos/cli.tape

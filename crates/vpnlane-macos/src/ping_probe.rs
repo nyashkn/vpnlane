@@ -6,6 +6,9 @@ use vpnlane_core::{Error, Result};
 
 use crate::CommandRunner;
 
+/// Absolute path: a minimal `PATH` (no `/sbin`) must not make every probe fail.
+const PING: &str = "/sbin/ping";
+
 /// [`Prober`] over the system `ping` (one ICMP echo). Needs no privileges.
 ///
 /// Why ICMP and not a TCP connect: WireGuard endpoints are UDP and expose no
@@ -50,7 +53,7 @@ impl<R: CommandRunner> Prober for PingProbe<R> {
     fn probe(&self, ip: IpAddr, timeout: Duration) -> Option<Duration> {
         let owned = self.argv(ip, timeout);
         let args: Vec<&str> = owned.iter().map(String::as_str).collect();
-        let out = self.runner.run("ping", &args).ok()?;
+        let out = self.runner.run(PING, &args).ok()?;
         let rtt = out.success().then(|| parse_rtt(&out.stdout)).flatten()?;
         (rtt <= timeout).then_some(rtt)
     }
@@ -111,6 +114,14 @@ default            link#34            UCSIg              utun14
     const T: Duration = Duration::from_millis(1500);
 
     #[test]
+    fn ping_is_called_by_absolute_path() {
+        assert_eq!(PING, "/sbin/ping");
+        let p = PingProbe::new(FakeRunner::new(), None);
+        p.probe(ip(), T);
+        assert_eq!(p.runner.calls()[0][0], "/sbin/ping");
+    }
+
+    #[test]
     fn unbound_argv_when_no_tunnel_is_up() {
         let p = PingProbe::new(FakeRunner::new(), None);
         p.runner.push_stdout(REPLY);
@@ -118,7 +129,7 @@ default            link#34            UCSIg              utun14
         assert_eq!(
             p.runner.calls(),
             vec![vec![
-                "ping",
+                PING,
                 "-n",
                 "-c",
                 "1",

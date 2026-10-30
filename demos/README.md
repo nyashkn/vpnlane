@@ -26,10 +26,11 @@ Setup: `brew install vhs` (pulls ttyd + ffmpeg), node (for the proxy), network a
 
 `record.sh` runs with an empty temp `HOME`, `VPNLANE_CONFIG_DIR=/tmp/vpnlane-demo`, prompt `$ `, a PATH without
 `tailscale`, and `RUST_LOG=error` for the CLI tape (the TUI logs to `<config dir>/tui.log`, so it needs none), and
-made-up presets in `config.toml`. For the TUI, `proxy-nord-only.mjs`
-tunnels only HTTPS to api.nordvpn.com (the country and server lists load for real, so the palette shows places)
-and refuses the plain-HTTP exit-IP lookup, so the exit reads `unknown`; latency and load may still read `-`
-(the snapshots in the TUI tests show the bars).
+made-up presets in `config.toml`. For the TUI, the demo `config.toml` sets `exit_ip_check = false`: the exit-IP lookup shares api.nordvpn.com
+with the server lists (the proxy cannot tell the HTTPS requests apart), and once showed the recorder's real IP, so it is off and the
+TUI shows the yellow `leak check disabled` banner. `proxy-nord-only.mjs` additionally tunnels only HTTPS to
+api.nordvpn.com and refuses everything else. The recorder's PATH includes `/sbin` (and the prober calls `/sbin/ping` by absolute path), so
+the latency bars are real measurements.
 `servers ZA` is piped through `awk` to drop the server IP column. The tunnel indicator and `doctor` reflect the
 recording machine's state. Review the frames before committing.
 
