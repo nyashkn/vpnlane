@@ -2,6 +2,19 @@
 
 All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.5.0](https://github.com/nyashkn/vpnlane/compare/v0.4.0...v0.5.0) (2026-10-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* root-side paths renamed. Run `wglane down` with the old binary, then `sudo vpnlane install-helper`; it removes the old helper, tools and sudoers rule. See docs/UPGRADING.md.
+* hard cut, no compatibility layer. The binary is now `vpnlane` (and `vpnlane-helper`); the config dir is ~/.config/vpnlane (move ~/.config/wglane yourself); all WGLANE_* env vars are now VPNLANE_*; release archives are vpnlane-cli-<target>.tar.xz. Run `wglane down` before upgrading, remove ~/.cargo/bin/wglane*, then `sudo vpnlane install-helper`. Root paths (/usr/local/libexec/wglane*, /etc/sudoers.d/wglane, /var/db/wglane) are unchanged until a follow-up. See docs/UPGRADING.md.
+
+### What's New
+
+* migrate helper, sudoers and root state to vpnlane paths (R3) ([#41](https://github.com/nyashkn/vpnlane/issues/41)) ([5569031](https://github.com/nyashkn/vpnlane/commit/556903165ffa9695b4a5e131178a0751b86aad5f))
+* rename CLI to vpnlane (binary, config dir, env vars) ([#39](https://github.com/nyashkn/vpnlane/issues/39)) ([202b9a0](https://github.com/nyashkn/vpnlane/commit/202b9a057ffd6c7c4afef977e39b1f6ad7b64636))
+
 ## [0.4.0](https://github.com/nyashkn/wglane/compare/v0.3.0...v0.4.0) (2026-10-30)
 
 This release gives the `wglane tui` dashboard a new palette-first layout and makes the browse view easier to read.
