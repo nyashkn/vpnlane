@@ -5,11 +5,12 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use color_eyre::Result;
-use color_eyre::eyre::eyre;
 use serde_json::json;
 use wglane_core::Error;
 use wglane_core::ports::TokenSource;
-use wglane_macos::{CommandRunner, HELPER_PATH, SUDOERS_PATH, SystemRunner};
+use wglane_macos::{
+    CommandRunner, HELPER_PATH, SUDOERS_PATH, SystemRunner, TOOL_DIR, check_tool_dir,
+};
 
 use crate::context::Context;
 
@@ -18,7 +19,8 @@ use crate::context::Context;
     about = "Check prerequisites and print how to fix each problem",
     long_about = "\
 Checks: wireguard-tools installed, tailscale installed, helper installed
-root-owned with its sudoers rule, token present with mode 600, config
+root-owned with its sudoers rule, root-owned tool directory
+(bash, wg-quick, wg, wireguard-go), token present with mode 600, config
 directory private to you.
 
 Every failed check prints the exact command to fix it.",
@@ -54,6 +56,10 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
             check_program(&SystemRunner, "tailscale", "brew install tailscale"),
         ),
         ("helper", check_helper(Path::new(HELPER_PATH), 0)),
+        (
+            "helper tools",
+            check_tools(Path::new(TOOL_DIR), Path::new("/"), 0),
+        ),
         ("sudoers rule", check_sudoers(Path::new(SUDOERS_PATH))),
         ("token", check_token(&ctx.token_source())),
         ("config dir", check_config_dir(&ctx.config_dir)),
@@ -61,7 +67,8 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
     println!("{}", render(&rows, ctx.json)?);
     let failed = rows.iter().filter(|(_, c)| *c != Check::Pass).count();
     if failed > 0 {
-        return Err(eyre!("{failed} check(s) failed"));
+        // A failed check is a result, not a crash: no error report.
+        std::process::exit(1);
     }
     Ok(())
 }
@@ -80,6 +87,15 @@ fn check_helper(path: &Path, owner_uid: u32) -> Check {
     match std::fs::metadata(path) {
         Ok(m) if m.uid() == owner_uid && m.permissions().mode() & 0o022 == 0 => Check::Pass,
         _ => fail("sudo wglane install-helper"),
+    }
+}
+
+/// The helper's tool dir and each tool in it are present and root-owned, as
+/// are all ancestors up to `top`; the same check the helper runs before exec.
+fn check_tools(dir: &Path, top: &Path, owner_uid: u32) -> Check {
+    match check_tool_dir(dir, top, owner_uid) {
+        Ok(()) => Check::Pass,
+        Err(_) => fail("sudo wglane install-helper"),
     }
 }
 
@@ -178,6 +194,26 @@ mod tests {
         assert_ne!(check_helper(&f, uid + 1), Check::Pass);
         fs::set_permissions(&f, fs::Permissions::from_mode(0o775)).unwrap();
         assert_ne!(check_helper(&f, uid), Check::Pass);
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn tool_dir_missing_or_untrusted_fails_with_install_fix() {
+        let d = tmp("tools");
+        let top = fs::canonicalize(&d).unwrap();
+        let uid = fs::metadata(&d).unwrap().uid();
+        let fix = fail("sudo wglane install-helper");
+        assert_eq!(check_tools(&d.join("bin"), &top, uid), fix, "missing");
+        let bin = d.join("bin");
+        fs::create_dir(&bin).unwrap();
+        assert_eq!(check_tools(&bin, &top, uid), fix, "empty");
+        for t in ["bash", "wg-quick", "wg", "wireguard-go"] {
+            fs::write(bin.join(t), t).unwrap();
+        }
+        assert_eq!(check_tools(&bin, &top, uid), Check::Pass);
+        assert_eq!(check_tools(&bin, &top, uid + 1), fix, "wrong owner");
+        fs::set_permissions(&bin, fs::Permissions::from_mode(0o777)).unwrap();
+        assert_eq!(check_tools(&bin, &top, uid), fix, "writable");
         fs::remove_dir_all(&d).unwrap();
     }
 

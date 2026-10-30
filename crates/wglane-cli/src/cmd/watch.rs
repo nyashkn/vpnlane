@@ -21,20 +21,27 @@ Examples:
 )]
 pub(crate) struct Args {}
 
-pub(crate) fn run(_ctx: &Context, _args: &Args) -> Result<()> {
+pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
     // shortcut: only Tailscale bypass, no StaticBypass until config has a bypass list.
     watch_loop(
         &mut RouteMonitor::new(),
         &HelperClient::new(SystemRunner),
         &HelperClient::new(SystemRunner),
         &TailscaleBypass::new(SystemRunner),
+        |n| ctx.record_routes(n),
     )
 }
 
 /// Re-applies the bypass routes after each network change while a tunnel is
 /// up. Ends only when the watcher fails; a failed re-apply is logged and the
 /// next change retries, because roaming leaves the network briefly gatewayless.
-fn watch_loop<W, T, R, B>(watcher: &mut W, tunnel: &T, routes: &R, bypass: &B) -> Result<()>
+fn watch_loop<W, T, R, B>(
+    watcher: &mut W,
+    tunnel: &T,
+    routes: &R,
+    bypass: &B,
+    record: impl Fn(usize) -> Result<()>,
+) -> Result<()>
 where
     W: NetworkWatcher,
     T: Tunnel,
@@ -44,7 +51,13 @@ where
     loop {
         watcher.wait_for_change()?;
         match reapply(tunnel, routes, bypass) {
-            Ok(Some(n)) => tracing::info!("network changed: re-applied {n} bypass routes"),
+            Ok(Some(n)) => {
+                tracing::info!("network changed: re-applied {n} bypass routes");
+                // status reads this copy; a failed write only leaves the count stale.
+                if let Err(e) = record(n) {
+                    tracing::warn!("could not record the bypass route count: {e}");
+                }
+            }
             Ok(None) => tracing::debug!("network changed: no tunnel up, nothing to do"),
             Err(e) => tracing::warn!("network changed: could not re-apply bypass routes: {e}"),
         }
@@ -82,10 +95,25 @@ mod tests {
         tunnel.up(Path::new("us.conf")).unwrap();
         let routes = FakeRoutes::new("192.168.1.1".parse().unwrap());
         let mut watcher = FakeWatcher { changes: 2 };
+        let recorded = std::cell::RefCell::new(Vec::new());
 
-        let err = watch_loop(&mut watcher, &tunnel, &routes, &FakeBypassProvider(set()));
+        let err = watch_loop(
+            &mut watcher,
+            &tunnel,
+            &routes,
+            &FakeBypassProvider(set()),
+            |n| {
+                recorded.borrow_mut().push(n);
+                Ok(())
+            },
+        );
 
         assert!(err.is_err(), "loop ends when the watcher is exhausted");
+        assert_eq!(
+            *recorded.borrow(),
+            [1, 1],
+            "count recorded after each re-apply"
+        );
         assert_eq!(routes.installed.borrow().len(), 1);
         assert_eq!(routes.installed.borrow()[0].1.to_string(), "192.168.1.1");
     }
@@ -100,6 +128,7 @@ mod tests {
             &FakeTunnel::default(),
             &routes,
             &FakeBypassProvider(set()),
+            |_| panic!("nothing re-applied, nothing to record"),
         );
 
         assert!(routes.installed.borrow().is_empty());
