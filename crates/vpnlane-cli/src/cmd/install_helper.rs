@@ -31,13 +31,8 @@ pub(crate) struct Args {
 
 pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
     if args.uninstall {
-        vpnlane_macos::uninstall_helper()?;
-        println!(
-            "removed {} and {}",
-            vpnlane_macos::HELPER_PATH,
-            vpnlane_macos::SUDOERS_PATH
-        );
-        return Ok(());
+        let user = std::env::var("SUDO_USER").ok();
+        return report(&vpnlane_macos::uninstall_helper(user.as_deref())?);
     }
     let user = std::env::var("SUDO_USER").map_err(|_| {
         eyre!(concat!(
@@ -47,9 +42,25 @@ pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
         ))
     })?;
     let source = helper_next_to(&std::env::current_exe()?)?;
-    vpnlane_macos::install_helper(&vpnlane_macos::SystemRunner, &user, &source)?;
-    println!("installed {} for user {user}", vpnlane_macos::HELPER_PATH);
-    Ok(())
+    report(&vpnlane_macos::install_helper(
+        &vpnlane_macos::SystemRunner,
+        &user,
+        &source,
+    )?)
+}
+
+/// Prints each step; fails (non-zero exit) if an old file was refused or could not be removed.
+fn report(r: &vpnlane_macos::InstallReport) -> Result<()> {
+    for s in &r.steps {
+        println!("{s}");
+    }
+    if r.ok() {
+        Ok(())
+    } else {
+        Err(eyre!(
+            "some old files were refused or could not be removed (the new install, if any, is in place); see the lines above and docs/UPGRADING.md"
+        ))
+    }
 }
 
 /// `vpnlane-helper` in the same directory as the running `vpnlane` binary.

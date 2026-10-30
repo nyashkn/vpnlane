@@ -14,6 +14,7 @@ mod bypass;
 mod command;
 mod conf_store;
 mod helper;
+mod legacy;
 mod ping_probe;
 mod privilege;
 mod probe;
@@ -28,9 +29,11 @@ pub use bypass::{StaticBypass, TailscaleBypass};
 pub use command::{CommandOutput, CommandRunner, SystemRunner};
 pub use conf_store::ConfStore;
 pub use helper::{HELPER_PATH, HelperClient, HelperVerb, STATE_DIR, TOOL_DIR, helper_main};
+pub use legacy::{Outcome, Step};
 pub use ping_probe::{PingProbe, physical_interface};
 pub use privilege::{
-    SUDOERS_PATH, check_tool_dir, install_helper, render_sudoers_rule, uninstall_helper,
+    InstallReport, SUDOERS_PATH, check_tool_dir, install_helper, render_sudoers_rule,
+    uninstall_helper,
 };
 pub use probe::TailscalePing;
 pub use routes::RouteTable;

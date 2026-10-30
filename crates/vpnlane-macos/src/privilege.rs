@@ -7,6 +7,7 @@ use std::process::Command;
 use vpnlane_core::{Error, Result};
 
 use crate::helper::{TOOL_DIR, TOOLS};
+use crate::legacy::{Legacy, Outcome, Step};
 use crate::{CommandRunner, HELPER_PATH};
 
 /// sudoers drop-in written by `install-helper`.
@@ -62,7 +63,7 @@ pub fn render_sudoers_rule(user: &str, helper: &Path) -> Result<String> {
 }
 
 /// `(uid, st_mode)` of `path` without following a final symlink.
-fn lstat(path: &Path) -> io::Result<(u32, u32)> {
+pub(crate) fn lstat(path: &Path) -> io::Result<(u32, u32)> {
     let m = fs::symlink_metadata(path)?;
     Ok((m.uid(), m.mode()))
 }
@@ -70,7 +71,7 @@ fn lstat(path: &Path) -> io::Result<(u32, u32)> {
 /// Fails unless `path` and every ancestor up to and including `top` has uid
 /// `owner` and is not group/world-writable. A symlink fails (its mode is 0777),
 /// so pass a canonical path. `stat` is the seam: `(uid, st_mode)` per path.
-fn require_trusted_chain(
+pub(crate) fn require_trusted_chain(
     path: &Path,
     top: &Path,
     owner: u32,
@@ -109,7 +110,7 @@ fn listing_has_acl(ls: &str) -> bool {
 /// Fails if `path` or any ancestor up to `top` has an extended ACL: an allow
 /// ACE can grant write access that the mode bits do not show. Fails closed if
 /// `ls` cannot be run.
-fn require_no_acl(path: &Path, top: &Path) -> Result<()> {
+pub(crate) fn require_no_acl(path: &Path, top: &Path) -> Result<()> {
     let mut chain = Vec::new();
     for p in path.ancestors() {
         chain.push(p);
@@ -309,6 +310,8 @@ struct Layout {
     owner_uid: u32,
     /// Last ancestor checked ("/" in production).
     top: PathBuf,
+    /// The pre-rename layout to detect and clean up.
+    legacy: Legacy,
 }
 
 impl Layout {
@@ -320,6 +323,7 @@ impl Layout {
             tool_sources: vec!["/opt/homebrew/bin".into(), "/usr/local/bin".into()],
             owner_uid: 0,
             top: "/".into(),
+            legacy: Legacy::system(),
         }
     }
 }
@@ -346,47 +350,90 @@ fn require_root() -> Result<()> {
 ///
 /// Every copied binary must pass `otool -L` loading only system libraries
 /// (checked on the copy, before it is renamed into place). Refuses unless the
-/// effective uid is 0. Safe to re-run.
+/// effective uid is 0. Refuses, before any change, while an old (pre-rename)
+/// tunnel may be up. Only after the new install verifies are the old artifacts
+/// removed, each only if positively identified. Safe to re-run.
+///
+/// `Err` means the old install was not touched. Normally the new one did not happen
+/// either; if the post-install verification is what failed, the new files are in
+/// place next to the old ones (two sudoers rules, each naming its own root-owned
+/// helper), which is safe and works. `Ok` carries a per-step report; see
+/// [`InstallReport::ok`].
 pub fn install_helper<R: CommandRunner>(
     runner: &R,
     user: &str,
     source_binary: &Path,
-) -> Result<()> {
+) -> Result<InstallReport> {
     require_root()?;
     install_at(runner, &Layout::system(), user, source_binary)
 }
 
 /// Removes the sudoers rule first (so privilege is gone even if the second
-/// step fails), then the helper. Missing files are fine. Requires root.
-pub fn uninstall_helper() -> Result<()> {
+/// step fails), then the helper; then the same for the old layout. Missing
+/// files are fine. Requires root. `user` (`SUDO_USER`) is needed to prove an
+/// old sudoers file is ours.
+pub fn uninstall_helper(user: Option<&str>) -> Result<InstallReport> {
     require_root()?;
-    uninstall_at(&Layout::system())
+    uninstall_at(&Layout::system(), user)
 }
 
-fn uninstall_at(l: &Layout) -> Result<()> {
+/// What [`install_helper`] and [`uninstall_helper`] did, step by step.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct InstallReport {
+    /// In the order performed.
+    pub steps: Vec<Step>,
+}
+
+impl InstallReport {
+    /// False if any old artifact was refused or failed to go (the new install is fine).
+    pub fn ok(&self) -> bool {
+        !self
+            .steps
+            .iter()
+            .any(|s| matches!(s.outcome, Outcome::Refused | Outcome::Failed))
+    }
+}
+
+fn uninstall_at(l: &Layout, user: Option<&str>) -> Result<InstallReport> {
+    // Removing the old rule and helper under a live old tunnel would strand it.
+    l.legacy.refuse_if_tunnel_up()?;
+    let mut steps = Vec::new();
     for p in [&l.sudoers, &l.helper] {
         match fs::remove_file(p) {
             Err(e) if e.kind() != ErrorKind::NotFound => {
                 return Err(Error::io(format!("removing {}", p.display()), e));
             }
-            _ => {}
+            Ok(()) => steps.push(Step::new(Outcome::Removed, p.display(), "")),
+            _ => steps.push(Step::new(Outcome::Skipped, p.display(), "not present")),
         }
     }
     match fs::remove_dir_all(&l.tools) {
         Err(e) if e.kind() != ErrorKind::NotFound => {
             return Err(Error::io(format!("removing {}", l.tools.display()), e));
         }
-        _ => {}
+        Ok(()) => steps.push(Step::new(Outcome::Removed, l.tools.display(), "")),
+        _ => steps.push(Step::new(
+            Outcome::Skipped,
+            l.tools.display(),
+            "not present",
+        )),
     }
     if let Some(parent) = l.tools.parent() {
         let _ = fs::remove_dir(parent); // only if now empty
     }
-    Ok(())
+    steps.extend(l.legacy.remove(user, l.owner_uid, &l.top));
+    Ok(InstallReport { steps })
 }
 
-fn install_at<R: CommandRunner>(runner: &R, l: &Layout, user: &str, source: &Path) -> Result<()> {
+fn install_at<R: CommandRunner>(
+    runner: &R,
+    l: &Layout,
+    user: &str,
+    source: &Path,
+) -> Result<InstallReport> {
     // Render (and so validate) before touching the system.
     let rule = render_sudoers_rule(user, &l.helper)?;
+    l.legacy.refuse_if_tunnel_up()?;
     // Find every tool before touching the system.
     let sources = TOOLS
         .iter()
@@ -449,7 +496,40 @@ fn install_at<R: CommandRunner>(runner: &R, l: &Layout, user: &str, source: &Pat
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
-    finish(runner, &tmp, &l.sudoers)
+    finish(runner, &tmp, &l.sudoers)?;
+
+    // Old artifacts go only once the new install demonstrably works.
+    verify_installed(l, &rule, source)?;
+    let mut steps: Vec<Step> = [&l.helper, &l.tools, &l.sudoers]
+        .iter()
+        .map(|p| Step::new(Outcome::Installed, p.display(), ""))
+        .collect();
+    steps.extend(l.legacy.remove(Some(user), l.owner_uid, &l.top));
+    Ok(InstallReport { steps })
+}
+
+/// Re-reads what was just installed, the way the helper and sudo will see it.
+fn verify_installed(l: &Layout, rule: &str, source: &Path) -> Result<()> {
+    let regular = |p: &Path, mode: u32| -> Result<()> {
+        let (uid, m) = lstat(p).map_err(|e| Error::io(format!("verifying {}", p.display()), e))?;
+        if uid != l.owner_uid || m & 0o170_000 != 0o100_000 || m & 0o7777 != mode {
+            return Err(invalid(format!(
+                "{} did not install as a root-owned regular file with mode {mode:o}",
+                p.display()
+            )));
+        }
+        Ok(())
+    };
+    regular(&l.helper, 0o755)?;
+    regular(&l.sudoers, 0o440)?;
+    check_tool_dir(&l.tools, &l.top, l.owner_uid)?;
+    let same = |a: &Path, b: &Path| matches!((fs::read(a), fs::read(b)), (Ok(x), Ok(y)) if x == y);
+    if !same(&l.helper, source) || fs::read(&l.sudoers).ok().as_deref() != Some(rule.as_bytes()) {
+        return Err(invalid(
+            "installed helper or sudoers rule differs from what was written",
+        ));
+    }
+    Ok(())
 }
 
 fn sibling(path: &Path, suffix: &str) -> PathBuf {
@@ -530,7 +610,7 @@ mod tests {
     #[test]
     fn rule_snapshot() {
         let rule = render_sudoers_rule("kn", Path::new(HELPER_PATH)).unwrap();
-        insta::assert_snapshot!(rule, @"kn ALL=(root) NOPASSWD: /usr/local/libexec/wglane-helper");
+        insta::assert_snapshot!(rule, @"kn ALL=(root) NOPASSWD: /usr/local/libexec/vpnlane-helper");
     }
 
     #[test]
@@ -596,6 +676,13 @@ mod tests {
             tool_sources: vec![brew],
             owner_uid: fs::metadata(t.path()).unwrap().uid(),
             top: fs::canonicalize(t.path()).unwrap(),
+            legacy: Legacy {
+                helper: dir.join("wglane-helper"),
+                sudoers: sudoers_d.join("wglane"),
+                tools: dir.join("wglane/bin"),
+                state: t.path().join("var-db/wglane"),
+                run_dir: t.path().join("run-wg"),
+            },
         };
         (t, l, src)
     }
@@ -800,16 +887,16 @@ mod tests {
                     .ok_or_else(|| io::Error::from(ErrorKind::NotFound))
             }
         };
-        let f = Path::new("/usr/local/libexec/wglane/bin/wg-quick");
+        let f = Path::new("/usr/local/libexec/vpnlane/bin/wg-quick");
         let top = Path::new("/");
         let good: &[(&str, u32, u32)] = &[
             ("/", 0, OK),
             ("/usr", 0, OK),
             ("/usr/local", 0, OK),
             ("/usr/local/libexec", 0, OK),
-            ("/usr/local/libexec/wglane", 0, OK),
-            ("/usr/local/libexec/wglane/bin", 0, OK),
-            ("/usr/local/libexec/wglane/bin/wg-quick", 0, 0o100_755),
+            ("/usr/local/libexec/vpnlane", 0, OK),
+            ("/usr/local/libexec/vpnlane/bin", 0, OK),
+            ("/usr/local/libexec/vpnlane/bin/wg-quick", 0, 0o100_755),
         ];
         assert!(require_trusted_chain(f, top, 0, chain(good.to_vec().leak())).is_ok());
         // Each variation breaks exactly one entry.
@@ -933,8 +1020,8 @@ mod tests {
     fn uninstall_removes_both_and_is_idempotent() {
         let (_t, l, src) = fixture();
         install_at(&Fake::new(), &l, "kn", &src).unwrap();
-        uninstall_at(&l).unwrap();
-        uninstall_at(&l).unwrap();
+        uninstall_at(&l, Some("kn")).unwrap();
+        uninstall_at(&l, Some("kn")).unwrap();
         assert!(!l.helper.exists() && !l.sudoers.exists() && !l.tools.exists());
     }
 
@@ -958,5 +1045,403 @@ mod tests {
         assert!(check(stat(1, 0o40777, 0, 0o40755)).is_err());
         assert!(check(stat(1, 0o40775, 501, 0o40755)).is_err());
         assert!(check(stat(1, 0o40775, 0, 0o40757)).is_err());
+    }
+
+    // ---- migration from the pre-rename layout (all against the injected temp root) ----
+
+    fn mode(p: &Path, m: u32) {
+        fs::set_permissions(p, fs::Permissions::from_mode(m)).unwrap();
+    }
+
+    /// What `wglane` 0.4 `install-helper` left behind, plus an idle state dir.
+    fn legacy_install(l: &Layout, user: &str) {
+        let g = &l.legacy;
+        let rule = render_sudoers_rule(user, &g.helper).unwrap();
+        for d in [&g.tools, &g.state, &g.run_dir] {
+            fs::create_dir_all(d).unwrap();
+        }
+        mode(&g.state, 0o700);
+        fs::write(&g.helper, b"old helper").unwrap();
+        mode(&g.helper, 0o755);
+        for t in TOOLS {
+            fs::write(g.tools.join(t), t).unwrap();
+            mode(&g.tools.join(t), 0o755);
+        }
+        fs::write(&g.sudoers, rule).unwrap();
+        mode(&g.sudoers, 0o440);
+        for f in ["lock", "tunnels"] {
+            fs::write(g.state.join(f), b"").unwrap();
+            mode(&g.state.join(f), 0o600);
+        }
+    }
+
+    /// Every path under `root` with kind, mode and content: to prove "nothing changed".
+    fn tree(root: &Path) -> Vec<String> {
+        fn walk(p: &Path, out: &mut Vec<String>) {
+            let m = fs::symlink_metadata(p).unwrap();
+            let body = if m.is_file() {
+                fs::read(p).unwrap()
+            } else {
+                vec![]
+            };
+            let link = fs::read_link(p).ok();
+            out.push(format!(
+                "{} {:o} {:?} {:?}",
+                p.display(),
+                m.mode(),
+                body,
+                link
+            ));
+            if m.is_dir() {
+                let mut kids: Vec<_> = fs::read_dir(p)
+                    .unwrap()
+                    .flatten()
+                    .map(|e| e.path())
+                    .collect();
+                kids.sort();
+                for k in kids {
+                    walk(&k, out);
+                }
+            }
+        }
+        let mut v = Vec::new();
+        walk(root, &mut v);
+        v
+    }
+
+    fn outcome(r: &InstallReport, path: &Path) -> Outcome {
+        r.steps
+            .iter()
+            .find(|s| s.what == path.display().to_string() && s.outcome != Outcome::Installed)
+            .unwrap_or_else(|| panic!("no step for {}: {:#?}", path.display(), r.steps))
+            .outcome
+    }
+
+    #[test]
+    fn fresh_install_has_nothing_to_clean() {
+        let (_t, l, src) = fixture();
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert!(r.ok());
+        let installed: Vec<_> = r
+            .steps
+            .iter()
+            .filter(|s| s.outcome == Outcome::Installed)
+            .map(|s| s.what.clone())
+            .collect();
+        assert_eq!(installed.len(), 3);
+        assert!(
+            r.steps
+                .iter()
+                .filter(|s| s.outcome != Outcome::Installed)
+                .all(|s| s.outcome == Outcome::Skipped && s.note == "not present"),
+            "{:#?}",
+            r.steps
+        );
+    }
+
+    #[test]
+    fn upgrade_installs_new_then_removes_exactly_the_old() {
+        let (_t, l, src) = fixture();
+        legacy_install(&l, "kn");
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert!(r.ok(), "{:#?}", r.steps);
+        let g = &l.legacy;
+        for p in [
+            &g.sudoers,
+            &g.helper,
+            &g.tools,
+            &g.tools.parent().unwrap().to_path_buf(),
+            &g.state,
+        ] {
+            assert!(
+                fs::symlink_metadata(p).is_err(),
+                "{} survived: {:#?}",
+                p.display(),
+                r.steps
+            );
+            assert_eq!(outcome(&r, p), Outcome::Removed);
+        }
+        // The new install is in place and working, and its directory was not removed with the old.
+        assert!(l.helper.is_file() && l.sudoers.is_file() && l.tools.join("wg").is_file());
+        // Unrelated siblings are untouched.
+        assert!(l.top.join("run-wg").is_dir() && l.top.join("var-db").is_dir());
+    }
+
+    #[test]
+    fn user_edited_rule_is_kept_with_its_helper_and_a_warning() {
+        let (_t, l, src) = fixture();
+        legacy_install(&l, "kn");
+        let g = &l.legacy;
+        let mut edited = fs::read_to_string(&g.sudoers).unwrap();
+        edited.push_str("# mine\n");
+        mode(&g.sudoers, 0o640);
+        fs::write(&g.sudoers, &edited).unwrap();
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert!(r.ok(), "kept is a warning, not a failure");
+        assert_eq!(fs::read_to_string(&g.sudoers).unwrap(), edited);
+        let w = r
+            .steps
+            .iter()
+            .find(|s| s.what == g.sudoers.display().to_string())
+            .unwrap();
+        assert!(
+            w.outcome == Outcome::Skipped && w.note.contains("WARNING"),
+            "{w}"
+        );
+        // The rule still points at the old helper, so the helper and tools stay too.
+        assert!(g.helper.is_file() && g.tools.join("wg").is_file());
+        assert!(
+            g.state.join("lock").is_file(),
+            "state dir waits for the rule too"
+        );
+        // A rule for a different user is "not ours" the same way.
+        let (_t2, l2, src2) = fixture();
+        legacy_install(&l2, "someoneelse");
+        install_at(&Fake::new(), &l2, "kn", &src2).unwrap();
+        assert!(l2.legacy.sudoers.is_file() && l2.legacy.helper.is_file());
+    }
+
+    #[test]
+    fn symlinked_old_helper_is_refused_and_not_followed() {
+        let (_t, l, src) = fixture();
+        legacy_install(&l, "kn");
+        let g = &l.legacy;
+        let victim = l.top.join("victim");
+        fs::write(&victim, b"precious").unwrap();
+        fs::remove_file(&g.helper).unwrap();
+        std::os::unix::fs::symlink(&victim, &g.helper).unwrap();
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert!(!r.ok());
+        assert_eq!(outcome(&r, &g.helper), Outcome::Refused);
+        assert!(
+            fs::symlink_metadata(&g.helper)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(&victim).unwrap(), b"precious");
+        assert!(l.helper.is_file(), "new install is in place");
+    }
+
+    #[test]
+    fn writable_old_helper_is_refused_and_extra_tool_files_are_kept() {
+        let (_t, l, src) = fixture();
+        legacy_install(&l, "kn");
+        mode(&l.legacy.helper, 0o775);
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert!(!r.ok());
+        assert_eq!(outcome(&r, &l.legacy.helper), Outcome::Refused);
+        assert!(l.legacy.helper.exists() && l.helper.is_file());
+        // A planted extra file in the old tool dir is never deleted; the dir stays.
+        let (_t, l2, src2) = fixture();
+        legacy_install(&l2, "kn");
+        fs::write(l2.legacy.tools.join("extra"), b"x").unwrap();
+        let r = install_at(&Fake::new(), &l2, "kn", &src2).unwrap();
+        assert!(l2.legacy.tools.join("extra").exists());
+        assert!(!l2.legacy.tools.join("wg").exists(), "known tools go");
+        assert_eq!(outcome(&r, &l2.legacy.tools), Outcome::Skipped);
+    }
+
+    #[test]
+    fn wrong_owner_of_the_new_dirs_installs_nothing() {
+        let (_t, mut l, src) = fixture();
+        legacy_install(&l, "kn");
+        l.owner_uid += 1;
+        assert!(install_at(&Fake::new(), &l, "kn", &src).is_err());
+        assert!(l.legacy.helper.exists() && l.legacy.sudoers.exists());
+    }
+
+    #[test]
+    fn uninstall_refuses_while_an_old_tunnel_is_recorded() {
+        let (_t, l, src) = fixture();
+        install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        legacy_install(&l, "kn");
+        fs::write(l.legacy.state.join("tunnels"), "de utun7 - 1:2:3\n").unwrap();
+        let before = tree(&l.top);
+        let err = uninstall_at(&l, Some("kn")).unwrap_err().to_string();
+        assert!(
+            err.contains("`wglane down`") && err.contains("wglane-helper down"),
+            "{err}"
+        );
+        assert_eq!(
+            tree(&l.top),
+            before,
+            "nothing removed, tunnel record intact"
+        );
+    }
+
+    #[test]
+    fn leftover_conf_or_bypass_state_means_the_old_down_has_not_run() {
+        for (file, hint) in [
+            ("de.conf", true),
+            ("bypass.json", false),
+            ("de.conf.tmp", true),
+        ] {
+            let (_t, l, src) = fixture();
+            legacy_install(&l, "kn");
+            fs::write(l.legacy.state.join(file), "PrivateKey = secret\n").unwrap();
+            let before = tree(&l.top);
+            let err = install_at(&Fake::new(), &l, "kn", &src)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(file) && err.contains("Nothing was changed"),
+                "{err}"
+            );
+            assert_eq!(err.contains("private keys"), hint, "{file}: {err}");
+            assert_eq!(
+                tree(&l.top),
+                before,
+                "{file}: never deleted, nothing changed"
+            );
+            assert!(
+                uninstall_at(&l, Some("kn")).is_err(),
+                "{file}: uninstall refuses too"
+            );
+        }
+    }
+
+    #[test]
+    fn a_held_old_lock_skips_all_cleanup() {
+        let (_t, l, src) = fixture();
+        legacy_install(&l, "kn");
+        let held = fs::File::open(l.legacy.state.join("lock")).unwrap();
+        rustix::fs::flock(&held, rustix::fs::FlockOperation::NonBlockingLockExclusive).unwrap();
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert!(r.ok() && l.helper.is_file(), "new install still done");
+        assert!(l.legacy.sudoers.exists() && l.legacy.helper.exists() && l.legacy.tools.exists());
+        assert!(
+            r.steps
+                .iter()
+                .any(|s| s.note.contains("old helper is running")),
+            "{:#?}",
+            r.steps
+        );
+        drop(held);
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert_eq!(outcome(&r, &l.legacy.sudoers), Outcome::Removed);
+    }
+
+    #[test]
+    fn an_old_tunnel_refuses_before_any_change() {
+        for case in ["tunnels", "namefile", "tunnels-symlink"] {
+            let (_t, l, src) = fixture();
+            legacy_install(&l, "kn");
+            let g = &l.legacy;
+            match case {
+                "tunnels" => fs::write(g.state.join("tunnels"), "de utun7 - 1:2:3\n").unwrap(),
+                "namefile" => fs::write(g.run_dir.join("wglane.name"), "utun7\n").unwrap(),
+                _ => {
+                    fs::remove_file(g.state.join("tunnels")).unwrap();
+                    std::os::unix::fs::symlink("/dev/null", g.state.join("tunnels")).unwrap();
+                }
+            }
+            let before = tree(&l.top);
+            let r = Fake::new();
+            let err = install_at(&r, &l, "kn", &src).unwrap_err().to_string();
+            assert!(
+                err.contains("`wglane down`") && err.contains("Nothing was changed"),
+                "{case}: {err}"
+            );
+            assert!(r.inner.calls().is_empty(), "{case}: no command ran");
+            assert_eq!(tree(&l.top), before, "{case}: tree changed");
+        }
+    }
+
+    #[test]
+    fn failure_at_every_step_leaves_the_old_install_intact() {
+        // Runner calls in order: otool+chown wg, otool+chown wireguard-go, otool+chown helper, visudo, chown rule.
+        for k in 0..8 {
+            let (_t, l, src) = fixture();
+            legacy_install(&l, "kn");
+            let before_state = tree(&l.legacy.state);
+            let r = Fake::new();
+            for _ in 0..k {
+                r.inner.push_stdout("");
+            }
+            r.inner.push(CommandOutput {
+                code: Some(1),
+                stderr: "boom".into(),
+                ..Default::default()
+            });
+            assert!(
+                install_at(&r, &l, "kn", &src).is_err(),
+                "step {k} should fail"
+            );
+            // The new sudoers rule never exists unless everything before it worked.
+            assert!(!l.sudoers.exists());
+            // Every legacy artifact is byte-identical; only new files/temps may differ.
+            let g = &l.legacy;
+            for p in [
+                &g.helper,
+                &g.sudoers,
+                &g.tools.join("wg"),
+                &g.tools.join("wireguard-go"),
+                &g.state.join("lock"),
+            ] {
+                assert!(
+                    fs::symlink_metadata(p).is_ok(),
+                    "step {k}: {} gone",
+                    p.display()
+                );
+            }
+            assert_eq!(tree(&g.state), before_state, "step {k}");
+            assert_eq!(
+                fs::read(&g.sudoers).unwrap(),
+                render_sudoers_rule("kn", &g.helper).unwrap().into_bytes()
+            );
+            assert_eq!(fs::read(&g.helper).unwrap(), b"old helper");
+        }
+    }
+
+    #[test]
+    fn failed_verification_keeps_the_old_install() {
+        let (_t, l, src) = fixture();
+        legacy_install(&l, "kn");
+        install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        let rule = render_sudoers_rule("kn", &l.helper).unwrap();
+        verify_installed(&l, &rule, &src).unwrap();
+        // Wrong rule content, wrong mode, tampered helper: each fails closed.
+        assert!(verify_installed(&l, "other\n", &src).is_err());
+        mode(&l.sudoers, 0o444);
+        assert!(verify_installed(&l, &rule, &src).is_err());
+        mode(&l.sudoers, 0o440);
+        fs::remove_file(&l.helper).unwrap();
+        fs::write(&l.helper, b"tampered").unwrap();
+        mode(&l.helper, 0o755);
+        assert!(verify_installed(&l, &rule, &src).is_err());
+    }
+
+    #[test]
+    fn rerun_is_a_clear_no_op_for_the_old_files() {
+        let (_t, l, src) = fixture();
+        legacy_install(&l, "kn");
+        install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        let first = tree(&l.top);
+        let r = install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        assert!(r.ok());
+        assert!(
+            r.steps
+                .iter()
+                .filter(|s| s.outcome != Outcome::Installed)
+                .all(|s| s.outcome == Outcome::Skipped && s.note == "not present"),
+            "{:#?}",
+            r.steps
+        );
+        assert_eq!(tree(&l.top), first);
+    }
+
+    #[test]
+    fn uninstall_also_removes_a_verified_old_layout() {
+        let (_t, l, src) = fixture();
+        install_at(&Fake::new(), &l, "kn", &src).unwrap();
+        legacy_install(&l, "kn");
+        let r = uninstall_at(&l, Some("kn")).unwrap();
+        assert!(r.ok());
+        assert!(!l.legacy.helper.exists() && !l.legacy.sudoers.exists() && !l.helper.exists());
+        // Without SUDO_USER an old rule cannot be proven ours: kept, with its helper.
+        legacy_install(&l, "kn");
+        uninstall_at(&l, None).unwrap();
+        assert!(l.legacy.sudoers.exists() && l.legacy.helper.exists());
     }
 }

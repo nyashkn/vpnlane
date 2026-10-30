@@ -40,9 +40,9 @@ pub(crate) const TOOLS: [&str; 2] = ["wg", "wireguard-go"];
 const SUDO: &str = "/usr/bin/sudo";
 /// The only `PATH` programs run by the helper see; the caller's is discarded.
 const ROOT_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
-const BYPASS_STATE: &str = "bypass.json";
+pub(crate) const BYPASS_STATE: &str = "bypass.json";
 /// Held (`flock`) for the whole of an up/down/active/bypass, so they never interleave.
-const LOCK_FILE: &str = "lock";
+pub(crate) const LOCK_FILE: &str = "lock";
 /// A rendered config is ~300 bytes; anything near this is not one.
 const MAX_STDIN: usize = 1024;
 const MAX_CONF_BYTES: u64 = 4096;
@@ -1217,7 +1217,7 @@ mod tests {
         let env = r.run("wireguard-go", &["utun"]).unwrap().stdout;
         assert!(env.contains(&format!("PATH={ROOT_PATH}\n")), "{env}");
         assert!(
-            env.contains("WG_TUN_NAME_FILE=/var/run/wireguard/wglane.name\n"),
+            env.contains("WG_TUN_NAME_FILE=/var/run/wireguard/vpnlane.name\n"),
             "{env}"
         );
         // Nothing inherited from the caller (cargo sets many of these).
@@ -1299,7 +1299,7 @@ mod tests {
         assert_eq!(
             (r.tool_dir.as_path(), r.top.as_path(), r.owner),
             (
-                Path::new("/usr/local/libexec/wglane/bin"),
+                Path::new("/usr/local/libexec/vpnlane/bin"),
                 Path::new("/"),
                 0
             )

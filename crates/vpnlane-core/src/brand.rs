@@ -26,18 +26,31 @@ pub const BIN: &str = brand_name!();
 pub const HELPER_BIN: &str = concat!(brand_name!(), "-helper");
 /// Directory name under `~/.config`.
 pub const CONFIG_DIR_NAME: &str = brand_name!();
-// R3 pending: the root-side names below stay on the old brand until the
-// helper/sudoers/state migration lands; the helper *binary* is `HELPER_BIN`.
 /// Root-owned install path of the helper.
-pub const HELPER_PATH: &str = "/usr/local/libexec/wglane-helper";
+pub const HELPER_PATH: &str = concat!("/usr/local/libexec/", brand_name!(), "-helper");
 /// Root-owned directory of vetted `wg`/`wireguard-go` copies.
-pub const TOOL_DIR: &str = "/usr/local/libexec/wglane/bin";
+pub const TOOL_DIR: &str = concat!("/usr/local/libexec/", brand_name!(), "/bin");
 /// Root-owned runtime state directory.
-pub const STATE_DIR: &str = "/var/db/wglane";
+pub const STATE_DIR: &str = concat!("/var/db/", brand_name!());
 /// Sudoers drop-in path.
-pub const SUDOERS_PATH: &str = "/etc/sudoers.d/wglane";
+pub const SUDOERS_PATH: &str = concat!("/etc/sudoers.d/", brand_name!());
 /// Name file wireguard-go is told to write (`WG_TUN_NAME_FILE`).
-pub const WG_NAME_FILE: &str = "wglane.name";
+pub const WG_NAME_FILE: &str = concat!(brand_name!(), ".name");
+
+// The pre-rename root layout. Used ONLY by the install-helper migration and
+// doctor to find and remove what an old release installed; never to run anything.
+/// Old binary name (for messages only).
+pub const LEGACY_BIN: &str = "wglane";
+/// Old helper path.
+pub const LEGACY_HELPER_PATH: &str = "/usr/local/libexec/wglane-helper";
+/// Old tool directory.
+pub const LEGACY_TOOL_DIR: &str = "/usr/local/libexec/wglane/bin";
+/// Old state directory.
+pub const LEGACY_STATE_DIR: &str = "/var/db/wglane";
+/// Old sudoers drop-in.
+pub const LEGACY_SUDOERS_PATH: &str = "/etc/sudoers.d/wglane";
+/// Old wireguard-go name file.
+pub const LEGACY_WG_NAME_FILE: &str = "wglane.name";
 /// The hint printed when the root helper is missing.
 pub const INSTALL_HINT: &str = concat!("sudo ", brand_name!(), " install-helper");
 /// GitHub repository slug. TODO(R5): becomes `nyashkn/vpnlane` once the owner renames the repo.
