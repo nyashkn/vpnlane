@@ -90,6 +90,8 @@ pub struct City {
 pub fn fold(s: &str) -> String {
     s.chars()
         .flat_map(char::to_lowercase)
+        // A decomposed accent (u + U+0308) folds like the composed letter.
+        .filter(|c| !('\u{300}'..='\u{36f}').contains(c))
         .map(|c| match c {
             'à'..='å' | 'ā' | 'ă' | 'ą' => 'a',
             'ç' | 'ć' | 'č' => 'c',

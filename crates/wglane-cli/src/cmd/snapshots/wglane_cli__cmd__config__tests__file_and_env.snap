@@ -2,14 +2,14 @@
 source: crates/wglane-cli/src/cmd/config.rs
 expression: "show(&eff(file, env), false).unwrap()"
 ---
-default_country        FR               env
-default_city           (unset)          default
-pick                   fastest          file
+location               FR               env
+pick                   least-load       env
 bypass_extra           203.0.113.0/24   file
+preset                 work             env
 exit_ip_check          false            file
 tui.start_expanded     false            default
 tui.graph_samples      60               default
 tui.warn_ratio         2.0              file
 presets                home,work        file
   1 home               fastest          file
-  2 work               DE, Berlin       file
+  2 work               DE/Berlin        file

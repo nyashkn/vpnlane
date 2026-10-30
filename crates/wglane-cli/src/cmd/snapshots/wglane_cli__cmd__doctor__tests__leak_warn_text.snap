@@ -1,0 +1,5 @@
+---
+source: crates/wglane-cli/src/cmd/doctor.rs
+expression: "render(&rows, false).unwrap()"
+---
+WARN  leak check  exit_ip_check = false: `status` cannot tell you if traffic leaks; remove the key or set WGLANE_EXIT_IP_CHECK=true

@@ -8,14 +8,14 @@ expression: "list(&s, None, true).unwrap()"
     "key": 1,
     "label": "Office exit",
     "name": "work",
-    "summary": "DE, Berlin, +2 routes"
+    "summary": "DE/Berlin, +2 routes"
   },
   {
     "active": false,
     "key": 2,
     "label": null,
     "name": "ghost",
-    "summary": "DE, Atlantis"
+    "summary": "DE/Atlantis"
   },
   {
     "active": false,

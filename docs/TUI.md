@@ -39,7 +39,7 @@ All groups and countries start closed, except the connected one: its group opens
 
 While a filter is active, the query matches the country code, the country name and city names (case-insensitive substring, accents ignored; code-prefix hits come first). Only groups with matches are shown, all open, and the group with the best match comes first. A country with matching cities opens and lists only those cities. A country shown only because of its cities is not selectable, nor is a group header, so `enter` always connects something that matched; the toggle keys do nothing while a filter is active.
 
-The connected city comes from a `<cc>.city` note next to the config, written when `up` generates the config. It is missing for configs made by `gen` or by an older wglane, and then only the country is shown.
+The connected city comes from the `confs` map in `<config dir>/state.json` (`Context::recorded_city`), written when `up` generates the config. It is missing for configs made by `gen` or by an older wglane, and then only the country is shown.
 
 ## States
 

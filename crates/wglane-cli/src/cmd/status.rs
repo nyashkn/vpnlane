@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use color_eyre::Result;
 use wglane_core::ports::{ExitIpProbe, TailnetProbe, Tunnel};
-use wglane_core::{CountryCode, Overrides, TailnetHealth, TunnelStatus};
+use wglane_core::{CountryCode, Overrides, PresetUse, TailnetHealth, TunnelStatus};
 use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
 use wglane_nord::NordApi;
 
@@ -29,9 +29,19 @@ With --json, prints one object for scripts and menu-bar plugins:
   protected      true | false | null (unknown)
   tailnet        {ok: bool, peer: string|null, ms: number|null}
   bypass_routes  number of bypass routes installed
+  leak_check     \"ok\" (exit IP looked up) | \"disabled\" (exit_ip_check =
+                 false) | \"unavailable\" (enabled, but the lookup failed)
   preset         name of the preset the connection was applied from; present
                  only while a tunnel is up and a preset is active
-Keys are stable; new keys may be added, none removed or renamed.",
+  preset_overridden
+                 keys changed after applying it (\"location\", \"pick\"); present
+                 only when there are any
+Keys are stable; new keys may be added, none removed or renamed.
+
+The leak check is the exit IP lookup behind `protected` and the exit-country
+warning. `exit_ip_check = false` (or WGLANE_EXIT_IP_CHECK=false) turns it off;
+status then prints a `leak check  disabled` line every time, and `wglane
+doctor` warns.",
     after_help = "\
 Examples:
   wglane status
@@ -52,15 +62,19 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
         exit_ip_check: args.exit_ip_check,
         ..Overrides::default()
     };
+    let exit_ip_check = ctx.settings(flags)?.exit_ip_check.value;
     let (status, known) = gather(
         &HelperClient::new(runner),
         &NordApi::new(),
         &TailscalePing::new(runner),
         ctx.recorded_routes(),
-        ctx.settings(flags)?.exit_ip_check.value,
+        exit_ip_check,
     );
-    let preset = ctx.recorded_preset().filter(|_| !status.active.is_empty());
-    println!("{}", render(&status, known, ctx.json, preset.as_deref())?);
+    let preset = ctx.active_preset().filter(|_| !status.active.is_empty());
+    println!(
+        "{}",
+        render(&status, known, ctx.json, preset.as_ref(), exit_ip_check)?
+    );
     Ok(())
 }
 
@@ -98,8 +112,22 @@ fn connected(s: &TunnelStatus) -> Option<CountryCode> {
     s.active.first().and_then(|n| n.parse().ok())
 }
 
+/// What the leak check (the exit IP lookup) did.
+fn leak_check(s: &TunnelStatus, exit_ip_check: bool) -> &'static str {
+    match (exit_ip_check, s.exit_ip) {
+        (false, _) => "disabled",
+        (true, Some(_)) => "ok",
+        (true, None) => "unavailable",
+    }
+}
+
 /// The documented `--json` shape; see `long_about`.
-fn report(s: &TunnelStatus, known: bool, preset: Option<&str>) -> serde_json::Value {
+fn report(
+    s: &TunnelStatus,
+    known: bool,
+    preset: Option<&PresetUse>,
+    exit_ip_check: bool,
+) -> serde_json::Value {
     let (ok, peer, ms) = match &s.tailnet {
         TailnetHealth::Reachable { peer, latency_ms } => {
             (true, Some(peer.as_str()), Some(*latency_ms))
@@ -118,9 +146,13 @@ fn report(s: &TunnelStatus, known: bool, preset: Option<&str>) -> serde_json::Va
         "protected": s.protected,
         "tailnet": { "ok": ok, "peer": peer, "ms": ms },
         "bypass_routes": s.bypass_routes,
+        "leak_check": leak_check(s, exit_ip_check),
     });
     if let Some(p) = preset {
-        v["preset"] = p.into();
+        v["preset"] = p.name.as_str().into();
+        if !p.overridden.is_empty() {
+            v["preset_overridden"] = p.overridden.clone().into();
+        }
     }
     v
 }
@@ -140,9 +172,20 @@ fn warnings(s: &TunnelStatus) -> Vec<String> {
     w
 }
 
-fn render(s: &TunnelStatus, known: bool, json: bool, preset: Option<&str>) -> Result<String> {
+fn render(
+    s: &TunnelStatus,
+    known: bool,
+    json: bool,
+    preset: Option<&PresetUse>,
+    exit_ip_check: bool,
+) -> Result<String> {
     if json {
-        return Ok(serde_json::to_string_pretty(&report(s, known, preset))?);
+        return Ok(serde_json::to_string_pretty(&report(
+            s,
+            known,
+            preset,
+            exit_ip_check,
+        ))?);
     }
     let tunnel = if !known {
         "unknown: run wglane doctor".to_owned()
@@ -166,10 +209,13 @@ fn render(s: &TunnelStatus, known: bool, json: bool, preset: Option<&str>) -> Re
     let mut out = String::new();
     let _ = writeln!(out, "tunnel         {tunnel}");
     if let Some(p) = preset {
-        let _ = writeln!(out, "preset         {p}");
+        let _ = writeln!(out, "preset         {}", p.describe());
     }
     let _ = writeln!(out, "exit ip        {exit_ip}");
     let _ = writeln!(out, "protected      {protected}");
+    if !exit_ip_check {
+        let _ = writeln!(out, "leak check     disabled (exit_ip_check = false)");
+    }
     let _ = writeln!(out, "tailnet        {tailnet}");
     let _ = write!(out, "bypass routes  {}", s.bypass_routes);
     for line in warnings(s) {
@@ -205,20 +251,98 @@ mod tests {
         .0
     }
 
+    fn work() -> PresetUse {
+        PresetUse {
+            name: "work".into(),
+            overridden: vec![],
+        }
+    }
+
     #[test]
     fn text_and_json_are_stable() {
-        insta::assert_snapshot!(render(&status(), true, false, None).unwrap());
-        insta::assert_snapshot!(render(&status(), true, true, None).unwrap());
+        insta::assert_snapshot!(render(&status(), true, false, None, true).unwrap());
+        insta::assert_snapshot!(render(&status(), true, true, None, true).unwrap());
     }
 
     #[test]
     fn active_preset_is_an_additive_key() {
         let s = status();
-        let json = render(&s, true, true, Some("work")).unwrap();
+        let json = render(&s, true, true, Some(&work()), true).unwrap();
         assert!(json.contains("\"preset\": \"work\""), "{json}");
-        assert!(!render(&s, true, true, None).unwrap().contains("preset"));
-        let text = render(&s, true, false, Some("work")).unwrap();
+        assert!(
+            !render(&s, true, true, None, true)
+                .unwrap()
+                .contains("preset")
+        );
+        let text = render(&s, true, false, Some(&work()), true).unwrap();
         assert!(text.contains("preset         work"), "{text}");
+    }
+
+    #[test]
+    fn an_overridden_preset_says_so_in_text_and_json() {
+        let s = status();
+        let p = PresetUse {
+            name: "work".into(),
+            overridden: vec!["location".into()],
+        };
+        let text = render(&s, true, false, Some(&p), true).unwrap();
+        assert!(
+            text.contains("preset         work (location overridden)"),
+            "{text}"
+        );
+        let json = render(&s, true, true, Some(&p), true).unwrap();
+        assert!(json.contains("\"preset\": \"work\""), "{json}");
+        assert!(json.contains("\"preset_overridden\""), "{json}");
+        assert!(
+            !render(&s, true, true, Some(&work()), true)
+                .unwrap()
+                .contains("preset_overridden")
+        );
+    }
+
+    /// `exit_ip_check = false` is allowed but never silent.
+    #[test]
+    fn a_disabled_leak_check_is_loud_in_text_and_json() {
+        let tunnel = FakeTunnel::default();
+        tunnel.up.borrow_mut().push("za".into());
+        let gather_with = |check| {
+            gather(
+                &tunnel,
+                &FakeExitIp::at("192.0.2.7".parse().unwrap()),
+                &FakeTailnet(TailnetHealth::NotInstalled),
+                1,
+                check,
+            )
+            .0
+        };
+        let off = gather_with(false);
+        let text = render(&off, true, false, None, false).unwrap();
+        insta::assert_snapshot!("leak_disabled_text", text);
+        let json = render(&off, true, true, None, false).unwrap();
+        assert!(json.contains("\"leak_check\": \"disabled\""), "{json}");
+        // `protected` stays null: with the check off it is unknown, as before.
+        assert!(json.contains("\"protected\": null"), "{json}");
+        let on = gather_with(true);
+        let text = render(&on, true, false, None, true).unwrap();
+        assert!(!text.contains("leak check"), "{text}");
+        assert!(
+            render(&on, true, true, None, true)
+                .unwrap()
+                .contains("\"leak_check\": \"ok\"")
+        );
+        // Enabled but the lookup failed.
+        let (broken, _) = gather(
+            &tunnel,
+            &FakeExitIp(None),
+            &FakeTailnet(TailnetHealth::NotInstalled),
+            0,
+            true,
+        );
+        assert!(
+            render(&broken, true, true, None, true)
+                .unwrap()
+                .contains("\"leak_check\": \"unavailable\"")
+        );
     }
 
     #[test]
@@ -231,8 +355,8 @@ mod tests {
             tailnet: TailnetHealth::NotInstalled,
             bypass_routes: 0,
         };
-        insta::assert_snapshot!(render(&s, true, false, None).unwrap());
-        insta::assert_snapshot!(render(&s, true, true, None).unwrap());
+        insta::assert_snapshot!(render(&s, true, false, None, true).unwrap());
+        insta::assert_snapshot!(render(&s, true, true, None, true).unwrap());
     }
 
     #[test]
@@ -241,7 +365,7 @@ mod tests {
         assert_eq!(warnings(&s).len(), 0);
         s.protected = Some(false);
         s.exit_country = Some("DE".parse().unwrap());
-        insta::assert_snapshot!(render(&s, true, false, None).unwrap());
+        insta::assert_snapshot!(render(&s, true, false, None, true).unwrap());
         s.protected = None;
         s.exit_country = None;
         assert_eq!(warnings(&s).len(), 0);
@@ -261,7 +385,7 @@ mod tests {
         );
         assert_eq!((s.exit_ip, s.protected), (None, None));
         assert!(
-            render(&s, true, false, None)
+            render(&s, true, false, None, true)
                 .unwrap()
                 .contains("protected      unknown")
         );
@@ -302,7 +426,7 @@ mod tests {
             true,
         );
         assert!(!known);
-        let text = render(&s, known, false, None).unwrap();
+        let text = render(&s, known, false, None, true).unwrap();
         assert!(text.contains("unknown: run wglane doctor"), "{text}");
         assert!(!text.contains("none"), "{text}");
     }

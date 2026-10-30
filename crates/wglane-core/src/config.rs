@@ -10,7 +10,8 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use crate::preset::check_name;
-use crate::{CountryCode, Error, NamedPreset, Preset, Result};
+use crate::{CountryCode, Error, Location, NamedPreset, Preset, Result};
+use crate::{EffectiveRequest, KEYED_PRESETS, ResolvedPreset};
 
 /// Most bypass routes the helper accepts, auto ones plus `bypass_extra`.
 pub const MAX_BYPASS: usize = 1024;
@@ -36,6 +37,20 @@ pub enum Pick {
     Fastest,
 }
 
+impl std::str::FromStr for Pick {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "least-load" => Ok(Self::LeastLoad),
+            "fastest" => Ok(Self::Fastest),
+            _ => Err(Error::Config(format!(
+                "pick {s:?}: use least-load or fastest"
+            ))),
+        }
+    }
+}
+
 impl fmt::Display for Pick {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -45,14 +60,12 @@ impl fmt::Display for Pick {
     }
 }
 
-/// The `config.toml` file as written: every key optional.
-#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// The `config.toml` file after aliases are folded in: the top level is the
+/// unnamed base preset, `[presets.<name>]` tables overlay it.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct FileConfig {
-    /// Country for `wglane up` with no argument.
-    pub default_country: Option<CountryCode>,
-    /// City preference; belongs to `default_country` and applies only to it.
-    pub default_city: Option<String>,
+    /// Where `wglane up` connects with no argument.
+    pub location: Option<Location>,
     /// Server selection rule.
     pub pick: Option<Pick>,
     /// Extra CIDRs that skip the tunnel.
@@ -65,6 +78,68 @@ pub struct FileConfig {
     pub preset_order: Option<Vec<String>>,
     /// The `[presets.<name>]` tables.
     pub presets: Option<BTreeMap<String, Preset>>,
+    /// Old spellings found in the file (already mapped into the fields above).
+    pub deprecated: Vec<Deprecation>,
+}
+
+/// An old spelling that still works for one release.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Deprecation {
+    /// What the user wrote, e.g. `default_country` or `WGLANE_COUNTRY`.
+    pub old: String,
+    /// What replaces it, e.g. `location`.
+    pub new: String,
+}
+
+/// One line for stderr naming every replacement, or `None` when nothing is deprecated.
+pub fn deprecation_line(list: &[Deprecation]) -> Option<String> {
+    let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+    for d in list {
+        match groups.iter_mut().find(|(new, _)| *new == d.new) {
+            Some((_, olds)) => olds.push(&d.old),
+            None => groups.push((&d.new, vec![&d.old])),
+        }
+    }
+    (!groups.is_empty()).then(|| {
+        let parts: Vec<_> = groups
+            .iter()
+            .map(|(new, olds)| format!("{} -> {new}", olds.join(", ")))
+            .collect();
+        format!(
+            "warning: deprecated spelling, still works for this release: {} (see docs/CONFIG.md)",
+            parts.join("; ")
+        )
+    })
+}
+
+/// The file exactly as TOML spells it, old keys included.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFile {
+    location: Option<Location>,
+    default_country: Option<CountryCode>,
+    default_city: Option<String>,
+    pick: Option<Pick>,
+    bypass_extra: Option<Vec<IpNet>>,
+    exit_ip_check: Option<bool>,
+    tui: Option<TuiFile>,
+    preset_order: Option<Vec<String>>,
+    presets: Option<BTreeMap<String, RawPreset>>,
+}
+
+/// A `[presets.<name>]` table as TOML spells it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RawPreset {
+    pub(crate) label: Option<String>,
+    pub(crate) location: Option<Location>,
+    pub(crate) country: Option<CountryCode>,
+    pub(crate) city: Option<String>,
+    pub(crate) pick: Option<Pick>,
+    pub(crate) bypass_extra: Option<Vec<IpNet>>,
+    // Accepted only to say they do not belong here.
+    pub(crate) exit_ip_check: Option<toml::Value>,
+    pub(crate) tui: Option<toml::Value>,
 }
 
 /// The `[tui]` table as written.
@@ -79,11 +154,48 @@ pub struct TuiFile {
     pub warn_ratio: Option<f64>,
 }
 
+/// Folds `country`/`city` (old) into `location` (new). `old_*`/`new` name the
+/// keys for messages; on error: the field to locate and the message.
+pub(crate) fn fold_location(
+    location: Option<Location>,
+    country: Option<CountryCode>,
+    city: Option<String>,
+    (old_country, old_city, new): (&str, &str, &str),
+    deprecated: &mut Vec<Deprecation>,
+) -> Result<Option<Location>, (&'static str, String)> {
+    let dep = |old: &str| Deprecation {
+        old: old.to_owned(),
+        new: new.to_owned(),
+    };
+    let Some(cc) = country else {
+        return match (city, location) {
+            (Some(_), _) => Err((
+                "city",
+                format!("{old_city} needs {old_country}: write {new} = \"CC/City\" instead"),
+            )),
+            (None, l) => Ok(l),
+        };
+    };
+    if location.is_some() {
+        return Err((
+            "country",
+            format!("{old_country} is the old spelling of {new}: set only {new}"),
+        ));
+    }
+    deprecated.push(dep(old_country));
+    if city.is_some() {
+        deprecated.push(dep(old_city));
+    }
+    Location::new(cc, city)
+        .map(Some)
+        .map_err(|e| ("city", format!("{old_city}: {e}")))
+}
+
 impl FileConfig {
     /// Parses and validates `text`. A parse error names the offending key and line.
     pub fn parse(text: &str) -> Result<Self> {
-        let cfg: Self = toml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
-        cfg.validate().map_err(|(key, msg)| {
+        let raw: RawFile = toml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
+        let cfg = Self::build(raw).map_err(|(key, msg)| {
             // shortcut: first line starting with the key, not a TOML span; right unless a table repeats the name.
             // A key "header\nfield" is searched for the field after the header.
             let (head, field) = key.split_once('\n').unwrap_or((&key, ""));
@@ -103,25 +215,60 @@ impl FileConfig {
         Ok(cfg)
     }
 
-    /// On failure: the key to locate in the file, and the message.
-    fn validate(&self) -> Result<(), (String, String)> {
+    /// Folds old spellings in and validates. On failure: the key to locate in the file, and the message.
+    fn build(raw: RawFile) -> Result<Self, (String, String)> {
         let at = |key: &str| key.to_owned();
-        if let Some(city) = &self.default_city {
-            check_city("default_city", city).map_err(|m| (at("default_city"), m))?;
-        }
-        check_bypass("bypass_extra", self.bypass_extra.as_deref())
+        let mut deprecated = Vec::new();
+        let location = fold_location(
+            raw.location,
+            raw.default_country,
+            raw.default_city,
+            ("default_country", "default_city", "location"),
+            &mut deprecated,
+        )
+        .map_err(|(f, m)| {
+            (
+                at(if f == "city" {
+                    "default_city"
+                } else {
+                    "default_country"
+                }),
+                m,
+            )
+        })?;
+        check_bypass("bypass_extra", raw.bypass_extra.as_deref())
             .map_err(|m| (at("bypass_extra"), m))?;
-        for (name, p) in self.presets.iter().flatten() {
+        let had_presets = raw.presets.is_some();
+        let mut presets = BTreeMap::new();
+        for (name, p) in raw.presets.into_iter().flatten() {
             // Locate the table header; a name that needs quoting is found by its opening quote.
             let bare = name
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
             let key = format!("[presets.{}{name}", if bare { "" } else { "\"" });
-            check_name(name)
+            let preset = check_name(&name)
                 .map_err(|m| ("", m))
-                .and_then(|()| p.validate(name))
+                .and_then(|()| Preset::build(&name, p, &mut deprecated))
                 .map_err(|(field, m)| (format!("{key}\n{field}"), m))?;
+            presets.insert(name, preset);
         }
+        let cfg = Self {
+            location,
+            pick: raw.pick,
+            bypass_extra: raw.bypass_extra,
+            exit_ip_check: raw.exit_ip_check,
+            tui: raw.tui,
+            preset_order: raw.preset_order,
+            presets: had_presets.then_some(presets),
+            deprecated,
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// On failure: the key to locate in the file, and the message.
+    fn validate(&self) -> Result<(), (String, String)> {
+        let at = |key: &str| key.to_owned();
         let known = |n: &String| self.presets.as_ref().is_some_and(|p| p.contains_key(n));
         for (i, n) in self.preset_order.iter().flatten().enumerate() {
             let dup = self.preset_order.iter().flatten().take(i).any(|o| o == n);
@@ -160,19 +307,25 @@ impl FileConfig {
     }
 
     /// Applies precedence: `flags` > `env` > this file > built-in default.
-    pub fn resolve(&self, flags: Overrides, env: Overrides) -> Effective {
+    pub fn resolve(&self, flags: &Overrides, env: Overrides) -> Effective {
         let tui = self.tui.clone().unwrap_or_default();
+        let mut deprecated = self.deprecated.clone();
+        deprecated.extend(env.deprecated.iter().cloned());
         Effective {
-            default_country: layer(
-                flags.country.map(Some),
-                env.country.map(Some),
-                self.default_country.map(Some),
+            location: layer(
+                flags.location.clone().map(Some),
+                env.location.clone().map(Some),
+                self.location.clone().map(Some),
                 None,
             ),
-            file_default_country: self.default_country,
-            default_city: layer(None, None, self.default_city.clone().map(Some), None),
-            pick: layer(None, None, self.pick, Pick::default()),
+            pick: layer(flags.pick, env.pick, self.pick, Pick::default()),
             bypass_extra: layer(None, None, self.bypass_extra.clone(), Vec::new()),
+            preset: layer(
+                flags.preset.clone().map(Some),
+                env.preset.clone().map(Some),
+                None,
+                None,
+            ),
             exit_ip_check: layer(
                 flags.exit_ip_check,
                 env.exit_ip_check,
@@ -190,6 +343,13 @@ impl FileConfig {
                 self.presets.is_some().then(|| self.ordered_presets()),
                 Vec::new(),
             ),
+            deprecated,
+            base: Base {
+                location: self.location.clone(),
+                pick: self.pick.unwrap_or_default(),
+                bypass_extra: self.bypass_extra.clone().unwrap_or_default(),
+            },
+            env,
         }
     }
 
@@ -214,22 +374,6 @@ impl FileConfig {
                 .collect::<Vec<_>>(),
         );
         out
-    }
-}
-
-/// City rule shared by `default_city` and preset cities; `label` names the key.
-pub(crate) fn check_city(label: &str, city: &str) -> Result<(), String> {
-    let ok = !city.is_empty()
-        && city.chars().count() <= 64
-        && city
-            .chars()
-            .all(|c| c.is_alphanumeric() || " -'.".contains(c));
-    if ok {
-        Ok(())
-    } else {
-        Err(format!(
-            "{label} {city:?}: use 1 to 64 letters, digits, spaces, '-', ''' or '.'"
-        ))
     }
 }
 
@@ -301,23 +445,45 @@ pub struct Setting<T> {
 }
 
 /// Settings that a flag or an environment variable can override.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Overrides {
-    /// `default_country`.
-    pub country: Option<CountryCode>,
+    /// `location`.
+    pub location: Option<Location>,
+    /// `pick`.
+    pub pick: Option<Pick>,
+    /// Which preset to apply (`--preset`, `WGLANE_PRESET`).
+    pub preset: Option<String>,
     /// `exit_ip_check`.
     pub exit_ip_check: Option<bool>,
+    /// Old spellings that were read (`WGLANE_COUNTRY`).
+    pub deprecated: Vec<Deprecation>,
 }
 
 impl Overrides {
-    /// Reads `WGLANE_COUNTRY` and `WGLANE_EXIT_IP_CHECK` through `lookup`.
+    /// Reads `WGLANE_LOCATION`, `WGLANE_PICK`, `WGLANE_PRESET`,
+    /// `WGLANE_EXIT_IP_CHECK` and the deprecated `WGLANE_COUNTRY` through `lookup`.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let get = |name: &str| lookup(name).filter(|v| !v.trim().is_empty());
-        let country = get("WGLANE_COUNTRY")
+        let named = |name: &str, e: Error| Error::Config(format!("{name}: {e}"));
+        let mut deprecated = Vec::new();
+        let mut location = get("WGLANE_LOCATION")
             .map(|v| {
-                v.parse::<CountryCode>()
-                    .map_err(|e| Error::Config(format!("WGLANE_COUNTRY: {e}")))
+                v.parse::<Location>()
+                    .map_err(|e| named("WGLANE_LOCATION", e))
             })
+            .transpose()?;
+        if let Some(v) = get("WGLANE_COUNTRY") {
+            let cc = v
+                .parse::<CountryCode>()
+                .map_err(|e| named("WGLANE_COUNTRY", e))?;
+            deprecated.push(Deprecation {
+                old: "WGLANE_COUNTRY".to_owned(),
+                new: "WGLANE_LOCATION".to_owned(),
+            });
+            location = location.or(Some(Location::country_only(cc)));
+        }
+        let pick = get("WGLANE_PICK")
+            .map(|v| v.parse::<Pick>().map_err(|e| named("WGLANE_PICK", e)))
             .transpose()?;
         let exit_ip_check = get("WGLANE_EXIT_IP_CHECK")
             .map(|v| match v.trim().to_ascii_lowercase().as_str() {
@@ -329,43 +495,79 @@ impl Overrides {
             })
             .transpose()?;
         Ok(Self {
-            country,
+            location,
+            pick,
+            preset: get("WGLANE_PRESET").map(|v| v.trim().to_owned()),
             exit_ip_check,
+            deprecated,
         })
     }
 }
 
-/// Every setting after precedence is applied.
+/// The file's connection values: the unnamed base preset.
+#[derive(Clone, Debug, PartialEq)]
+struct Base {
+    location: Option<Location>,
+    pick: Pick,
+    bypass_extra: Vec<IpNet>,
+}
+
+/// Every setting after precedence is applied. A connection is built from it
+/// with [`Effective::request`].
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Effective {
-    /// Country for `up` with no argument; `None` when unset.
-    pub default_country: Setting<Option<CountryCode>>,
-    /// `default_country` as the file wrote it, before flag and environment.
-    #[serde(skip)]
-    pub file_default_country: Option<CountryCode>,
-    /// City for `default_country` as written in the file; inactive when the
-    /// country comes from elsewhere (see [`Effective::default_city_for`]).
-    pub default_city: Setting<Option<String>>,
+    /// Where `up` connects with no argument; `None` when unset. Flag, env or file.
+    pub location: Setting<Option<Location>>,
     /// Server selection rule.
     pub pick: Setting<Pick>,
     /// Extra bypass CIDRs (not the auto ones).
     pub bypass_extra: Setting<Vec<IpNet>>,
+    /// The preset chosen by flag or `WGLANE_PRESET`, if any.
+    pub preset: Setting<Option<String>>,
     /// Look up the exit IP.
     pub exit_ip_check: Setting<bool>,
     /// TUI settings.
     pub tui: TuiSettings,
     /// Presets in number-key order (`file` when any table exists).
     pub presets: Setting<Vec<NamedPreset>>,
+    /// Old spellings in use, from the file and the environment.
+    pub deprecated: Vec<Deprecation>,
+    #[serde(skip)]
+    base: Base,
+    #[serde(skip)]
+    env: Overrides,
 }
 
 impl Effective {
-    /// `default_city` if it applies to `country`: it belongs to the file's
-    /// `default_country`, so any other country (env, flag, preset) ignores it.
-    pub fn default_city_for(&self, country: Option<CountryCode>) -> Option<String> {
-        self.default_city
-            .value
-            .clone()
-            .filter(|_| country.is_some() && country == self.file_default_country)
+    /// The unnamed base preset with `preset` laid over it: scalars of the
+    /// preset win, `bypass_extra` is added. No environment, no flags.
+    pub fn overlay(&self, preset: Option<&Preset>) -> EffectiveRequest {
+        let mut req = EffectiveRequest {
+            location: self.base.location.clone(),
+            pick: self.base.pick,
+            bypass_extra: self.base.bypass_extra.clone(),
+        };
+        if let Some(p) = preset {
+            req.location = p.location.clone().or(req.location);
+            req.pick = p.pick.unwrap_or(req.pick);
+            for net in p.bypass_extra.iter().flatten() {
+                if !req.bypass_extra.contains(net) {
+                    req.bypass_extra.push(*net);
+                }
+            }
+        }
+        req
+    }
+
+    /// What `up` is asked to do: base, then `preset`, then the environment,
+    /// then `flags` (only `location` and `pick` are read from `flags`).
+    pub fn request(&self, preset: Option<&Preset>, flags: &Overrides) -> EffectiveRequest {
+        let mut req = self.overlay(preset);
+        for layer in [&self.env, flags] {
+            req.location = layer.location.clone().or(req.location);
+            req.pick = layer.pick.unwrap_or(req.pick);
+        }
+        req
     }
 
     /// The preset called `name`.
@@ -375,6 +577,21 @@ impl Effective {
             .iter()
             .find(|p| p.name == name)
             .map(|p| &p.preset)
+    }
+
+    /// Every preset with its key and the request it resolves to, in key order.
+    pub fn resolved_presets(&self) -> Vec<ResolvedPreset> {
+        self.presets
+            .value
+            .iter()
+            .enumerate()
+            .map(|(i, p)| ResolvedPreset {
+                name: p.name.clone(),
+                label: p.preset.label.clone(),
+                key: (i < KEYED_PRESETS).then_some(i + 1),
+                request: self.request(Some(&p.preset), &Overrides::default()),
+            })
+            .collect()
     }
 }
 
@@ -395,27 +612,32 @@ pub const SAMPLE_CONFIG: &str = r#"# wglane settings. Every key is optional; unc
 # Precedence: CLI flag > environment > this file > built-in default.
 # Reference: docs/CONFIG.md. The Nord token does NOT go here: it stays in
 # <config dir>/token (mode 600) or WGLANE_TOKEN.
+# This file is yours: wglane never writes to it. What it last applied is kept
+# in state.json beside it.
 
-# Country `wglane up` connects to when none is given (two letters).
-# Env: WGLANE_COUNTRY.
-# default_country = "US"
+# Where `wglane up` connects with no argument: a country ("US") or a city in
+# one ("US/Chicago"). `wglane up DE/Berlin` overrides it for one run.
+# Env: WGLANE_LOCATION.
+# location = "US/Chicago"
 
-# Preferred city for default_country; ignored when another country is used.
-# default_city = "Chicago"
-
-# Server choice: "least-load" or "fastest" (`up --fastest` for one run).
+# Server choice: "least-load" or "fastest". `up --pick fastest` for one run
+# (`--fastest` is the short form). Env: WGLANE_PICK.
 # pick = "least-load"
 
 # Extra CIDRs that skip the tunnel, added to the automatic Tailscale ones.
 # At most 1024 in total; IPv4 prefixes /8 or longer.
 # bypass_extra = ["198.51.100.0/24"]
 
-# Look up the exit IP in `status` and the TUI. Env: WGLANE_EXIT_IP_CHECK.
+# Look up the exit IP (the leak check) in `status` and the TUI. Turning it off
+# is allowed but never silent: `status` and `doctor` say so every time.
+# Env: WGLANE_EXIT_IP_CHECK. Top level only.
 # exit_ip_check = true
 
-# Presets: named bundles applied with `wglane preset apply NAME` or
-# `wglane up --preset NAME`. Names: a-z, 0-9, '_' and '-', up to 32. All keys
-# optional. The first 9 (preset_order, then alphabetical) get number keys.
+# Presets: named overlays of the settings above. A preset may set location,
+# pick and bypass_extra (the last one adds to the top-level list) plus a label.
+# Apply with `wglane preset apply NAME` or `wglane up --preset NAME`
+# (env: WGLANE_PRESET). Names: a-z, 0-9, '_' and '-', up to 32. The first 9
+# (preset_order, then alphabetical) get number keys.
 # preset_order = ["work", "home"]
 
 # [tui]
@@ -428,11 +650,10 @@ pub const SAMPLE_CONFIG: &str = r#"# wglane settings. Every key is optional; unc
 
 # [presets.work]
 # label = "Office exit"
-# country = "DE"
-# city = "Berlin"
+# location = "DE/Berlin"
 # bypass_extra = ["203.0.113.0/24"]
 # [presets.home]
-# country = "ZA"
+# location = "ZA"
 # pick = "fastest"
 "#;
 
@@ -440,13 +661,10 @@ pub const SAMPLE_CONFIG: &str = r#"# wglane settings. Every key is optional; unc
 mod tests {
     use super::*;
 
-    const KEYS: [&str; 12] = [
+    const KEYS: [&str; 9] = [
         "preset_order",
-        "country",
-        "city",
         "label",
-        "default_country",
-        "default_city",
+        "location",
         "pick",
         "bypass_extra",
         "exit_ip_check",
@@ -473,6 +691,16 @@ mod tests {
         FileConfig::parse(text).unwrap_err().to_string()
     }
 
+    fn loc(s: &str) -> Location {
+        s.parse().unwrap()
+    }
+
+    fn resolve(toml: &str) -> Effective {
+        FileConfig::parse(toml)
+            .unwrap()
+            .resolve(&Overrides::default(), Overrides::default())
+    }
+
     #[test]
     fn empty_and_commented_sample_are_defaults() {
         assert_eq!(FileConfig::parse("").unwrap(), FileConfig::default());
@@ -485,27 +713,26 @@ mod tests {
     #[test]
     fn sample_round_trips_when_uncommented() {
         let cfg = FileConfig::parse(&uncommented(SAMPLE_CONFIG)).unwrap();
-        let eff = cfg.resolve(Overrides::default(), Overrides::default());
-        assert_eq!(eff.default_country.value, Some("US".parse().unwrap()));
-        assert_eq!(eff.default_city.value.as_deref(), Some("Chicago"));
+        assert!(cfg.deprecated.is_empty(), "the sample uses only new keys");
+        let eff = cfg.resolve(&Overrides::default(), Overrides::default());
+        assert_eq!(eff.location.value, Some(loc("US/Chicago")));
         assert_eq!(eff.bypass_extra.value.len(), 1);
         assert_eq!(eff.pick.value, Pick::LeastLoad);
         assert!(eff.exit_ip_check.value);
         assert_eq!(eff.tui.graph_samples.value, DEFAULT_GRAPH_SAMPLES);
         assert!((eff.tui.warn_ratio.value - DEFAULT_WARN_RATIO).abs() < f64::EPSILON);
         assert_eq!(eff.exit_ip_check.source, Source::File);
+        assert_eq!(eff.presets.value.len(), 2);
     }
 
     #[test]
     fn parses_every_key() {
-        let cfg = FileConfig::parse(
-            "default_country = \"za\"\npick = \"fastest\"\nexit_ip_check = false\n\
+        let e = resolve(
+            "location = \"za\"\npick = \"fastest\"\nexit_ip_check = false\n\
              bypass_extra = [\"203.0.113.0/24\", \"203.0.113.9/32\"]\n\
              [tui]\nstart_expanded = true\ngraph_samples = 120\nwarn_ratio = 2.0\n",
-        )
-        .unwrap();
-        let e = cfg.resolve(Overrides::default(), Overrides::default());
-        assert_eq!(e.default_country.value.unwrap().as_str(), "ZA");
+        );
+        assert_eq!(e.location.value.unwrap().to_string(), "ZA");
         assert_eq!(e.pick.value, Pick::Fastest);
         assert!(!e.exit_ip_check.value);
         assert_eq!(e.bypass_extra.value.len(), 2);
@@ -522,10 +749,14 @@ mod tests {
     #[test]
     fn rejects_bad_values() {
         for bad in [
+            "location = \"USA\"",
+            "location = \"DE/\"",
+            "location = \"DE/Berlin/de1\"",
+            "location = \"de1234\"",
             "default_country = \"USA\"",
             "pick = \"slowest\"",
-            "default_city = \"\"",
-            "default_city = \"a/b\"",
+            "default_country = \"US\"\ndefault_city = \"\"",
+            "default_country = \"US\"\ndefault_city = \"a/b\"",
             "bypass_extra = [\"nonsense\"]",
             "bypass_extra = [\"10.0.0.0/4\"]",
             "bypass_extra = [\"0.0.0.0/0\"]",
@@ -556,43 +787,106 @@ mod tests {
     }
 
     #[test]
-    fn precedence_flag_env_file_default() {
-        let file = FileConfig::parse("default_country = \"DE\"\nexit_ip_check = false").unwrap();
-        let cc = |s: &str| Some(s.parse::<CountryCode>().unwrap());
+    fn old_keys_map_into_location_and_are_reported() {
+        let cfg = FileConfig::parse(
+            "default_country = \"US\"\ndefault_city = \"Chicago\"\n\
+             [presets.work]\ncountry = \"DE\"\ncity = \"Berlin\"\n\
+             [presets.home]\ncountry = \"ZA\"\n\
+             [presets.fast]\npick = \"fastest\"\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.location, Some(loc("US/Chicago")));
+        let p = |n: &str| cfg.presets.as_ref().unwrap()[n].location.clone();
+        assert_eq!(p("work"), Some(loc("DE/Berlin")));
+        assert_eq!(p("home"), Some(loc("ZA")));
+        assert_eq!(p("fast"), None);
+        let olds: Vec<_> = cfg.deprecated.iter().map(|d| d.old.as_str()).collect();
+        assert_eq!(
+            olds,
+            [
+                "default_country",
+                "default_city",
+                "presets.home.country",
+                "presets.work.country",
+                "presets.work.city"
+            ]
+        );
+        // One line, replacement named, old spellings grouped under it.
+        insta::assert_snapshot!(deprecation_line(&cfg.deprecated).unwrap(), @"warning: deprecated spelling, still works for this release: default_country, default_city -> location; presets.home.country -> presets.home.location; presets.work.country, presets.work.city -> presets.work.location (see docs/CONFIG.md)");
+        assert_eq!(deprecation_line(&[]), None);
+        // The new spelling is not deprecated.
+        assert_eq!(resolve("location = \"US\"").deprecated, []);
+    }
+
+    #[test]
+    fn old_and_new_spelling_conflicts_are_errors() {
+        for (n, text) in [
+            "location = \"DE\"\ndefault_country = \"US\"\n",
+            "default_city = \"Chicago\"\n",
+            "[presets.work]\nlocation = \"DE\"\ncountry = \"DE\"\n",
+            "[presets.work]\ncity = \"Berlin\"\n",
+            "[presets.work]\nexit_ip_check = false\n",
+            "[presets.work]\n[presets.work.tui]\nstart_expanded = true\n",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            insta::assert_snapshot!(format!("alias_error_{n}"), err(text));
+        }
+    }
+
+    #[test]
+    fn precedence_flag_env_preset_file_default() {
+        let file = FileConfig::parse(
+            "location = \"DE/Berlin\"\npick = \"fastest\"\nexit_ip_check = false\n\
+             [presets.za]\nlocation = \"ZA\"\n",
+        )
+        .unwrap();
         let none = Overrides::default();
         let env = Overrides {
-            country: cc("FR"),
+            location: Some(loc("FR")),
+            pick: Some(Pick::LeastLoad),
             exit_ip_check: Some(true),
+            ..Overrides::default()
         };
         let flag = Overrides {
-            country: cc("US"),
-            exit_ip_check: None,
+            location: Some(loc("US/Boston")),
+            pick: Some(Pick::Fastest),
+            ..Overrides::default()
         };
-
-        let e = file.resolve(none, none);
+        let [file_only, with_env] = [&none, &env].map(|e| file.resolve(&none, e.clone()));
+        let cases = [
+            // (effective, preset, flags) -> (location, pick)
+            (&file_only, None, &none, "DE/Berlin", Pick::Fastest),
+            (&file_only, Some("za"), &none, "ZA", Pick::Fastest),
+            (&with_env, None, &none, "FR", Pick::LeastLoad),
+            (&with_env, Some("za"), &none, "FR", Pick::LeastLoad),
+            (&with_env, Some("za"), &flag, "US/Boston", Pick::Fastest),
+            (&file_only, None, &flag, "US/Boston", Pick::Fastest),
+        ];
+        for (eff, preset, flags, want_loc, want_pick) in cases {
+            let p = preset.map(|n| eff.preset(n).unwrap());
+            let r = eff.request(p, flags);
+            assert_eq!(
+                (r.location.unwrap().to_string(), r.pick),
+                (want_loc.to_owned(), want_pick),
+                "{preset:?} {flags:?}"
+            );
+        }
+        // Reported source of the plain settings.
+        assert_eq!(file_only.location.source, Source::File);
+        assert_eq!(with_env.location.source, Source::Env);
         assert_eq!(
-            (e.default_country.source, e.exit_ip_check.source),
-            (Source::File, Source::File)
+            file.resolve(&flag, env.clone()).location.source,
+            Source::Flag
         );
-        let e = file.resolve(none, env);
-        assert_eq!(e.default_country.value, cc("FR"));
         assert_eq!(
-            (e.default_country.source, e.exit_ip_check.value),
+            (with_env.exit_ip_check.source, with_env.exit_ip_check.value),
             (Source::Env, true)
         );
-        let e = file.resolve(flag, env);
+        let e = FileConfig::default().resolve(&none, none.clone());
         assert_eq!(
-            (e.default_country.value, e.default_country.source),
-            (cc("US"), Source::Flag)
-        );
-        assert_eq!(
-            e.exit_ip_check.source,
-            Source::Env,
-            "no flag: env beats file"
-        );
-        let e = FileConfig::default().resolve(none, none);
-        assert_eq!(
-            (e.default_country.value, e.default_country.source),
+            (e.location.value, e.location.source),
             (None, Source::Default)
         );
         assert!(e.exit_ip_check.value);
@@ -603,12 +897,12 @@ mod tests {
         let cfg = FileConfig::parse(
             "preset_order = [\"work\", \"home\"]\n\
              [presets.zeta]\nlabel = \"Last\"\n\
-             [presets.home]\ncountry = \"za\"\npick = \"fastest\"\n\
-             [presets.work]\ncountry = \"DE\"\ncity = \"Berlin\"\nbypass_extra = [\"203.0.113.0/24\"]\n\
+             [presets.home]\nlocation = \"za\"\npick = \"fastest\"\n\
+             [presets.work]\nlocation = \"DE/Berlin\"\nbypass_extra = [\"203.0.113.0/24\"]\n\
              [presets.alpha]\n",
         )
         .unwrap();
-        let eff = cfg.resolve(Overrides::default(), Overrides::default());
+        let eff = cfg.resolve(&Overrides::default(), Overrides::default());
         let names: Vec<_> = eff.presets.value.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["work", "home", "alpha", "zeta"]);
         assert_eq!(eff.presets.source, Source::File);
@@ -616,7 +910,7 @@ mod tests {
         // Without preset_order: alphabetical. Without tables: default source.
         let alpha = FileConfig::parse("[presets.b]\n[presets.a]\n").unwrap();
         assert_eq!(alpha.ordered_presets()[0].name, "a");
-        let none = FileConfig::default().resolve(Overrides::default(), Overrides::default());
+        let none = FileConfig::default().resolve(&Overrides::default(), Overrides::default());
         assert_eq!(
             (none.presets.value.len(), none.presets.source),
             (0, Source::Default)
@@ -626,10 +920,10 @@ mod tests {
     #[test]
     fn preset_errors_name_key_and_line() {
         for (n, text) in [
-            "[presets.work]\ncountry = \"DE\"\ncolour = \"red\"\n",
-            "default_country = \"US\"\n[presets.Work]\ncountry = \"DE\"\n",
-            "[presets.work]\ncity = \"Berlin\"\n",
-            "[presets.work]\ncountry = \"DE\"\ncity = \"a/b\"\n",
+            "[presets.work]\nlocation = \"DE\"\ncolour = \"red\"\n",
+            "location = \"US\"\n[presets.Work]\nlocation = \"DE\"\n",
+            "[presets.work]\nlocation = \"DE/a*b\"\n",
+            "[presets.work]\nlocation = \"DE/Berlin/de1\"\n",
             "[presets.work]\nbypass_extra = [\"10.0.0.0/4\"]\n",
             "[presets.work]\nlabel = \"this label is much too long\"\n",
             "[presets.work]\npick = \"slowest\"\n",
@@ -656,21 +950,58 @@ mod tests {
                     .map(|(_, v)| (*v).to_owned())
             })
         };
-        let o = env(&[("WGLANE_COUNTRY", "us"), ("WGLANE_EXIT_IP_CHECK", "0")]).unwrap();
+        let o = env(&[
+            ("WGLANE_LOCATION", "de/berlin"),
+            ("WGLANE_PICK", "Fastest"),
+            ("WGLANE_PRESET", "work"),
+            ("WGLANE_EXIT_IP_CHECK", "0"),
+        ])
+        .unwrap();
+        assert_eq!(o.location, Some(loc("DE/berlin")));
         assert_eq!(
-            (o.country.unwrap().as_str(), o.exit_ip_check),
-            ("US", Some(false))
+            (o.pick, o.preset.as_deref(), o.exit_ip_check),
+            (Some(Pick::Fastest), Some("work"), Some(false))
         );
+        assert_eq!(o.deprecated, []);
         assert_eq!(
-            env(&[("WGLANE_COUNTRY", "  ")]).unwrap(),
+            env(&[("WGLANE_LOCATION", "  ")]).unwrap(),
             Overrides::default()
         );
-        assert!(
-            env(&[("WGLANE_COUNTRY", "usa")])
-                .unwrap_err()
-                .to_string()
-                .contains("WGLANE_COUNTRY")
-        );
+        for (var, bad) in [
+            ("WGLANE_LOCATION", "usa"),
+            ("WGLANE_COUNTRY", "usa"),
+            ("WGLANE_PICK", "slowest"),
+        ] {
+            let pairs: &'static [(&str, &str)] = Box::leak(Box::new([(var, bad)]));
+            let e = env(pairs).unwrap_err().to_string();
+            assert!(e.contains(var), "{e}");
+        }
         assert!(env(&[("WGLANE_EXIT_IP_CHECK", "maybe")]).is_err());
+    }
+
+    #[test]
+    fn wglane_country_is_an_alias_and_wglane_location_wins() {
+        let env = |pairs: Vec<(&'static str, &'static str)>| {
+            Overrides::from_env(move |k| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| (*v).to_owned())
+            })
+            .unwrap()
+        };
+        let o = env(vec![("WGLANE_COUNTRY", "de")]);
+        assert_eq!(o.location, Some(loc("DE")));
+        assert_eq!(
+            deprecation_line(&o.deprecated).unwrap(),
+            "warning: deprecated spelling, still works for this release: WGLANE_COUNTRY -> WGLANE_LOCATION (see docs/CONFIG.md)"
+        );
+        let o = env(vec![("WGLANE_COUNTRY", "de"), ("WGLANE_LOCATION", "fr")]);
+        assert_eq!(o.location, Some(loc("FR")));
+        // The deprecation reaches `Effective`, with the file's.
+        let eff = FileConfig::parse("default_country = \"US\"")
+            .unwrap()
+            .resolve(&Overrides::default(), o);
+        assert_eq!(eff.deprecated.len(), 2);
     }
 }

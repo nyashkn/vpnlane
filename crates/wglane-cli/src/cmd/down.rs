@@ -48,11 +48,14 @@ pub(crate) fn disconnect_real(ctx: &Context) -> Result<Disconnected> {
     disconnect_recorded(ctx, &HelperClient::new(SystemRunner))
 }
 
-/// `disconnect` plus clearing the route-count and active-preset records.
+/// `disconnect` plus noting it in the state: the route count and the active
+/// preset are cleared, the last request stays for `up -`.
 pub(crate) fn disconnect_recorded<T: Tunnel>(ctx: &Context, tunnel: &T) -> Result<Disconnected> {
     let done = disconnect(tunnel, ctx.conf_store().dir())?;
-    ctx.clear_routes_record()?;
-    ctx.record_preset(None)?;
+    crate::context::note(
+        "disconnected, but could not update state.json",
+        ctx.record_down(),
+    );
     Ok(done)
 }
 

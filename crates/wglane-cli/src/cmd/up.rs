@@ -9,40 +9,50 @@ use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use wglane_core::ports::{BypassProvider, Prober, RouteBypass, ServerCatalog, TokenSource, Tunnel};
 use wglane_core::{
-    BypassSet, Choice, City, CountryCode, Error, FASTEST_CANDIDATES, MAX_BYPASS, Overrides, Pick,
-    generate_config, generate_config_by, is_stale, render_wg_conf,
+    BypassSet, Choice, City, CountryCode, Effective, Error, FASTEST_CANDIDATES, LastRequest,
+    Location, MAX_BYPASS, Overrides, Pick, PresetUse, Source, generate_config, generate_config_by,
+    is_stale, render_wg_conf,
 };
 use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
 use wglane_nord::NordApi;
 
-use crate::context::Context;
+use crate::context::{Context, note, unix_now};
 
 #[derive(Debug, clap::Args)]
 #[command(
-    about = "Connect to a country (switches if already connected)",
+    about = "Connect to a location (switches if already connected)",
     long_about = "\
-Connect to the least-loaded NordLynx server in COUNTRY, or in one of its
-cities with --city (name or identifier; case and accents do not matter;
-`wglane ls COUNTRY` lists them). Changing between a city and the whole
-country regenerates the config.
+Connect to the least-loaded NordLynx server at LOCATION: a country (`DE`) or a
+city in one (`DE/Berlin`; name or identifier, case and accents do not matter;
+`wglane ls DE` lists them). `-` repeats the last request exactly (place, pick,
+bypass routes, preset), like `cd -`; with no argument the configured
+`location` is used. Changing between a city and the whole country regenerates
+the config.
 
-With --fastest (or `pick = \"fastest\"` in config.toml) the 10 least-loaded
-candidates are pinged at once (about 2 s at most) and the lowest round trip
-wins; ties go to the lower load, and if no server answers the least-loaded one
-is used and the summary says so. It always picks anew, so it regenerates the
-config even when a fresh one exists. While a wglane tunnel is up, pings are
-bound to the physical interface so they do not measure the tunnel's exit; if
-every ping fails while connected, run `wglane down` first.
+--city CITY is sugar for the city half: `up DE --city Berlin` is `up DE/Berlin`.
+Without LOCATION it takes the country from the layers below (preset,
+WGLANE_LOCATION, config.toml).
 
-If the config for COUNTRY is missing or older than 7 days it is regenerated
-first (no separate `gen` step). An existing wglane tunnel is brought down.
+With --pick fastest (or --fastest, WGLANE_PICK, or `pick = \"fastest\"` in
+config.toml) the 10 least-loaded candidates are pinged at once (about 2 s at
+most) and the lowest round trip wins; ties go to the lower load, and if no
+server answers the least-loaded one is used and the summary says so. It always
+picks anew, so it regenerates the config even when a fresh one exists. While a
+wglane tunnel is up, pings are bound to the physical interface so they do not
+measure the tunnel's exit; if every ping fails while connected, run `wglane
+down` first.
 
-With --preset NAME the request comes from [presets.NAME] in config.toml
-(`wglane preset list`); the preset's bypass_extra is added to the top-level
-one. Precedence for what to connect to: explicit COUNTRY and --city, then the
-preset, then WGLANE_COUNTRY, then config.toml. A COUNTRY other than the
-preset's drops the preset's city. Presets are applied the same way by
-`wglane preset apply NAME`; the active one is shown by `wglane status`.
+If the config for the country is missing or older than 7 days it is
+regenerated first (no separate `gen` step). An existing wglane tunnel is
+brought down.
+
+With --preset NAME (or WGLANE_PRESET) the request is the top-level settings
+with [presets.NAME] laid over them: the preset's `location` and `pick`
+replace, its `bypass_extra` is added. Then WGLANE_LOCATION and WGLANE_PICK,
+then LOCATION, --pick and --fastest, win over the preset. A LOCATION replaces
+the preset's whole location, city included. When something was overridden,
+`wglane status` shows `NAME (location overridden)`. `wglane preset apply NAME`
+is the same code path. Precedence for every key is in docs/CONFIG.md.
 
 Why Tailscale breaks, and what wglane does:
   A full tunnel (AllowedIPs 0.0.0.0/0) also captures Tailscale's underlay:
@@ -53,107 +63,199 @@ Why Tailscale breaks, and what wglane does:
   MagicDNS keeps working too.",
     after_help = "\
 Examples:
-  wglane up ZA          South Africa
-  wglane up us          case does not matter
-  wglane up             use default_country from config.toml (or WGLANE_COUNTRY)
+  wglane up ZA            South Africa
+  wglane up us            case does not matter
+  wglane up DE/Berlin     a city
   wglane up US --city \"New York\"
-  wglane up DE --fastest          lowest latency among the least-loaded servers
+  wglane up               the configured location (or WGLANE_LOCATION)
+  wglane up -             the last request again, as it was
+  wglane up DE --pick fastest     lowest latency among the least-loaded servers
   wglane up --preset work         apply [presets.work] from config.toml
   wglane up --preset work FR      the preset, but exit in France
-  wglane -v up DE       show each step"
+  wglane -v up DE         show each step"
 )]
 pub(crate) struct Args {
-    /// Two-letter country code, e.g. US, DE, ZA (not UK: use GB).
-    /// Default: `default_country` from `config.toml` or `WGLANE_COUNTRY`.
-    pub(crate) country: Option<CountryCode>,
+    /// `CC` (US, DE, ZA; not UK, use GB), `CC/City`, or `-` for the last
+    /// request. Default: `location` from `config.toml` or `WGLANE_LOCATION`.
+    #[arg(value_name = "LOCATION")]
+    pub(crate) target: Option<Target>,
 
-    /// City in COUNTRY to connect to (see `wglane ls COUNTRY`).
-    /// Default: `default_city` from `config.toml`, for the default country.
+    /// City in the country (see `wglane ls CC`); same as `CC/City`.
     #[arg(long, value_name = "NAME")]
     pub(crate) city: Option<String>,
 
     /// Connect with a preset from `[presets.NAME]` in `config.toml`. An
-    /// explicit COUNTRY or --city overrides the preset's.
+    /// explicit LOCATION, --city or --pick overrides the preset's.
+    /// Default: `WGLANE_PRESET`.
     #[arg(long, value_name = "NAME")]
     pub(crate) preset: Option<String>,
 
-    /// Pick the lowest-latency server among the least loaded, not just the
-    /// least loaded. Overrides `pick` in `config.toml` and in the preset.
-    #[arg(long)]
+    /// How to choose the server: `least-load` or `fastest` (lowest latency
+    /// among the least loaded). Overrides `pick` in `config.toml`, the preset
+    /// and `WGLANE_PICK`.
+    #[arg(long, value_name = "RULE")]
+    pub(crate) pick: Option<Pick>,
+
+    /// Short for `--pick fastest`.
+    #[arg(long, conflicts_with = "pick")]
     pub(crate) fastest: bool,
+}
+
+/// The positional argument: a place, or `-` for the last request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Target {
+    /// `-`.
+    Last,
+    /// `CC` or `CC/City`.
+    Place(Location),
+}
+
+impl std::str::FromStr for Target {
+    type Err = Error;
+
+    fn from_str(s: &str) -> wglane_core::Result<Self> {
+        if s == "-" {
+            Ok(Self::Last)
+        } else {
+            s.parse().map(Self::Place)
+        }
+    }
 }
 
 /// What `up` will do, from the arguments and the saved settings.
 #[derive(Debug)]
 pub(crate) struct Plan {
-    cc: CountryCode,
-    /// City name or identifier, not yet checked against the network.
-    city: Option<String>,
+    /// Where; the city is not yet checked against the network.
+    location: Location,
     /// Config `bypass_extra` plus the preset's.
     bypass: BypassSet,
-    preset: Option<String>,
-    /// `--fastest`, else the preset's `pick`, else the top-level `pick`.
+    preset: Option<PresetUse>,
     pick: Pick,
 }
 
-/// Precedence: COUNTRY/--city > preset > `WGLANE_COUNTRY` > config file.
+/// Keys of the preset overlay the final request differs from.
+fn overridden(settings: &Effective, preset: &str, location: &Location, pick: Pick) -> Vec<String> {
+    let want = settings.overlay(settings.preset(preset));
+    let mut out = Vec::new();
+    if want
+        .location
+        .as_ref()
+        .is_none_or(|l| !l.same_place(location))
+    {
+        out.push("location".to_owned());
+    }
+    if want.pick != pick {
+        out.push("pick".to_owned());
+    }
+    out
+}
+
+fn unknown_preset(settings: &Effective, name: &str) -> color_eyre::Report {
+    let names: Vec<_> = settings
+        .presets
+        .value
+        .iter()
+        .map(|p| p.name.as_str())
+        .collect();
+    let from = match settings.preset.source {
+        Source::Env => " (from WGLANE_PRESET)",
+        _ => "",
+    };
+    eyre!(
+        "unknown preset {name:?}{from}: {} (see `wglane preset list`)",
+        if names.is_empty() {
+            "none defined in config.toml".to_owned()
+        } else {
+            format!("defined: {}", names.join(", "))
+        }
+    )
+}
+
+/// `up -`: the last request again, untouched.
+fn replay(ctx: &Context, args: &Args) -> Result<Plan> {
+    if args.city.is_some() || args.preset.is_some() || args.pick.is_some() || args.fastest {
+        return Err(eyre!(
+            "`up -` repeats the last request as it was: drop --city, --preset, --pick and --fastest, or name a location"
+        ));
+    }
+    let last = ctx
+        .last_request()
+        .ok_or_else(|| eyre!("no previous connection to repeat: run `wglane up CC` first"))?;
+    let location = last.location.ok_or_else(|| {
+        eyre!("the last request has no location (it was migrated from an older wglane): run `wglane up CC` once")
+    })?;
+    Ok(Plan {
+        location,
+        bypass: last.bypass_extra.into_iter().collect(),
+        preset: last.preset,
+        pick: last.pick,
+    })
+}
+
+/// Layers, lowest first: config.toml, the preset, `WGLANE_LOCATION` and
+/// `WGLANE_PICK`, then LOCATION, `--city`, `--pick`. `up -` skips them all.
 pub(crate) fn plan(ctx: &Context, args: &Args) -> Result<Plan> {
-    let settings = ctx.settings(Overrides::default())?;
-    let preset = args
-        .preset
+    if args.target == Some(Target::Last) {
+        return replay(ctx, args);
+    }
+    let settings = ctx.settings(Overrides {
+        preset: args.preset.clone(),
+        ..Overrides::default()
+    })?;
+    let preset_name = settings.preset.value.clone();
+    let preset = preset_name
         .as_deref()
         .map(|n| {
-            settings.preset(n).ok_or_else(|| {
-                let names: Vec<_> = settings
-                    .presets
-                    .value
-                    .iter()
-                    .map(|p| p.name.as_str())
-                    .collect();
-                eyre!(
-                    "unknown preset {n:?}: {} (see `wglane preset list`)",
-                    if names.is_empty() {
-                        "none defined in config.toml".to_owned()
-                    } else {
-                        format!("defined: {}", names.join(", "))
-                    }
-                )
-            })
+            settings
+                .preset(n)
+                .ok_or_else(|| unknown_preset(&settings, n))
         })
         .transpose()?;
-    let mut req = preset.cloned().unwrap_or_default().resolve(&settings);
-    if let Some(c) = args.country {
-        // A city belongs to its country: keep it only if the preset itself names this one.
-        if preset.is_none_or(|p| p.country != Some(c)) {
-            req.city = None;
+    let mut flags = Overrides {
+        pick: args.pick.or(args.fastest.then_some(Pick::Fastest)),
+        ..Overrides::default()
+    };
+    flags.location = match (&args.target, &args.city) {
+        (Some(Target::Place(l)), None) => Some(l.clone()),
+        (Some(Target::Place(l)), Some(city)) if l.city().is_none() => {
+            Some(Location::new(l.country(), Some(city.clone()))?)
         }
-        req.country = Some(c);
-    }
-    if args.city.is_some() {
-        req.city.clone_from(&args.city);
-    }
-    let cc = req.country.ok_or_else(|| {
+        (Some(Target::Place(l)), Some(_)) => {
+            return Err(eyre!(
+                "{l} already names a city: drop --city, or pass the country alone"
+            ));
+        }
+        (None, Some(city)) => {
+            let below = settings.request(preset, &Overrides::default()).location;
+            let l = below.ok_or_else(|| {
+                eyre!("--city {city:?} needs a country: run `wglane up DE/{city}`")
+            })?;
+            Some(Location::new(l.country(), Some(city.clone()))?)
+        }
+        _ => None,
+    };
+    let req = settings.request(preset, &flags);
+    let location = req.location.ok_or_else(|| {
         eyre!(
-            "no country given: run `wglane up ZA`, or set default_country in {} (see `wglane config init`)",
+            "no location given: run `wglane up ZA`, or set location in {} (see `wglane config init`)",
             ctx.config_file().display()
         )
     })?;
+    let preset = preset_name.map(|name| PresetUse {
+        overridden: overridden(&settings, &name, &location, req.pick),
+        name,
+    });
     Ok(Plan {
-        cc,
-        city: req.city,
+        location,
         bypass: req.bypass_extra.iter().copied().collect(),
-        preset: args.preset.clone(),
-        pick: if args.fastest {
-            Pick::Fastest
-        } else {
-            req.pick
-        },
+        preset,
+        pick: req.pick,
     })
 }
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     let plan = plan(ctx, args)?;
-    let cc = plan.cc;
+    let cc = plan.location.country();
     let helper = HelperClient::new(SystemRunner);
     let prober = match plan.pick {
         Pick::Fastest => Some(crate::cmd::fastest::real_prober(&helper)?),
@@ -173,7 +275,32 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// `up` against real adapters. Prints nothing, so the TUI can call it.
+/// The request behind a TUI connect: the new place, everything else from the
+/// last request (pick aside: the TUI does not probe, so the server is chosen
+/// by load). A connect to another country thus keeps the preset's routes, and
+/// the preset is marked as overridden when the place differs from its own.
+#[cfg(any(feature = "tui", test))]
+pub(crate) fn plan_from_last(ctx: &Context, location: Location) -> Result<Plan> {
+    let settings = ctx.settings(Overrides::default())?;
+    let pick = Pick::LeastLoad;
+    let last = ctx.last_request();
+    let bypass = match &last {
+        Some(l) => l.bypass_extra.iter().copied().collect(),
+        None => settings.bypass_extra.value.iter().copied().collect(),
+    };
+    let preset = last.and_then(|l| l.preset).map(|p| PresetUse {
+        overridden: overridden(&settings, &p.name, &location, pick),
+        name: p.name,
+    });
+    Ok(Plan {
+        location,
+        bypass,
+        preset,
+        pick,
+    })
+}
+
+/// `up` against real adapters, for the TUI. Prints nothing.
 #[cfg(feature = "tui")]
 pub(crate) fn connect_real(
     ctx: &Context,
@@ -181,6 +308,7 @@ pub(crate) fn connect_real(
     city: Option<&City>,
 ) -> Result<Connected> {
     let helper = HelperClient::new(SystemRunner);
+    let plan = plan_from_last(ctx, Location::new(cc, city.map(|c| c.name.clone()))?)?;
     connect_with(
         ctx,
         &helper,
@@ -189,14 +317,14 @@ pub(crate) fn connect_real(
         &NordApi::new(),
         &ctx.token_source(),
         (cc, city),
-        &ctx.static_bypass()?,
-        None,
+        &StaticBypass(plan.bypass),
+        plan.preset,
         None,
     )
 }
 
-/// Resolves the plan's city (the only network check of a preset's city, so
-/// it happens before any tunnel is touched), then connects.
+/// Resolves the plan's city (the only network check of a city, so it happens
+/// before any tunnel is touched), then connects.
 #[allow(
     clippy::too_many_arguments,
     reason = "ports plus the target; a struct for two callers would only move the list"
@@ -211,10 +339,11 @@ pub(crate) fn connect_target<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: Tok
     plan: Plan,
     prober: Option<&(dyn Prober + Sync)>,
 ) -> Result<Connected> {
+    let cc = plan.location.country();
     let city = plan
-        .city
-        .as_deref()
-        .map(|q| crate::cmd::servers::resolve_city(catalog, plan.cc, q))
+        .location
+        .city()
+        .map(|q| crate::cmd::servers::resolve_city(catalog, cc, q))
         .transpose()?;
     connect_with(
         ctx,
@@ -223,14 +352,14 @@ pub(crate) fn connect_target<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: Tok
         tailscale,
         catalog,
         token,
-        (plan.cc, city.as_ref()),
+        (cc, city.as_ref()),
         &StaticBypass(plan.bypass),
-        plan.preset.as_deref(),
+        plan.preset,
         prober,
     )
 }
 
-/// `connect_recorded`, then notes which preset (if any) the connection matches.
+/// `connect_recorded`, then records what was applied as the last request.
 #[allow(
     clippy::too_many_arguments,
     reason = "ports plus the target; a struct for two callers would only move the list"
@@ -244,7 +373,7 @@ fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
     token: &S,
     (cc, city): (CountryCode, Option<&City>),
     extra: &StaticBypass,
-    hint: Option<&str>,
+    preset: Option<PresetUse>,
     prober: Option<&(dyn Prober + Sync)>,
 ) -> Result<Connected> {
     let done = connect_recorded(
@@ -258,7 +387,24 @@ fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
         city,
         prober,
     )?;
-    crate::cmd::preset::settle(ctx, hint, cc, city.map(|c| c.name.as_str()), &extra.0)?;
+    // shortcut: a city name the shape check rejects is recorded as its country; widen the check if one turns up.
+    let location = Location::new(cc, city.map(|c| c.name.clone()))
+        .unwrap_or_else(|_| Location::country_only(cc));
+    let applied = ctx.record_applied(LastRequest {
+        location: Some(location),
+        pick: if prober.is_some() {
+            Pick::Fastest
+        } else {
+            Pick::LeastLoad
+        },
+        bypass_extra: extra.0.iter().copied().collect(),
+        preset,
+        at: unix_now(),
+    });
+    note(
+        "connected, but could not record it in state.json (`up -` will not see it)",
+        applied,
+    );
     Ok(done)
 }
 
@@ -311,10 +457,16 @@ pub(crate) fn connect_recorded<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: T
     if done.regenerated {
         let choice = picked.into_inner();
         let server_city = choice.as_ref().and_then(|c| c.server.city.as_deref());
-        ctx.record_city(&cc.to_lowercase(), want, server_city)?;
+        note(
+            "could not record the config's city in state.json",
+            ctx.record_city(&cc.to_lowercase(), want, server_city),
+        );
         done.picked = choice;
     }
-    ctx.record_routes(done.routes)?;
+    note(
+        "could not record the route count in state.json",
+        ctx.record_routes(done.routes),
+    );
     Ok(done)
 }
 

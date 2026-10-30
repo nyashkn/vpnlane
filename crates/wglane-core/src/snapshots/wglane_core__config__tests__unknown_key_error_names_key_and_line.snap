@@ -6,4 +6,4 @@ TOML parse error at line 2, column 1
   |
 2 | colour = "red"
   | ^^^^^^
-unknown field `colour`, expected one of `default_country`, `default_city`, `pick`, `bypass_extra`, `exit_ip_check`, `tui`, `preset_order`, `presets`
+unknown field `colour`, expected one of `location`, `default_country`, `default_city`, `pick`, `bypass_extra`, `exit_ip_check`, `tui`, `preset_order`, `presets`
