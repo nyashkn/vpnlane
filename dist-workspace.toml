@@ -1,0 +1,11 @@
+# cargo-dist config. Regenerate with `dist init` once cargo-dist is installed.
+[workspace]
+members = ["cargo:crates/wglane-cli", "cargo:crates/wglane-macos"]
+
+[dist]
+ci = "github"
+installers = ["homebrew"]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
+# PLACEHOLDER: replace with the real Homebrew tap repo (owner/homebrew-<name>).
+tap = "OWNER/homebrew-tap"
+# No publish-jobs: the formula is generated, not pushed to the tap.

@@ -1,0 +1,32 @@
+name: release
+
+# Builds on tag push only. Uploads binaries as workflow artifacts; does not create a GitHub Release or push to the tap.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CI: "true"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the version; rustup installs it on first use.
+      - run: rustup show active-toolchain
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p wglane-cli -p wglane-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wglane-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/wglane
+            target/${{ matrix.target }}/release/wglane-helper

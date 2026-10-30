@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
@@ -21,7 +22,7 @@ enum Task {
     Completions,
     /// Write man pages (one per subcommand) to target/assets/man/.
     Man,
-    /// Build release artifacts (not implemented yet).
+    /// Build release binaries (wglane, wglane-helper) and print their paths.
     Release,
 }
 
@@ -31,13 +32,31 @@ fn main() -> Result<()> {
     match Cli::parse().task {
         Task::Completions => completions(&out.join("completions")),
         Task::Man => man(&out.join("man")),
-        Task::Release => {
-            // TODO(bead): xtask-release: cargo-dist (or plain `cargo build --release`
-            // + tarball + sha256) for aarch64/x86_64-apple-darwin, bundle
-            // completions + man pages, emit a Homebrew formula for the tap.
-            bail!("xtask release: not implemented yet")
-        }
+        Task::Release => release(&workspace_root()),
     }
+}
+
+fn release(root: &Path) -> Result<()> {
+    // cargo-dist (dist-workspace.toml) builds the shipped archives; this is the local check.
+    let status = Command::new("cargo")
+        .current_dir(root)
+        .args([
+            "build",
+            "--release",
+            "-p",
+            "wglane-cli",
+            "-p",
+            "wglane-macos",
+        ])
+        .status()
+        .wrap_err("running cargo build --release")?;
+    if !status.success() {
+        bail!("cargo build --release failed: {status}");
+    }
+    for bin in ["wglane", "wglane-helper"] {
+        println!("{}", root.join("target/release").join(bin).display());
+    }
+    Ok(())
 }
 
 fn workspace_root() -> PathBuf {
