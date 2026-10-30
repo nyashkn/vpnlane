@@ -10,6 +10,8 @@ rust-version = "1.99"
 license = "MIT"
 authors = ["KN"]
 description = "NordLynx/WireGuard tunnels on macOS that leave Tailscale/Headscale working"
+repository = "https://github.com/OWNER/wglane"
+homepage = "https://github.com/OWNER/wglane"
 publish = false
 
 [workspace.dependencies]
@@ -59,3 +61,9 @@ unwrap_used = "warn"
 [profile.release]
 lto = "thin"
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
+

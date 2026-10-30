@@ -1,0 +1,12 @@
+# cargo-release config. Dry run is the default; the owner passes --execute.
+# CHANGELOG.md: entries go under [Unreleased]; cargo release stamps the version.
+shared-version = true
+tag-name = "v{{version}}"
+pre-release-hook = ["just", "ci"]
+publish = false
+push = false
+# One shared tag, created by wglane-cli (see crates/wglane-cli/release.toml).
+tag = false
+# One bump commit/tag for the whole workspace, not one per crate.
+consolidate-commits = true
+
