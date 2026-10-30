@@ -133,6 +133,7 @@ sudo "$(command -v wglane)" install-helper --uninstall   # remove the helper
 `wglane --help` and `wglane <command> --help` have examples for everything.
 `--json` works on every command, `-v`/`-vv`/`-vvv` add log output, and
 `--config-dir` (or `WGLANE_CONFIG_DIR`) moves the config directory.
+Dashboard keys and states: [docs/TUI.md](docs/TUI.md).
 
 ## Troubleshooting
 

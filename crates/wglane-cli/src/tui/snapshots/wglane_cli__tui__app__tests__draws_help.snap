@@ -1,0 +1,20 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: "render_sized(&s, 70, 16).backend()"
+---
+"┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
+"│> ▸ Africa (1)         ││tunnel   · checking...                     │"
+"│  ▸ Europe┌ keys ─────────────────────────────────────────┐         │"
+"│  ▸ North │ enter          connect, or open/close a group │         │"
+"│          │ space          open/close a group             │         │"
+"│          │ h l            close / open a group           │         │"
+"│          │ d              disconnect                     │         │"
+"│          │ /              search by code or name         │         │"
+"│          │ esc            clear search, then quit        │         │"
+"│          │ j k  up down   move                           │         │"
+"│          │ g G  home end  first / last                   │         │"
+"│          │ r              reload the server list         │         │"
+"│          │ ?              this help (any key closes)     │         │"
+"│          │ q              quit                           │         │"
+"└──────────└───────────────────────────────────────────────┘─────────┘"
+"? help  enter connect  d disconnect  / search  q quit                 "
