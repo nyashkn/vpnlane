@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ports::ServerCatalog;
-use crate::{Country, CountryCode, Error, PrivateKey, Result, Server, Token};
+use crate::{City, Country, CountryCode, Error, PrivateKey, Result, Server, Token};
 
 /// In-memory [`ServerCatalog`].
 #[derive(Clone, Debug, Default)]
@@ -19,12 +19,22 @@ impl ServerCatalog for FakeCatalog {
         Ok(self.countries.clone())
     }
 
-    fn recommended(&self, country: CountryCode, limit: usize) -> Result<Vec<Server>> {
+    fn recommended(
+        &self,
+        country: CountryCode,
+        city: Option<&City>,
+        limit: usize,
+    ) -> Result<Vec<Server>> {
         let servers = self
             .servers
             .get(&country)
             .ok_or(Error::UnknownCountry(country))?;
-        Ok(servers.iter().take(limit).cloned().collect())
+        Ok(servers
+            .iter()
+            .filter(|s| city.is_none_or(|c| s.city.as_deref() == Some(c.name.as_str())))
+            .take(limit)
+            .cloned()
+            .collect())
     }
 
     fn private_key(&self, _token: &Token) -> Result<PrivateKey> {

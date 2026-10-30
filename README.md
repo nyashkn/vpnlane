@@ -130,7 +130,10 @@ wglane down
 wglane tui          # dashboard: pick a country, connect, live latency
 wglane watch        # re-apply bypass routes when you change networks
 wglane doctor       # checks wg, tailscale, helper, sudoers, token, config dir
-wglane servers [CC] # list countries, or ranked servers in one country
+wglane up US --city "New York"   # least-loaded server in one city (or set default_city)
+wglane ls US        # cities of a country with their server counts
+wglane servers US   # ranked servers with their city (--city NAME to filter)
+wglane ls           # list countries
 wglane gen ZA       # write the WireGuard config without connecting
 wglane completions zsh   # shell completions
 sudo "$(command -v wglane)" install-helper --uninstall   # remove the helper

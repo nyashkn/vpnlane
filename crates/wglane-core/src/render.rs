@@ -42,6 +42,7 @@ mod tests {
             load: 12,
             public_key: PublicKey("U1lOVEhFVElDLVBFRVItUFVCTElDLUtFWS0wMDAwMDE=".into()),
             country: "US".parse().unwrap(),
+            city: None,
         }
     }
 

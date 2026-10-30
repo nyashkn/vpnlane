@@ -7,6 +7,7 @@ pub(crate) mod doctor;
 pub(crate) mod down;
 pub(crate) mod gen_conf;
 pub(crate) mod install_helper;
+pub(crate) mod ls;
 pub(crate) mod servers;
 pub(crate) mod status;
 pub(crate) mod tui;
@@ -46,6 +47,7 @@ mod e2e {
                     load: 9,
                     public_key: PublicKey("pk".into()),
                     country: za,
+                    city: Some("Johannesburg".into()),
                 }],
             )]
             .into(),
@@ -80,6 +82,7 @@ mod e2e {
             &catalog,
             &FakeToken(Some("tok".into())),
             za,
+            None,
         )
         .unwrap();
         assert!(
@@ -87,6 +90,38 @@ mod e2e {
                 .ends_with("config regenerated, 2 bypass routes")
         );
         assert!(store.path(za).exists());
+        assert_eq!(ctx.recorded_city("za").as_deref(), Some("Johannesburg"));
+
+        // A fresh config is reused only for the same request.
+        let again = |city: Option<&wglane_core::City>| {
+            up::connect_recorded(
+                &ctx,
+                &tunnel,
+                &routes,
+                &[&bypass],
+                &catalog,
+                &FakeToken(Some("tok".into())),
+                za,
+                city,
+            )
+            .unwrap()
+        };
+        assert!(!again(None).summary(za).contains("regenerated"));
+        let jnb = wglane_core::City {
+            id: 1,
+            name: "Johannesburg".into(),
+            identifier: "za_johannesburg".into(),
+            server_count: 1,
+        };
+        // The cache is keyed by the request: city -> country -> city regenerates
+        // each time, a repeat of the same request does not.
+        assert!(again(Some(&jnb)).summary(za).contains("regenerated"));
+        assert_eq!(ctx.recorded_request("za").as_deref(), Some("Johannesburg"));
+        assert!(!again(Some(&jnb)).summary(za).contains("regenerated"));
+        assert!(again(None).summary(za).contains("regenerated"));
+        assert_eq!(ctx.recorded_request("za"), None);
+        assert!(!again(None).summary(za).contains("regenerated"));
+        assert!(again(Some(&jnb)).summary(za).contains("regenerated"));
         let s = status();
         assert_eq!((s.active, s.bypass_routes), (vec!["za".to_owned()], 2));
 

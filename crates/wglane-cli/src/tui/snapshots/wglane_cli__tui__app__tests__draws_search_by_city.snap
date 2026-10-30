@@ -1,0 +1,14 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: "render(&searching_in(tree(), \"new y\")).backend()"
+---
+"· checking...                                                         "
+"┌ search: new y_ ───────┐┌ stats ────────────────────────────────────┐"
+"│  ▾ North America (1)  ││tunnel   · checking...                     │"
+"│      US  United States││exit ip  unknown                           │"
+"│>         New York (9) ││tailnet  unknown                           │"
+"│                       ││latency  -                                 │"
+"│                       ││                                           │"
+"│                       ││                                           │"
+"└───────────────────────┘└───────────────────────────────────────────┘"
+"type to filter  enter keep  esc clear  up/down select                 "

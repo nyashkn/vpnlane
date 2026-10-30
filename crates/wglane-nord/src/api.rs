@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use wglane_core::ports::{ExitIpProbe, ServerCatalog};
-use wglane_core::{Country, CountryCode, Error, ExitInsights, PrivateKey, Result, Server, Token};
+use wglane_core::{
+    City, Country, CountryCode, Error, ExitInsights, PrivateKey, Result, Server, Token,
+};
 
 use crate::wire;
 
@@ -15,7 +17,9 @@ const INSIGHTS_TIMEOUT: Duration = Duration::from_secs(4);
 /// Endpoints (undocumented by Nord, may change):
 /// - `GET /users/services/credentials` - Basic auth `token:<TOKEN>`
 /// - `GET /servers/countries`
-/// - `GET /servers/recommendations?filters[country_id]=<id>&filters[servers_technologies][identifier]=wireguard_udp&limit=<n>`
+/// - `GET /servers/recommendations?filters[country_id]=<id>&filters[servers_technologies][identifier]=wireguard_udp&limit=<n>`,
+///   plus `filters[country_city_id]=<city id>` to stay in one city (verified
+///   against the live API; the other `city`-looking names are silently ignored)
 /// - `GET /helpers/ips/insights`
 #[derive(Debug)]
 pub struct NordApi {
@@ -105,7 +109,12 @@ impl ServerCatalog for NordApi {
             .collect())
     }
 
-    fn recommended(&self, country: CountryCode, limit: usize) -> Result<Vec<Server>> {
+    fn recommended(
+        &self,
+        country: CountryCode,
+        city: Option<&City>,
+        limit: usize,
+    ) -> Result<Vec<Server>> {
         let id = self
             .countries_with_ids()?
             .into_iter()
@@ -113,15 +122,16 @@ impl ServerCatalog for NordApi {
             .map(|(id, _)| id.to_string())
             .ok_or(Error::UnknownCountry(country))?;
         let limit = limit.to_string();
-        let body = self.get(
-            "/servers/recommendations",
-            &[
-                ("filters[country_id]", &id),
-                ("filters[servers_technologies][identifier]", "wireguard_udp"),
-                ("limit", &limit),
-            ],
-            None,
-        )?;
+        let city_id = city.map(|c| c.id.to_string());
+        let mut query = vec![
+            ("filters[country_id]", id.as_str()),
+            ("filters[servers_technologies][identifier]", "wireguard_udp"),
+            ("limit", limit.as_str()),
+        ];
+        if let Some(c) = &city_id {
+            query.push(("filters[country_city_id]", c.as_str()));
+        }
+        let body = self.get("/servers/recommendations", &query, None)?;
         let servers = wire::parse_servers(&body)?;
         if servers.is_empty() {
             return Err(Error::NoServers(country));
@@ -228,7 +238,7 @@ mod tests {
             ("/servers/recommendations", 200, RECS),
         ]);
         let got = NordApi::with_base(base)
-            .recommended("za".parse().unwrap(), 5)
+            .recommended("za".parse().unwrap(), None, 5)
             .unwrap();
         assert_eq!(got.len(), 2);
         let _countries = rx.recv().unwrap();
@@ -239,6 +249,22 @@ mod tests {
     }
 
     #[test]
+    fn recommended_in_a_city_sends_the_city_filter() {
+        let (base, rx) = serve(vec![
+            ("/servers/countries", 200, COUNTRIES),
+            ("/servers/recommendations", 200, RECS),
+        ]);
+        let api = NordApi::with_base(base);
+        let za = api.countries().unwrap().remove(1);
+        let _ = rx.recv().unwrap();
+        let jnb = za.find_city("johannesburg").unwrap();
+        api.recommended(za.code, Some(jnb), 5).unwrap();
+        let _countries = rx.recv().unwrap();
+        let req = rx.recv().unwrap();
+        assert!(req.contains("filters%5Bcountry_city_id%5D=20"), "{req}");
+    }
+
+    #[test]
     fn recommended_unknown_country_and_empty() {
         let (base, _rx) = serve(vec![
             ("/servers/countries", 200, COUNTRIES),
@@ -246,11 +272,11 @@ mod tests {
         ]);
         let api = NordApi::with_base(base);
         assert!(matches!(
-            api.recommended("FR".parse().unwrap(), 1),
+            api.recommended("FR".parse().unwrap(), None, 1),
             Err(Error::UnknownCountry(_))
         ));
         assert!(matches!(
-            api.recommended("ZA".parse().unwrap(), 1),
+            api.recommended("ZA".parse().unwrap(), None, 1),
             Err(Error::NoServers(_))
         ));
     }

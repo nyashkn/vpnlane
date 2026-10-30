@@ -1,0 +1,16 @@
+---
+source: crates/wglane-cli/src/cmd/ls.rs
+expression: "render(&fake(), &args(Some(\"ZA\")), true).unwrap()"
+---
+[
+  {
+    "identifier": "za_johannesburg",
+    "name": "Johannesburg",
+    "servers": 12
+  },
+  {
+    "identifier": "za_pretoria",
+    "name": "Pretória",
+    "servers": 3
+  }
+]

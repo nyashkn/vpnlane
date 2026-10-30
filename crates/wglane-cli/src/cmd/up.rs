@@ -1,5 +1,6 @@
 //! `wglane up <CC>`: connect, regenerating the config if missing or stale.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -7,7 +8,8 @@ use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use wglane_core::ports::{BypassProvider, RouteBypass, ServerCatalog, TokenSource, Tunnel};
 use wglane_core::{
-    BypassSet, CountryCode, Error, MAX_BYPASS, Overrides, generate_config, is_stale, render_wg_conf,
+    BypassSet, City, CountryCode, Error, MAX_BYPASS, Overrides, generate_config, is_stale,
+    render_wg_conf,
 };
 use wglane_macos::{HelperClient, SystemRunner, TailscaleBypass};
 use wglane_nord::NordApi;
@@ -18,7 +20,10 @@ use crate::context::Context;
 #[command(
     about = "Connect to a country (switches if already connected)",
     long_about = "\
-Connect to the least-loaded NordLynx server in COUNTRY.
+Connect to the least-loaded NordLynx server in COUNTRY, or in one of its
+cities with --city (name or identifier; case and accents do not matter;
+`wglane ls COUNTRY` lists them). Changing between a city and the whole
+country regenerates the config.
 
 If the config for COUNTRY is missing or older than 7 days it is regenerated
 first (no separate `gen` step). An existing wglane tunnel is brought down.
@@ -35,12 +40,18 @@ Examples:
   wglane up ZA          South Africa
   wglane up us          case does not matter
   wglane up             use default_country from config.toml (or WGLANE_COUNTRY)
+  wglane up US --city \"New York\"
   wglane -v up DE       show each step"
 )]
 pub(crate) struct Args {
     /// Two-letter country code, e.g. US, DE, ZA (not UK: use GB).
     /// Default: `default_country` from `config.toml` or `WGLANE_COUNTRY`.
     pub(crate) country: Option<CountryCode>,
+
+    /// City in COUNTRY to connect to (see `wglane ls COUNTRY`).
+    /// Default: `default_city` from `config.toml`, for the default country.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) city: Option<String>,
 }
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
@@ -48,18 +59,35 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
         country: args.country,
         ..Overrides::default()
     };
-    let cc = ctx.settings(flags)?.default_country.value.ok_or_else(|| {
+    let settings = ctx.settings(flags)?;
+    let cc = settings.default_country.value.ok_or_else(|| {
         eyre!(
             "no country given: run `wglane up ZA`, or set default_country in {} (see `wglane config init`)",
             ctx.config_file().display()
         )
     })?;
-    println!("{}", connect_real(ctx, cc)?.summary(cc));
+    // default_city belongs to the default country; `up DE` must not trip over it.
+    let query = args.city.clone().or_else(|| {
+        settings
+            .default_city
+            .value
+            .clone()
+            .filter(|_| args.country.is_none())
+    });
+    let city = query
+        .as_deref()
+        .map(|q| crate::cmd::servers::resolve_city(&NordApi::new(), cc, q))
+        .transpose()?;
+    println!("{}", connect_real(ctx, cc, city.as_ref())?.summary(cc));
     Ok(())
 }
 
 /// `up` against the real adapters. Prints nothing, so the TUI can call it.
-pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> {
+pub(crate) fn connect_real(
+    ctx: &Context,
+    cc: CountryCode,
+    city: Option<&City>,
+) -> Result<Connected> {
     let helper = HelperClient::new(SystemRunner);
     let tailscale = TailscaleBypass::new(SystemRunner);
     let static_routes = ctx.static_bypass()?;
@@ -71,6 +99,7 @@ pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> 
         &NordApi::new(),
         &ctx.token_source(),
         cc,
+        city,
     )
 }
 
@@ -86,6 +115,10 @@ pub(crate) fn check_limit(set: &BypassSet) -> wglane_core::Result<()> {
 }
 
 /// `connect` plus the config store and the route-count record `status` reads.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "ports plus the target; a struct for two callers would only move the list"
+)]
 pub(crate) fn connect_recorded<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
     ctx: &Context,
     tunnel: &T,
@@ -94,17 +127,24 @@ pub(crate) fn connect_recorded<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: T
     catalog: &C,
     token: &S,
     cc: CountryCode,
+    city: Option<&City>,
 ) -> Result<Connected> {
     let store = ctx.conf_store();
-    let done = connect(
-        tunnel,
-        routes,
-        providers,
-        cc,
-        store.dir(),
-        store.age(cc)?,
-        || regenerate(catalog, token, cc, |body| Ok(store.write(cc, body)?)),
-    )?;
+    // The city is not part of the config's name: a cached config is reusable
+    // only if it was generated for the same request (no city, or this city).
+    let want = city.map(|c| c.name.as_str());
+    let same = ctx.recorded_request(&cc.to_lowercase()).as_deref() == want;
+    let age = if same { store.age(cc)? } else { None };
+    let picked = RefCell::new(None);
+    let done = connect(tunnel, routes, providers, cc, store.dir(), age, || {
+        let (path, picked_city) =
+            regenerate(catalog, token, cc, city, |body| Ok(store.write(cc, body)?))?;
+        *picked.borrow_mut() = picked_city;
+        Ok(path)
+    })?;
+    if done.regenerated {
+        ctx.record_city(&cc.to_lowercase(), want, picked.borrow().as_deref())?;
+    }
     ctx.record_routes(done.routes)?;
     Ok(done)
 }
@@ -138,14 +178,17 @@ impl Connected {
     }
 }
 
-/// Fetches a fresh config for `cc` and hands the rendered body to `write`.
+/// Fetches a fresh config for `cc` (only `city` when given), hands the
+/// rendered body to `write`, and returns the path plus the picked server's city.
 pub(crate) fn regenerate<C: ServerCatalog, T: TokenSource>(
     catalog: &C,
     token: &T,
     cc: CountryCode,
+    city: Option<&City>,
     write: impl FnOnce(&str) -> Result<PathBuf>,
-) -> Result<PathBuf> {
-    write(&render_wg_conf(&generate_config(catalog, token, cc)?))
+) -> Result<(PathBuf, Option<String>)> {
+    let (conf, server) = generate_config(catalog, token, cc, city)?;
+    Ok((write(&render_wg_conf(&conf))?, server.city))
 }
 
 /// The whole `up` flow against ports. `conf_age` is `None` when the config is
@@ -242,6 +285,7 @@ mod tests {
                     load: 9,
                     public_key: PublicKey("pk".into()),
                     country: cc("ZA"),
+                    city: None,
                 }],
             )]
             .into(),
@@ -287,12 +331,14 @@ mod tests {
                         &catalog(),
                         &FakeToken(token.map(Into::into)),
                         cc(to),
+                        None,
                         |body| {
                             assert!(body.contains("PrivateKey = priv"));
                             self.writes.set(self.writes.get() + 1);
                             Ok(Path::new(DIR).join(format!("{}.conf", to.to_lowercase())))
                         },
                     )
+                    .map(|(path, _)| path)
                 },
             )
         }

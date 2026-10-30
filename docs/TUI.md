@@ -8,13 +8,13 @@ Press `?` in the dashboard to see this list.
 
 | Key | Does |
 |---|---|
-| `enter` | connect to the selected country, or open/close a group |
-| `space` | open/close a group |
-| `h` / `l` | close / open a group (`h` on a country closes its group) |
-| left / right | left closes a group, or jumps from a country to its group header; right opens a closed group, or steps into an open one |
+| `enter` | on a city: connect to that city; on a country: connect to its least-loaded server; on a group: open/close it |
+| `space` | open/close a group or a country's cities (nothing on a city or a one-city country) |
+| `h` / `l` | `l` opens a group or country; `h` closes an open group or country; on a closed country `h` closes its group, on a city it closes the country |
+| left / right | left closes an open group or country, otherwise jumps up one level (city to country, country to group header); right opens a closed group or country, or steps into an open one |
 | `j` `k`, up/down | move |
 | `g` `G`, home/end | first / last row |
-| `/` | search by code or name; `enter` keeps the filter, `esc` clears it |
+| `/` | search by code, country name or city name; `enter` keeps the filter, `esc` clears it |
 | `d` | disconnect |
 | `r` | reload the server list (after a failed load) |
 | `esc` | clear the filter; with no filter, quit |
@@ -33,7 +33,13 @@ In the stats card, the `latency` line is the ping to the tailnet peer through th
 
 Countries are grouped by continent: Africa, Asia, Europe, Middle East, North America, Oceania, South America. The groups come from a fixed table in `crates/wglane-cli/src/tui/continent.rs`, because Nord's API has no region field. A code the table does not know goes under **Other**, so a new Nord country still shows up. When that happens, add the code to the table and to the `NORD` list in its test.
 
-All groups start closed, except the one with the connected country: that group opens and the cursor starts on the country. A closed group with the active tunnel in it shows `●`. While a filter is active, only groups with matches are shown, all open, and the group with the best match comes first. The cursor skips headers, so `enter` always connects a match.
+The tree has three levels: continent, country, city. A country with more than one city shows `▸` (closed) or `▾` (open) after its name and lists its cities, with server counts, below it. A country with one city (or none listed) has no city level: its row connects directly and shows no chevron. `enter` on a country always connects its least-loaded server, open or not; `enter` on a city connects the least-loaded server in that city (and regenerates the config unless the cached one was made for that same city).
+
+All groups and countries start closed, except the connected one: its group opens, and the cursor starts on the connected city when `up` recorded it, else on the country. A closed group with the active tunnel in it shows `●`.
+
+While a filter is active, the query matches the country code, the country name and city names (case-insensitive substring, accents ignored; code-prefix hits come first). Only groups with matches are shown, all open, and the group with the best match comes first. A country with matching cities opens and lists only those cities. A country shown only because of its cities is not selectable, nor is a group header, so `enter` always connects something that matched; the toggle keys do nothing while a filter is active.
+
+The connected city comes from a `<cc>.city` note next to the config, written when `up` generates the config. It is missing for configs made by `gen` or by an older wglane, and then only the country is shown.
 
 ## States
 
@@ -44,7 +50,7 @@ The `tunnel` line has a symbol, so it reads the same without color:
 | `· checking...` | no probe has finished yet |
 | `○ down` | no wglane tunnel is up |
 | `◐ connecting to XX...` / `◐ disconnecting...` | a change is running (keys that start a change are ignored) |
-| `● up  XX  Name` | tunnel up; the country is also marked `●` in the list |
+| `● up  XX  Name, City` | tunnel up; the country (and its city, when known) is also marked `●` in the list |
 | `? unknown (run wglane doctor)` | the helper could not say which tunnel is up |
 
 Errors appear in the bottom line, ahead of the key hints, starting with `error:`, so a narrow terminal cuts the hints first. Starting a new connect or disconnect clears the old message.

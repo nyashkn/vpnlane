@@ -15,7 +15,8 @@ Commands:
   up              Connect to a country (switches if already connected)
   down            Disconnect and remove bypass routes
   status          Show country, exit IP, tailnet health and bypass routes [alias: st]
-  servers         List countries, or ranked servers in one country [alias: ls]
+  servers         List countries, or ranked servers in one country
+  ls              List countries, or the cities of one country with server counts
   gen             Write tunnel configs without connecting
   doctor          Check prerequisites and print how to fix each problem
   config          Show or create the saved-settings file (config.toml)

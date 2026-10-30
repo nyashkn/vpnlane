@@ -1,19 +1,22 @@
 ---
 source: crates/wglane-cli/src/cmd/servers.rs
-expression: "render(&fake(), &args(Some(\"ZA\"), 5), true).unwrap()"
+expression: "render(&fake(), &args(Some(\"ZA\"), None, 5), true).unwrap()"
 ---
 [
   {
+    "city": "Johannesburg",
     "hostname": "za3.nordvpn.com",
     "ip": "192.0.2.2",
     "load": 9
   },
   {
+    "city": "Pretória",
     "hostname": "za7.nordvpn.com",
     "ip": "192.0.2.3",
     "load": 9
   },
   {
+    "city": "Johannesburg",
     "hostname": "za12.nordvpn.com",
     "ip": "192.0.2.1",
     "load": 40

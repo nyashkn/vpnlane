@@ -96,6 +96,50 @@ impl Context {
         Ok(fs::write(self.routes_record(), format!("{n}\n"))?)
     }
 
+    fn city_record(&self, tunnel: &str) -> PathBuf {
+        self.config_dir.join(format!("{tunnel}.city"))
+    }
+
+    fn city_lines(&self, tunnel: &str) -> (Option<String>, Option<String>) {
+        let text = fs::read_to_string(self.city_record(tunnel)).unwrap_or_default();
+        let mut lines = text
+            .lines()
+            .map(|l| Some(l.trim().to_owned()).filter(|l| !l.is_empty()));
+        (lines.next().flatten(), lines.next().flatten())
+    }
+
+    /// City of the server the `<tunnel>.conf` (e.g. `us`) points at, as noted
+    /// when `up` generated it. `None` when unknown (config made by `gen`, an
+    /// older wglane, or the provider gave no city).
+    #[cfg(any(feature = "tui", test))]
+    pub(crate) fn recorded_city(&self, tunnel: &str) -> Option<String> {
+        self.city_lines(tunnel).1
+    }
+
+    /// The city `up` was asked for when it generated `<tunnel>.conf`; `None`
+    /// for a whole-country request, or when nothing is recorded.
+    pub(crate) fn recorded_request(&self, tunnel: &str) -> Option<String> {
+        self.city_lines(tunnel).0
+    }
+
+    /// Notes the requested and the picked city of a freshly generated config
+    /// (both `None` removes the note).
+    pub(crate) fn record_city(
+        &self,
+        tunnel: &str,
+        requested: Option<&str>,
+        picked: Option<&str>,
+    ) -> Result<()> {
+        if requested.is_none() && picked.is_none() {
+            return match fs::remove_file(self.city_record(tunnel)) {
+                Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
+                _ => Ok(()),
+            };
+        }
+        let body = format!("{}\n{}\n", requested.unwrap_or(""), picked.unwrap_or(""));
+        Ok(fs::write(self.city_record(tunnel), body)?)
+    }
+
     pub(crate) fn clear_routes_record(&self) -> Result<()> {
         match fs::remove_file(self.routes_record()) {
             Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
@@ -139,5 +183,24 @@ mod tests {
         c.clear_routes_record().unwrap();
         c.clear_routes_record().unwrap();
         assert_eq!(c.recorded_routes(), 0);
+    }
+
+    #[test]
+    fn city_record_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        assert_eq!(c.recorded_city("us"), None);
+        c.record_city("us", None, Some("Boston")).unwrap();
+        assert_eq!(c.recorded_city("us").as_deref(), Some("Boston"));
+        assert_eq!(c.recorded_request("us"), None);
+        c.record_city("us", Some("New York"), Some("New York"))
+            .unwrap();
+        assert_eq!(c.recorded_request("us").as_deref(), Some("New York"));
+        c.record_city("us", None, None).unwrap();
+        c.record_city("us", None, None).unwrap();
+        assert_eq!(
+            (c.recorded_city("us"), c.recorded_request("us")),
+            (None, None)
+        );
     }
 }

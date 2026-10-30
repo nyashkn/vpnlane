@@ -6,7 +6,9 @@
     "cities": [
       {
         "id": 10,
-        "name": "Frankfurt"
+        "name": "Frankfurt",
+        "identifier": "de_frankfurt",
+        "serverCount": 12
       }
     ]
   },
@@ -17,7 +19,9 @@
     "cities": [
       {
         "id": 20,
-        "name": "Johannesburg"
+        "name": "Johannesburg",
+        "identifier": "za_johannesburg",
+        "serverCount": 4
       }
     ]
   },
@@ -28,7 +32,15 @@
     "cities": [
       {
         "id": 30,
-        "name": "New York"
+        "name": "New York",
+        "identifier": "us_new-york",
+        "serverCount": 9
+      },
+      {
+        "id": 31,
+        "name": "Los Angeles",
+        "identifier": "us_los-angeles",
+        "serverCount": 7
       }
     ]
   }

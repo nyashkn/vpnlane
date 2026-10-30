@@ -1,0 +1,16 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: "render_sized(&s, 70, 12).backend()"
+---
+"◐ connecting to US, New York...                                       "
+"┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
+"│  ▾ Africa (1)         ││tunnel   ◐ connecting to US, New York...   │"
+"│      ZA  South Africa ││exit ip  203.0.113.7                       │"
+"│  ▾ Europe (1)         ││tailnet  ok (nas, 283 ms)                  │"
+"│      DE  Germany ▸    ││latency  283 ms  min 283  max 283          │"
+"│  ▾ North America (1)  ││                                           │"
+"│    ● US  United States││▂                                          │"
+"│>       ● New York (9) ││                                           │"
+"│          Los Angeles (││                                           │"
+"└───────────────────────┘└───────────────────────────────────────────┘"
+"? help  enter connect  d disconnect  / search  q quit                 "

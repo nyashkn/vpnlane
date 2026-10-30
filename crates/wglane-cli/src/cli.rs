@@ -73,6 +73,7 @@ pub(crate) enum Command {
     Down(cmd::down::Args),
     Status(cmd::status::Args),
     Servers(cmd::servers::Args),
+    Ls(cmd::ls::Args),
     Gen(cmd::gen_conf::Args),
     Doctor(cmd::doctor::Args),
     Config(cmd::config::Args),
