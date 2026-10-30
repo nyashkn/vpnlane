@@ -35,6 +35,10 @@ check-no-tui:
 check-versions:
     cargo run --locked -p xtask -- check-versions
 
+# Report countries Nord lists that the TUI continent table lacks. Needs network, so NOT in `ci`.
+check-continents:
+    cargo run --locked -p xtask -- check-continents
+
 # Run wglane, e.g. `just run status --json`.
 run *args:
     cargo run -p wglane-cli -- {{args}}

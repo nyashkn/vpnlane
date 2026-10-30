@@ -1,0 +1,38 @@
+name: continent-drift
+
+# Weekly: does Nord list countries the TUI continent table lacks? Needs network, so not in `ci`.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  drift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+      - name: Check table against Nord
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          just check-continents | tee out.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          [ "$rc" = 2 ] || exit "$rc"   # 0 = no drift; 1 = real failure (network, build)
+          body="$(tail -n1 out.txt). Add them to crates/wglane-cli/src/tui/continent.rs and the NORD list in its test. Found by the weekly continent-drift workflow."
+          n="$(gh issue list --state open --search 'in:title "continent table drift"' --json number --jq '.[0].number')"
+          if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
+          else gh issue create --title "continent table drift" --body "$body"; fi

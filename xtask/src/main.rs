@@ -26,6 +26,8 @@ enum Task {
     Release,
     /// Fail if the release-please manifest, workspace version and Cargo.lock entries disagree.
     CheckVersions,
+    /// Needs network: fail (exit 2) if Nord lists countries missing from the TUI continent table.
+    CheckContinents,
 }
 
 fn main() -> Result<()> {
@@ -36,7 +38,50 @@ fn main() -> Result<()> {
         Task::Man => man(&out.join("man")),
         Task::Release => release(&workspace_root()),
         Task::CheckVersions => check_versions_files(&workspace_root()),
+        Task::CheckContinents => check_continents(&workspace_root()),
     }
+}
+
+const CONTINENT_FILE: &str = "crates/wglane-cli/src/tui/continent.rs";
+
+fn check_continents(root: &Path) -> Result<()> {
+    use wglane_core::ports::ServerCatalog;
+    let src = fs::read_to_string(root.join(CONTINENT_FILE)).wrap_err(CONTINENT_FILE)?;
+    let table = table_codes(&src);
+    let live = wglane_nord::NordApi::new().countries()?;
+    let missing: Vec<&str> = live
+        .iter()
+        .map(|c| c.code.as_str())
+        .filter(|c| !table.iter().any(|t| t == c))
+        .collect();
+    if missing.is_empty() {
+        println!(
+            "continent table ok: {} live countries, none missing",
+            live.len()
+        );
+        return Ok(());
+    }
+    println!(
+        "continent table drift: {} missing: {}",
+        missing.len(),
+        missing.join(" ")
+    );
+    std::process::exit(2) // 2 = drift, so CI can tell it from a network failure (1)
+}
+
+/// The quoted ISO codes in the `match` of `continent()`.
+// shortcut: text scan of the match arms, not a parser; fine while the table stays one match.
+fn table_codes(src: &str) -> Vec<String> {
+    let body = src
+        .split("match code.as_str() {")
+        .nth(1)
+        .unwrap_or_default();
+    let body = body.split("_ => Other").next().unwrap_or_default();
+    body.split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect()
 }
 
 fn check_versions_files(root: &Path) -> Result<()> {
@@ -156,11 +201,24 @@ fn man(dir: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::check_versions;
+    use super::{check_versions, table_codes};
 
     const TOML: &str = "[workspace]\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace.dependencies]\n";
     const LOCK: &str = "[[package]]\nname = \"wglane-cli\"\nversion = \"0.1.0\"\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n[[package]]\nname = \"xtask\"\nversion = \"0.1.0\"\n";
     const MANIFEST: &str = r#"{ ".": "0.1.0" }"#;
+
+    #[test]
+    fn continent_table_has_no_duplicate_codes() {
+        let src = include_str!("../../crates/wglane-cli/src/tui/continent.rs");
+        let codes = table_codes(src);
+        assert!(codes.len() > 100, "table scan found {} codes", codes.len());
+        let unique: std::collections::BTreeSet<_> = codes.iter().collect();
+        assert_eq!(
+            unique.len(),
+            codes.len(),
+            "duplicate code in continent table"
+        );
+    }
 
     #[test]
     fn agreeing_files_pass() {

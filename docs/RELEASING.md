@@ -4,6 +4,8 @@ Nothing publishes until a human merges the Release PR. release-please only opens
 
 ## Flow
 
+Which prefix to use, and why the PR title must carry it: see [STYLE.md](STYLE.md#commits-and-pr-titles).
+
 1. Commit to `main` (through PRs) with Conventional Commits: `feat:` appears under What's New, `fix:`/`perf:` under Fixes; `docs`, `test`, `chore`, `ci`, `refactor`, `build` are hidden. While below 1.0, `feat` bumps the minor version and a breaking change bumps the minor too.
 2. Each push to `main` opens or updates one Release PR (`.github/workflows/release-please.yml`). It bumps the workspace version in `Cargo.toml`, the `wglane-*` and `xtask` entries in `Cargo.lock`, `.release-please-manifest.json`, and writes the `CHANGELOG.md` section.
 3. A Claude step (`release-notes.yml`, guide in `.github/release-notes-guide.md`) rewrites that section into What's New / Fixes / Smaller changes. It skips cleanly if its token is absent.
