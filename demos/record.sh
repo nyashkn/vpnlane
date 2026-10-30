@@ -23,9 +23,10 @@ SS="node $SPRINTSHOW/dist/cli.js"
 $SS run demos/cli.md --cwd "$W/home" --no-narrate -o "$W/cli.mp4"
 node demos/proxy-first-only.mjs 18089 & PROXY=$!; sleep 1
 HTTPS_PROXY=http://127.0.0.1:18089 $SS run demos/tui.md --cwd "$W/home" --no-narrate -o "$W/tui.mp4"
+# -ss 3 drops the sprintshow title card
 for n in cli tui; do
-  ffmpeg -y -loglevel error -i "$W/$n.mp4" -vf "fps=10,scale=800:-1:flags=lanczos,palettegen=max_colors=64" "$W/p.png"
-  ffmpeg -y -loglevel error -i "$W/$n.mp4" -i "$W/p.png" -lavfi "fps=10,scale=800:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=none" "docs/media/$n.gif"
+  ffmpeg -y -loglevel error -ss 3 -i "$W/$n.mp4" -vf "fps=10,scale=800:-1:flags=lanczos,palettegen=max_colors=64" "$W/p.png"
+  ffmpeg -y -loglevel error -ss 3 -i "$W/$n.mp4" -i "$W/p.png" -lavfi "fps=10,scale=800:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=none" "docs/media/$n.gif"
   [ -n "${KEEP_MP4:-}" ] && cp "$W/$n.mp4" "$KEEP_MP4/"
 done
 ls -l docs/media/*.gif

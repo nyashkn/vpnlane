@@ -34,7 +34,7 @@ fetch your WireGuard key and server list.
 
 ![wglane CLI: help, doctor, servers](docs/media/cli.gif)
 
-![wglane TUI: scrolling the country list](docs/media/tui.gif)
+![wglane TUI: continent tree, search, help overlay](docs/media/tui.gif)
 
 ## How it works
 
