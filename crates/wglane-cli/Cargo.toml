@@ -14,6 +14,12 @@ publish.workspace = true
 name = "wglane"
 path = "src/main.rs"
 
+[[bin]]
+# Root-side helper; installed root-owned by `wglane install-helper`. Lives here so
+# it ships in the same release archive as `wglane`.
+name = "wglane-helper"
+path = "src/bin/wglane-helper.rs"
+
 [features]
 default = ["tui"]
 # Full-screen dashboard (`wglane tui`).

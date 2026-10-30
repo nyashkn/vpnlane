@@ -23,7 +23,7 @@ layers beyond that.
             wglane-cli (bin `wglane`, lib for xtask)     xtask
               │        │         │                         │
               ▼        ▼         ▼                         ▼
-      wglane-nord  wglane-macos (+ bin `wglane-helper`)  wglane-cli
+      wglane-nord  wglane-macos   wglane-cli
               │        │
               ▼        ▼
             wglane-core  (no I/O, no async, no network, no process spawning)
@@ -74,7 +74,7 @@ CLI cannot read it). The count is 0 when no tunnel is active.
 
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
 by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
-(`crates/wglane-macos/src/bin/wglane-helper.rs`) runs as root and uses
+(`crates/wglane-cli/src/bin/wglane-helper.rs`) runs as root and uses
 `WgQuick` + `RouteTable` with `SystemRunner`. Verbs are fixed: `up <cc>`,
 `down`, `bypass <gw> <cidr>...`. The helper takes no paths from the caller and
 validates every argument with the core parsers. `install-helper` copies it to a
@@ -114,7 +114,7 @@ lives in `bd`; `// TODO(bead): <id>: <what>` markers, if any, point at it
 | macos | `src/probe.rs` | `TailscalePing` |
 | macos | `src/helper.rs` | `HelperClient`, `HelperVerb` |
 | macos | `src/privilege.rs` | sudoers + install |
-| macos | `src/bin/wglane-helper.rs` | root-side verb dispatch |
+| cli | `src/bin/wglane-helper.rs` | root-side verb dispatch |
 | cli | `src/cmd/<name>.rs` | one subcommand: args, help, run |
 | cli | `src/cmd/completions.rs` | completions |
 | cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop, state + drawing | 1, 2 |

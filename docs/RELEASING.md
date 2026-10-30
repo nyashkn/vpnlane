@@ -15,13 +15,13 @@ Nothing is published until the owner pushes a `v*` tag. `cargo release` is a dry
 2. Preview: `cargo release patch` (or `minor`/`major`). Prints the plan; runs `just ci` as the pre-release hook. Needs a clean tree.
 3. Bump + tag locally: `cargo release patch --execute`. All crates share one version; this commits the bump and creates tag `vX.Y.Z`. It does not push.
 4. Push: `git push && git push origin vX.Y.Z`. The tag triggers `.github/workflows/release.yml` (cargo-dist): builds aarch64 and x86_64 macOS archives, creates the GitHub Release, and pushes the Homebrew formula to the tap.
-5. Check: `brew install OWNER/tap/wglane-cli`.
+5. Check: `brew install OWNER/tap/wglane-cli` (installs both binaries).
 
 Pull requests run `dist plan` only; they never publish.
 
-## Archive contents (known gap)
+## Archive contents
 
-dist builds one archive per package, so `wglane` (`wglane-cli`) and `wglane-helper` (`wglane-macos`) ship in separate archives and formulas. Run `dist plan` to see them. Putting both in one archive needs the helper `[[bin]]` moved into `wglane-cli`.
+`wglane` and `wglane-helper` are both bins of `wglane-cli`, so one archive (and one formula, `wglane-cli.rb`) per target carries both. `wglane-macos` is a library and is excluded from dist.
 
 ## Local checks
 
