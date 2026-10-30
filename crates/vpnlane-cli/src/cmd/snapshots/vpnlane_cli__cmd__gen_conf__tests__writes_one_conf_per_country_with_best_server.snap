@@ -1,0 +1,6 @@
+---
+source: crates/vpnlane-cli/src/cmd/gen_conf.rs
+expression: "report(&done, false, &|p| p.display().to_string()).unwrap()"
+---
+ZA za3.nordvpn.com load 9% -> /cfg/za.conf
+DE de7.nordvpn.com load 21% -> /cfg/de.conf

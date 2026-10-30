@@ -1,0 +1,9 @@
+---
+source: crates/vpnlane-cli/src/cmd/status.rs
+expression: "render(&s, true, false).unwrap()"
+---
+tunnel         none
+exit ip        unknown
+protected      unknown
+tailnet        tailscale not installed
+bypass routes  0

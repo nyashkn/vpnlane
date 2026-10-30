@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::CountryCode;
 
-/// Result alias used by every wglane library crate.
+/// Result alias used by every vpnlane library crate.
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// Every failure a port or pure function can report.
@@ -80,7 +80,7 @@ pub enum Error {
     /// Filesystem or process I/O failed.
     #[error("{context}")]
     Io {
-        /// What wglane was doing.
+        /// What vpnlane was doing.
         context: String,
         /// Underlying error.
         #[source]
@@ -89,7 +89,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// Wraps an I/O error with what wglane was doing at the time.
+    /// Wraps an I/O error with what vpnlane was doing at the time.
     pub fn io(context: impl Into<String>, source: std::io::Error) -> Self {
         Self::Io {
             context: context.into(),

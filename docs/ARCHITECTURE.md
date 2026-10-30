@@ -7,7 +7,7 @@ easy to break by accident.
 
 ## Bird's-eye view
 
-`wglane up ZA` must: find a token, make sure `~/.config/wglane/za.conf` exists
+`vpnlane up ZA` must: find a token, make sure `~/.config/vpnlane/za.conf` exists
 and is under 7 days old (regenerating it from the Nord API if not), read the
 physical gateway, bring the WireGuard tunnel up through a root-owned helper,
 then add host routes via that gateway for every Tailscale control and DERP IP
@@ -20,7 +20,7 @@ layers beyond that.
 ## Crate graph
 
 ```
-   xtask ──▶ wglane-cli (bin `wglane`, bin `wglane-helper`, lib for xtask)
+   xtask ──▶ vpnlane-cli (bin `vpnlane`, bin `vpnlane-helper`, lib for xtask)
                   │        │
                   ▼        ▼
             vpnlane-nord  vpnlane-macos
@@ -28,7 +28,7 @@ layers beyond that.
                   ▼        ▼
             vpnlane-core  (no I/O, no async, no network, no process spawning)
 
-   `wglane-helper` is a second binary of the `wglane-cli` package; its logic
+   `vpnlane-helper` is a second binary of the `vpnlane-cli` package; its logic
    lives in `vpnlane-macos` (`helper_main`).
 ```
 
@@ -37,11 +37,11 @@ Dependency rules (the compiler enforces direction; review enforces the rest):
 1. `vpnlane-core` depends on nothing in the workspace and does no I/O. Types
    from `std::io` may appear in errors; calls to it may not.
 2. `vpnlane-nord` and `vpnlane-macos` depend only on `vpnlane-core`, never on each
-   other. A Linux adapter would be a sibling `wglane-linux`.
-3. Only `wglane-cli` knows concrete adapter types. Library code is generic over
+   other. A Linux adapter would be a sibling `vpnlane-linux`.
+3. Only `vpnlane-cli` knows concrete adapter types. Library code is generic over
    ports (`fn f<C: ServerCatalog>(c: &C)`), not `dyn`.
 4. `thiserror` (`vpnlane_core::Error`) in libraries; `color-eyre` only in
-   `wglane-cli` and `xtask`.
+   `vpnlane-cli` and `xtask`.
 5. Blocking only. HTTP is `ureq`; no tokio anywhere.
 
 ## Ports and adapters
@@ -93,7 +93,7 @@ files; they are imported once and deleted.
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
 by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
 (`vpnlane_macos::helper_main`, started by the thin
-`crates/wglane-cli/src/bin/wglane-helper.rs`) runs as root and uses `WgGo` +
+`crates/vpnlane-cli/src/bin/vpnlane-helper.rs`) runs as root and uses `WgGo` +
 `RouteTable` with a `RootRunner`.
 
 **Verbs** (fixed; this set is the future daemon socket protocol): `up <cc>`,
@@ -147,7 +147,7 @@ IPv4/DERP, which have bypass routes; this is unverified. See the README.
 
 ### Network change
 
-`wglane watch` listens to `route -n monitor` through `NetworkWatcher`. On each
+`vpnlane watch` listens to `route -n monitor` through `NetworkWatcher`. On each
 change it reads the new physical gateway and calls the helper's `bypass` verb.
 The client always makes this call, even when the bypass set is empty (for
 example, no `tailscale` CLI): an empty `bypass <gw>` clears the routes recorded
@@ -187,7 +187,7 @@ One concern per file, so changes stay local.
 | macos | `src/ping_probe.rs` | `PingProbe`, `physical_interface` |
 | macos | `src/helper.rs` | `HelperClient`, `HelperVerb`, root-side `Helper` + `RootRunner` + `helper_main` |
 | macos | `src/privilege.rs` | sudoers, install, trusted-path checks (runs as root) |
-| cli | `src/bin/wglane-helper.rs` | entry shim: calls `helper_main` |
+| cli | `src/bin/vpnlane-helper.rs` | entry shim: calls `helper_main` |
 | cli | `src/cmd/<name>.rs` | one subcommand: args, help, run |
 | cli | `src/cmd/completions.rs` | completions |
 | cli | `src/cmd/fastest.rs` | concurrent probing, probe scope (physical interface while a tunnel is up) |
@@ -211,10 +211,10 @@ that `.snap` diff.
 | Anything that talks to Nord | `vpnlane-nord` (`api.rs` transport, `wire.rs` parsing) |
 | Anything that runs a macOS program or touches the filesystem | `vpnlane-macos`, via `CommandRunner` |
 | Something that needs root | a helper verb in `helper.rs`, implemented by `tunnel.rs`, `routes.rs` or `privilege.rs`; nowhere else |
-| Subcommand behaviour, flags, help text | `wglane-cli/src/cmd/<name>.rs` |
+| Subcommand behaviour, flags, help text | `vpnlane-cli/src/cmd/<name>.rs` |
 | Output formatting (text / `--json`) | the subcommand's own file |
 | Build/release automation | `xtask` |
-| A Linux port | new crate `wglane-linux` implementing the same ports |
+| A Linux port | new crate `vpnlane-linux` implementing the same ports |
 
 ## Testing strategy
 
@@ -225,7 +225,7 @@ that `.snap` diff.
 - Nord responses come from `crates/vpnlane-nord/fixtures/` (synthetic).
 - No network, no root, no real `wireguard-go`/`route` in tests. A few tests do
   spawn harmless processes: `SystemRunner`'s own (`/bin/sh`), the privilege
-  tests (`/bin/chmod`), and `doctor_exit` (runs the built `wglane` binary).
+  tests (`/bin/chmod`), and `doctor_exit` (runs the built `vpnlane` binary).
 - `cargo test` (nextest is not assumed).
 
 ## Decisions taken

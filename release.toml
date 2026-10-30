@@ -5,7 +5,7 @@ tag-name = "v{{version}}"
 pre-release-hook = ["just", "ci"]
 publish = false
 push = false
-# One shared tag, created by wglane-cli (see crates/wglane-cli/release.toml).
+# One shared tag, created by vpnlane-cli (see crates/vpnlane-cli/release.toml).
 tag = false
 # One bump commit/tag for the whole workspace, not one per crate.
 consolidate-commits = true

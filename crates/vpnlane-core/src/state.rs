@@ -1,4 +1,4 @@
-//! Runtime state: what wglane last applied, kept apart from `config.toml`.
+//! Runtime state: what vpnlane last applied, kept apart from `config.toml`.
 //!
 //! The file is machine-written and lives next to the config as `state.json`;
 //! the user's `config.toml` is never touched. This module is the schema only;
@@ -15,7 +15,7 @@ use crate::{Location, Pick};
 /// not read (and not overwritten blindly) by this release.
 pub const STATE_VERSION: u32 = 1;
 
-/// Everything wglane remembers between runs.
+/// Everything vpnlane remembers between runs.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
     /// Schema version, [`STATE_VERSION`].

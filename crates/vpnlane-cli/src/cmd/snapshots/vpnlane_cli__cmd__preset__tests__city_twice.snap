@@ -1,0 +1,5 @@
+---
+source: crates/vpnlane-cli/src/cmd/preset.rs
+expression: e.to_string()
+---
+DE/Berlin already names a city: drop --city, or pass the country alone

@@ -139,7 +139,7 @@ mod tests {
     #[test]
     fn system_runner_missing_program_is_io_error() {
         let err = SystemRunner
-            .run("/nonexistent/wglane-test", &[])
+            .run("/nonexistent/vpnlane-test", &[])
             .unwrap_err();
         assert!(matches!(err, Error::Io { .. }));
     }

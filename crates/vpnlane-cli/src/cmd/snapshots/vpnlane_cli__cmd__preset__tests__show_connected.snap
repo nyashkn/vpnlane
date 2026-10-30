@@ -1,0 +1,14 @@
+---
+source: crates/vpnlane-cli/src/cmd/preset.rs
+expression: "show(&s, \"work\", None, Some(&cur), false).unwrap()"
+---
+preset        work
+key           1
+label         Office exit
+location      DE/Berlin
+pick          least-load
+bypass_extra  203.0.113.0/24,203.0.113.9/32,203.0.113.10/32
+
+would change:
+  location  ZA -> DE/Berlin
+  bypass_extra  +2 routes

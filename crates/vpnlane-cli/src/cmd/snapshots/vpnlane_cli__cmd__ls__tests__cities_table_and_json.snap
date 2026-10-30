@@ -1,0 +1,7 @@
+---
+source: crates/vpnlane-cli/src/cmd/ls.rs
+expression: "render(&fake(), &args(Some(\"ZA\")), false).unwrap()"
+---
+CITY          SERVERS
+Johannesburg  12
+Pretória      3

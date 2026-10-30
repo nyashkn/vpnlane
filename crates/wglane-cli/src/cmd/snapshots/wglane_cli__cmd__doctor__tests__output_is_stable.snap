@@ -1,8 +1,0 @@
----
-source: crates/wglane-cli/src/cmd/doctor.rs
-expression: "render(&rows, false).unwrap()"
----
-ok    wireguard-tools
-FAIL  helper           fix: sudo wglane install-helper
-FAIL  config dir       fix: chmod 700 /home/u/.config/wglane
-??    udp 51820        packet left this machine; delivery cannot be tested without a tunnel. If `wglane up` never handshakes, this network may block UDP 51820

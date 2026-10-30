@@ -63,7 +63,7 @@ impl FileToken {
         Self { path: path.into() }
     }
 
-    /// `<config_dir>/token`, e.g. `~/.config/wglane/token`.
+    /// `<config_dir>/token`, e.g. `~/.config/vpnlane/token`.
     pub fn in_config_dir(config_dir: &std::path::Path) -> Self {
         Self::new(config_dir.join("token"))
     }
@@ -233,7 +233,7 @@ mod tests {
         );
         let msg = chain.require().unwrap_err().to_string();
         assert!(
-            msg.contains("WGLANE_TOKEN") && msg.contains("token with mode 600"),
+            msg.contains("VPNLANE_TOKEN") && msg.contains("token with mode 600"),
             "{msg}"
         );
     }

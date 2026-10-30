@@ -1,0 +1,9 @@
+---
+source: crates/vpnlane-cli/src/tui/app_tests.rs
+expression: "render_sized(&home(), 29, 5).backend()"
+---
+"                             "
+"     terminal too small      "
+"    need 30x6, have 29x5     "
+"           q quit            "
+"                             "

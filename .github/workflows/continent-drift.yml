@@ -32,7 +32,7 @@ jobs:
           rc=${PIPESTATUS[0]}
           set -e
           [ "$rc" = 2 ] || exit "$rc"   # 0 = no drift; 1 = real failure (network, build)
-          body="$(tail -n1 out.txt). Add them to crates/wglane-cli/src/tui/continent.rs and the NORD list in its test. Found by the weekly continent-drift workflow."
+          body="$(tail -n1 out.txt). Add them to crates/vpnlane-cli/src/tui/continent.rs and the NORD list in its test. Found by the weekly continent-drift workflow."
           n="$(gh issue list --state open --search 'in:title "continent table drift"' --json number --jq '.[0].number')"
           if [ -n "$n" ]; then gh issue comment "$n" --body "$body"
           else gh issue create --title "continent table drift" --body "$body"; fi

@@ -1,0 +1,16 @@
+---
+source: crates/vpnlane-cli/src/tui/app_tests.rs
+expression: "render_sized(&s, 40, 12).backend()"
+---
+"● up  KE  281 ms  exit 203.0.113.7      "
+"browse  the full tree, for when you do n"
+"                  LAT      LOAD         "
+"┌ servers ─────────────────────────────┐"
+"│> ▸ Africa (1)                        │"
+"│  ▸ Europe (1)                        │"
+"│  ▸ North America (1)                 │"
+"│                                      │"
+"│                                      │"
+"│                                      │"
+"└──────────────────────────────────────┘"
+"enter connect  h l open/close  / filter "

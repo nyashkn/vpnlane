@@ -8,7 +8,7 @@
 #[macro_export]
 macro_rules! brand_name {
     () => {
-        "wglane"
+        "vpnlane"
     };
 }
 
@@ -16,7 +16,7 @@ macro_rules! brand_name {
 #[macro_export]
 macro_rules! brand_env {
     ($k:literal) => {
-        concat!("WGLANE_", $k)
+        concat!("VPNLANE_", $k)
     };
 }
 
@@ -26,22 +26,24 @@ pub const BIN: &str = brand_name!();
 pub const HELPER_BIN: &str = concat!(brand_name!(), "-helper");
 /// Directory name under `~/.config`.
 pub const CONFIG_DIR_NAME: &str = brand_name!();
+// R3 pending: the root-side names below stay on the old brand until the
+// helper/sudoers/state migration lands; the helper *binary* is `HELPER_BIN`.
 /// Root-owned install path of the helper.
-pub const HELPER_PATH: &str = concat!("/usr/local/libexec/", brand_name!(), "-helper");
+pub const HELPER_PATH: &str = "/usr/local/libexec/wglane-helper";
 /// Root-owned directory of vetted `wg`/`wireguard-go` copies.
-pub const TOOL_DIR: &str = concat!("/usr/local/libexec/", brand_name!(), "/bin");
+pub const TOOL_DIR: &str = "/usr/local/libexec/wglane/bin";
 /// Root-owned runtime state directory.
-pub const STATE_DIR: &str = concat!("/var/db/", brand_name!());
+pub const STATE_DIR: &str = "/var/db/wglane";
 /// Sudoers drop-in path.
-pub const SUDOERS_PATH: &str = concat!("/etc/sudoers.d/", brand_name!());
+pub const SUDOERS_PATH: &str = "/etc/sudoers.d/wglane";
 /// Name file wireguard-go is told to write (`WG_TUN_NAME_FILE`).
-pub const WG_NAME_FILE: &str = concat!(brand_name!(), ".name");
+pub const WG_NAME_FILE: &str = "wglane.name";
 /// The hint printed when the root helper is missing.
 pub const INSTALL_HINT: &str = concat!("sudo ", brand_name!(), " install-helper");
-/// GitHub repository slug.
+/// GitHub repository slug. TODO(R5): becomes `nyashkn/vpnlane` once the owner renames the repo.
 pub const REPO_SLUG: &str = "nyashkn/wglane";
 
-/// Environment variable name for `key` (`"COUNTRY"` -> `WGLANE_COUNTRY`).
+/// Environment variable name for `key` (`"COUNTRY"` -> `VPNLANE_COUNTRY`).
 pub fn env(key: &str) -> String {
     format!("{}{key}", brand_env!(""))
 }
@@ -84,18 +86,18 @@ mod tests {
             let body = src.split("#[cfg(test)]").next().unwrap();
             for (i, line) in body.lines().enumerate() {
                 let t = line.trim_start();
-                if t.starts_with("//") || !t.contains('"') && !t.contains("WGLANE_") {
+                if t.starts_with("//") || !t.contains('"') && !t.contains("VPNLANE_") {
                     continue;
                 }
                 // Cargo package names, crate paths and `use` lines are not branding.
                 let l = line
                     .replace("vpnlane-core", "")
-                    .replace("wglane-cli", "")
+                    .replace("vpnlane-cli", "")
                     .replace("vpnlane-macos", "")
                     .replace("vpnlane-nord", "")
-                    .replace("\"wglane-\"", "")
-                    .replace("wglane_", "");
-                let in_str = l.contains("WGLANE_") || l.contains("wglane");
+                    .replace("\"vpnlane-\"", "")
+                    .replace("vpnlane_", "");
+                let in_str = l.contains("VPNLANE_") || l.contains("vpnlane");
                 if in_str && l.matches('"').count() >= 1 {
                     bad.push(format!("{}:{}: {}", f.display(), i + 1, line.trim()));
                 }

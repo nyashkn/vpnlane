@@ -1,0 +1,8 @@
+---
+source: crates/vpnlane-cli/src/cmd/servers.rs
+expression: "render(&fake(), &args(Some(\"ZA\"), None, 5), false, prober).unwrap()"
+---
+HOST              CITY          LOAD  PING    IP
+za3.nordvpn.com   Johannesburg  9%    41 ms   192.0.2.2
+za7.nordvpn.com   Pretória      9%    -       192.0.2.3
+za12.nordvpn.com  Johannesburg  40%   380 ms  192.0.2.1

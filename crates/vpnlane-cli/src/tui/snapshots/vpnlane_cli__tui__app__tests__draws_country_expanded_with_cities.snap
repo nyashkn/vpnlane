@@ -1,0 +1,16 @@
+---
+source: crates/vpnlane-cli/src/tui/app_tests.rs
+expression: "render_sized(&us_open(), 70, 12).backend()"
+---
+"· checking  asking the helper which tunnel is up                      "
+"browse  the full tree, for when you do not know the name · esc home   "
+"                                       LATENCY      LOAD              "
+"┌ servers ───────────────────────────────────────────────────────────┐"
+"│  ▾ Africa (1)                                                      │"
+"│      ZA  South Africa                probing         -             │"
+"│  ▾ Europe (1)                                                      │"
+"│      DE  Germany ▸                   probing         -             │"
+"│  ▾ North America (1)                                               │"
+"│>     US  United States ▾             probing         -             │"
+"└────────────────────────────────────────────────────────────────────┘"
+"enter connect  h l open/close  / filter  : jump  esc home  ? keys     "

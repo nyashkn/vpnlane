@@ -112,7 +112,7 @@ mod tests {
     #[test]
     fn write_sets_modes_and_replaces() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let store = ConfStore::new(tmp.path().join("wglane"));
+        let store = ConfStore::new(tmp.path().join("vpnlane"));
         let path = store.write(us(), "one").expect("write");
         assert_eq!(path, store.path(us()));
         assert_eq!(mode(store.dir()), 0o700);

@@ -1,0 +1,18 @@
+---
+source: crates/vpnlane-cli/src/cmd/gen_conf.rs
+expression: "report(&done, true, &|p| p.display().to_string()).unwrap()"
+---
+[
+  {
+    "country": "ZA",
+    "hostname": "za3.nordvpn.com",
+    "load": 9,
+    "path": "/cfg/za.conf"
+  },
+  {
+    "country": "DE",
+    "hostname": "de7.nordvpn.com",
+    "load": 21,
+    "path": "/cfg/de.conf"
+  }
+]

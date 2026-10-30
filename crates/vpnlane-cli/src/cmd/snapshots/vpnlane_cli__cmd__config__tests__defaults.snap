@@ -1,0 +1,13 @@
+---
+source: crates/vpnlane-cli/src/cmd/config.rs
+expression: "show(&eff(\"\", Overrides::default()), false).unwrap()"
+---
+location               (unset)          default
+pick                   least-load       default
+bypass_extra           []               default
+preset                 (unset)          default
+exit_ip_check          true             default
+tui.start_expanded     false            default
+tui.graph_samples      60               default
+tui.warn_ratio         1.5              default
+presets                (none)           default

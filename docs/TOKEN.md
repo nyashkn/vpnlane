@@ -1,6 +1,6 @@
 # Getting a NordVPN access token
 
-wglane uses your NordVPN access token to ask Nord's API for your NordLynx
+vpnlane uses your NordVPN access token to ask Nord's API for your NordLynx
 (WireGuard) private key and the server list. It sends the token only to
 `api.nordvpn.com` (as the Basic-auth password when fetching your service
 credentials) and never writes it anywhere except the file you choose below.
@@ -25,11 +25,11 @@ If you lose it, click **Revoke** on the same page, then generate a new one.
 ## Save it
 
 ```sh
-mkdir -p ~/.config/wglane && (umask 077; pbpaste > ~/.config/wglane/token)
+mkdir -p ~/.config/vpnlane && (umask 077; pbpaste > ~/.config/vpnlane/token)
 ```
 
-The file must be mode 600; wglane refuses a group- or world-readable token file.
-Alternatively `export WGLANE_TOKEN=...`; the environment variable wins over the
+The file must be mode 600; vpnlane refuses a group- or world-readable token file.
+Alternatively `export VPNLANE_TOKEN=...`; the environment variable wins over the
 file.
 
 Never pass the token as a command-line argument (it would show up in `ps` and
@@ -37,8 +37,8 @@ shell history), and do not paste it into issues, chats or logs.
 
 ## When it expires or is revoked
 
-`wglane up` fails with `token rejected`. Generate a new token and overwrite
-`~/.config/wglane/token` with the command above. Revoking a token in Nord
+`vpnlane up` fails with `token rejected`. Generate a new token and overwrite
+`~/.config/vpnlane/token` with the command above. Revoking a token in Nord
 Account has the same effect immediately.
 
 ## Source

@@ -1,6 +1,6 @@
 [package]
 name = "vpnlane-nord"
-description = "Nord API adapter for wglane: server catalog, credentials, token sources."
+description = "Nord API adapter for vpnlane: server catalog, credentials, token sources."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

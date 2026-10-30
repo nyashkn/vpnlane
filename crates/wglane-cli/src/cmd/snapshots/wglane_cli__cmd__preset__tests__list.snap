@@ -1,8 +1,0 @@
----
-source: crates/wglane-cli/src/cmd/preset.rs
-expression: "list(&s, Some(\"home\"), false).unwrap()"
----
-  KEY  NAME   LABEL        SUMMARY
-  1    work   Office exit  DE/Berlin, +2 routes
-  2    ghost               DE/Atlantis
-* 3    home                ZA, fastest

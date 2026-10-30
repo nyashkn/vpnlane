@@ -1,6 +1,6 @@
-# Dashboard (`wglane tui`)
+# Dashboard (`vpnlane tui`)
 
-`wglane tui` is palette-first. Home is a status HUD: tunnel state, safety, exit,
+`vpnlane tui` is palette-first. Home is a status HUD: tunnel state, safety, exit,
 tailnet, bypass, a latency graph, your presets and the fastest places right now.
 To go somewhere, press `space` (or `:`) and type a city, a country, a preset or
 an action. The continent tree is still there, one key away (`b`), for when you
@@ -19,7 +19,7 @@ they cannot drift apart.
 |---|---|
 | `space`, `:` | open the jump palette |
 | `1`-`9` | apply that preset now: reconnects at once, no preview |
-| `0` | repeat the last request (`wglane up -`) |
+| `0` | repeat the last request (`vpnlane up -`) |
 | `p` | preview presets: the palette in preset mode, showing what each would change |
 | `f` | connect to the fastest place measured right now |
 | `b` | browse the continent tree |
@@ -110,11 +110,11 @@ space jump  0-9 preset  p preview  f fastest  b browse  d disconnect  ? keys  q 
 | Shows | Means |
 |---|---|
 | `· checking` | no status yet |
-| `○ down  not connected` | no wglane tunnel; the second line names the last request |
+| `○ down  not connected` | no vpnlane tunnel; the second line names the last request |
 | `◐ connecting  Germany · Frankfurt` | a change is running; keys that change the tunnel wait, `space`, `b`, `?` still work |
 | `◐ disconnecting` | same |
 | `● up  Germany · Frankfurt` | tunnel up; `preset work` on the right when it came from a preset |
-| `? unknown  the helper did not answer` | the helper could not say which tunnel is up; `r` retries, `wglane doctor` in a shell says why |
+| `? unknown  the helper did not answer` | the helper could not say which tunnel is up; `r` retries, `vpnlane doctor` in a shell says why |
 
 **Errors.** A failed change shows three rows in the HUD: `error` (the
 message), `doctor` (the UDP 51820 check, run at once after a failure: `looks
@@ -129,7 +129,7 @@ tailnet, the jump hint). Below 30x6: `terminal too small`. Short terminals
 drop spacing first, then the graph, then the fastest list.
 
 **Colour.** 16 ANSI colours only, used for meaning: green ok, yellow busy or
-warning (load of 60% and up too), red fault or leak. `NO_COLOR=1 wglane tui`
+warning (load of 60% and up too), red fault or leak. `NO_COLOR=1 vpnlane tui`
 turns colour off; symbols, bold and reverse video still carry every state.
 
 **Logs.** While the dashboard holds the screen, log lines (`-v`, `RUST_LOG`)
@@ -199,7 +199,7 @@ connect). Each result comes back as an `Event`.
   preset).
 
 **Quitting during a connect or disconnect.** `q` always quits. The terminal is
-restored at once, then wglane prints `finishing the connect before exit...`
+restored at once, then vpnlane prints `finishing the connect before exit...`
 and waits for that one change (a tunnel is never abandoned half-built). Lookups
 and probes in flight are dropped.
 
@@ -219,16 +219,16 @@ small, and the browse tree. A test also renders every state under `NO_COLOR`
 and checks no cell carries a colour.
 
 ```sh
-cargo test -p wglane-cli tui            # run them
+cargo test -p vpnlane-cli tui            # run them
 cargo insta review                      # accept or reject changed snapshots
-INSTA_UPDATE=always cargo test -p wglane-cli tui   # or accept them all
+INSTA_UPDATE=always cargo test -p vpnlane-cli tui   # or accept them all
 ```
 
-Snapshots live in `crates/wglane-cli/src/tui/snapshots/`. All data in them is
+Snapshots live in `crates/vpnlane-cli/src/tui/snapshots/`. All data in them is
 made up (203.0.113.x, 198.51.100.x, invented hosts). Review the diff before you
 commit them.
 
 To look at it by hand without touching your tunnel, run it the way
-`demos/record.sh` does: a temp `HOME` and `WGLANE_CONFIG_DIR`, under
+`demos/record.sh` does: a temp `HOME` and `VPNLANE_CONFIG_DIR`, under
 `sandbox-exec` hiding `/private/var/run/wireguard` (the tunnel then reads
 `? unknown`), in a `tmux` window you resize to 100x30, 60x20 and 34x7.

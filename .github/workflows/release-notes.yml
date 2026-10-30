@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   notes:
-    if: github.repository == 'nyashkn/wglane' && startsWith(inputs.branch, 'release-please--')
+    if: github.repository_owner == 'nyashkn' && startsWith(inputs.branch, 'release-please--')
     runs-on: ubuntu-latest
     env:
       HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}

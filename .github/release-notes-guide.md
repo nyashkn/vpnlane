@@ -4,7 +4,7 @@ Rules for rewriting the newest `CHANGELOG.md` section on a Release PR. Edit `CHA
 
 ## Audience
 
-People who install wglane, a macOS command-line tool that runs NordLynx/WireGuard tunnels alongside Tailscale. They run `brew install` and then `wglane up`. They care about what they can now do, what stopped breaking, and anything they must change. They do not care about internal refactors.
+People who install vpnlane, a macOS command-line tool that runs NordLynx/WireGuard tunnels alongside Tailscale. They run `brew install` and then `vpnlane up`. They care about what they can now do, what stopped breaking, and anything they must change. They do not care about internal refactors.
 
 ## What to keep
 
@@ -25,7 +25,7 @@ People who install wglane, a macOS command-line tool that runs NordLynx/WireGuar
 - Plain words, short sentences, present tense.
 - No "seamless", "powerful", "robust", "leverage", and no closing flourish.
 - At most two em dashes in the whole section.
-- Say "command" or `wglane up`, not "functionality".
+- Say "command" or `vpnlane up`, not "functionality".
 
 ## Check before finishing
 

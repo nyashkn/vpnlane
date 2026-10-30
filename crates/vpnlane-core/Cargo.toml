@@ -1,6 +1,6 @@
 [package]
 name = "vpnlane-core"
-description = "Domain types, port traits and pure logic for wglane. No I/O."
+description = "Domain types, port traits and pure logic for vpnlane. No I/O."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
