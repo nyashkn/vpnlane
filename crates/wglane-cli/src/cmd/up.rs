@@ -6,8 +6,10 @@ use std::time::Duration;
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
 use wglane_core::ports::{BypassProvider, RouteBypass, ServerCatalog, TokenSource, Tunnel};
-use wglane_core::{BypassSet, CountryCode, generate_config, is_stale, render_wg_conf};
-use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
+use wglane_core::{
+    BypassSet, CountryCode, Error, MAX_BYPASS, Overrides, generate_config, is_stale, render_wg_conf,
+};
+use wglane_macos::{HelperClient, SystemRunner, TailscaleBypass};
 use wglane_nord::NordApi;
 
 use crate::context::Context;
@@ -32,15 +34,27 @@ Why Tailscale breaks, and what wglane does:
 Examples:
   wglane up ZA          South Africa
   wglane up us          case does not matter
+  wglane up             use default_country from config.toml (or WGLANE_COUNTRY)
   wglane -v up DE       show each step"
 )]
 pub(crate) struct Args {
     /// Two-letter country code, e.g. US, DE, ZA (not UK: use GB).
-    pub(crate) country: CountryCode,
+    /// Default: `default_country` from `config.toml` or `WGLANE_COUNTRY`.
+    pub(crate) country: Option<CountryCode>,
 }
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
-    println!("{}", connect_real(ctx, args.country)?.summary(args.country));
+    let flags = Overrides {
+        country: args.country,
+        ..Overrides::default()
+    };
+    let cc = ctx.settings(flags)?.default_country.value.ok_or_else(|| {
+        eyre!(
+            "no country given: run `wglane up ZA`, or set default_country in {} (see `wglane config init`)",
+            ctx.config_file().display()
+        )
+    })?;
+    println!("{}", connect_real(ctx, cc)?.summary(cc));
     Ok(())
 }
 
@@ -48,7 +62,7 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
 pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> {
     let helper = HelperClient::new(SystemRunner);
     let tailscale = TailscaleBypass::new(SystemRunner);
-    let static_routes = StaticBypass::default();
+    let static_routes = ctx.static_bypass()?;
     connect_recorded(
         ctx,
         &helper,
@@ -58,6 +72,17 @@ pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> 
         &ctx.token_source(),
         cc,
     )
+}
+
+/// The helper takes at most [`MAX_BYPASS`] routes; say which setting to trim.
+pub(crate) fn check_limit(set: &BypassSet) -> wglane_core::Result<()> {
+    if set.len() > MAX_BYPASS {
+        return Err(Error::Config(format!(
+            "{} bypass routes, the limit is {MAX_BYPASS}: shorten bypass_extra in config.toml",
+            set.len()
+        )));
+    }
+    Ok(())
 }
 
 /// `connect` plus the config store and the route-count record `status` reads.
@@ -134,6 +159,14 @@ pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
     conf_age: Option<Duration>,
     regen: impl FnOnce() -> Result<PathBuf>,
 ) -> Result<Connected> {
+    // Validate the bypass set first: an oversized one must fail before any
+    // tunnel is touched, regenerated config written or other tunnel taken down.
+    let mut set = BypassSet::new();
+    for p in providers {
+        set.merge(p.collect()?);
+    }
+    check_limit(&set)?;
+
     let regenerated = is_stale(conf_age);
     let conf = if regenerated {
         regen()?
@@ -161,14 +194,7 @@ pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
     if !already_up {
         tunnel.up(&conf)?;
     }
-    let applied = (|| {
-        let mut set = BypassSet::new();
-        for p in providers {
-            set.merge(p.collect()?);
-        }
-        routes.apply(&set, gateway)
-    })();
-    let routes = match applied {
+    let routes = match routes.apply(&set, gateway) {
         Ok(n) => n,
         Err(e) => {
             // A full tunnel without its bypass routes kills the tailnet.
@@ -367,5 +393,33 @@ mod tests {
         let err = rig.up("ZA", FRESH, None).unwrap_err().to_string();
         assert!(err.contains("tunnel za was removed because bypass routes failed"));
         assert!(rig.tunnel.up.borrow().is_empty());
+    }
+
+    #[test]
+    fn oversized_bypass_set_fails_before_the_tunnel_is_touched() {
+        let rig = Rig::new(&["us"]);
+        let big = FakeBypassProvider(
+            (0..=MAX_BYPASS)
+                .map(|i| format!("10.{}.{}.1/32", i / 256, i % 256).parse().unwrap())
+                .collect(),
+        );
+        let err = connect(
+            &rig.tunnel,
+            &rig.routes,
+            &[&big],
+            cc("ZA"),
+            Path::new(DIR),
+            None,
+            || panic!("no config may be written"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("bypass_extra"), "{err}");
+        assert_eq!(
+            *rig.tunnel.up.borrow(),
+            ["us"],
+            "existing tunnel untouched, none brought up"
+        );
+        assert_eq!(rig.routes.apply_calls.get(), 0);
     }
 }

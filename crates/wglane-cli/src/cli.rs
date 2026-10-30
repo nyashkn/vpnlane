@@ -31,6 +31,7 @@ Examples:
   wglane status         country, exit IP, tailnet check, bypass routes
   wglane down           disconnect and remove bypass routes
   wglane doctor         check prerequisites and print fixes
+  wglane config show    saved settings in effect, and where each came from
 
 Token: set WGLANE_TOKEN or write it to ~/.config/wglane/token (mode 600).",
     help_template = HELP_TEMPLATE
@@ -74,6 +75,7 @@ pub(crate) enum Command {
     Servers(cmd::servers::Args),
     Gen(cmd::gen_conf::Args),
     Doctor(cmd::doctor::Args),
+    Config(cmd::config::Args),
     Watch(cmd::watch::Args),
     Tui(cmd::tui::Args),
     Completions(cmd::completions::Args),

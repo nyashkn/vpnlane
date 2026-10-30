@@ -62,6 +62,10 @@ pub enum Error {
         stderr: String,
     },
 
+    /// The config file or a config environment variable is invalid.
+    #[error("{0}")]
+    Config(String),
+
     /// Filesystem or process I/O failed.
     #[error("{context}")]
     Io {

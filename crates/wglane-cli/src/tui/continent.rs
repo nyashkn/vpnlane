@@ -19,6 +19,20 @@ pub(crate) enum Continent {
     Other,
 }
 
+impl Continent {
+    /// Every group, in display order.
+    pub(crate) const ALL: [Self; 8] = [
+        Self::Africa,
+        Self::Asia,
+        Self::Europe,
+        Self::MiddleEast,
+        Self::NorthAmerica,
+        Self::Oceania,
+        Self::SouthAmerica,
+        Self::Other,
+    ];
+}
+
 impl fmt::Display for Continent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {

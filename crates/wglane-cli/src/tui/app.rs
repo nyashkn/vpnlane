@@ -8,18 +8,16 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Sparkline, SparklineBar,
 };
-use wglane_core::{Country, CountryCode, TailnetHealth, TunnelStatus};
+use wglane_core::{
+    Country, CountryCode, DEFAULT_GRAPH_SAMPLES, TailnetHealth, TuiSettings, TunnelStatus,
+};
 
 use super::continent::{Continent, continent};
 
-/// Latency samples kept for the sparkline.
-const HISTORY: usize = 60;
 /// Height of the latency graph in rows.
 const SPARK_ROWS: u16 = 2;
 /// Bar levels the graph can draw (8 per row).
 const SPARK_LEVELS: u64 = 8 * SPARK_ROWS as u64;
-/// A sample above this multiple of the window median is drawn as a warning.
-const SPIKE_NUM_DEN: (u64, u64) = (3, 2);
 /// Below this the panels garble, so a size notice is drawn instead.
 const MIN_SIZE: (u16, u16) = (40, 8);
 
@@ -51,6 +49,47 @@ pub(crate) enum Row<'a> {
 pub(crate) enum Busy {
     Connecting(CountryCode),
     Disconnecting,
+}
+
+/// Display settings from `[tui]` in config.toml.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Ui {
+    /// Latency samples kept for the graph.
+    graph_samples: usize,
+    /// A sample above this multiple of the window median (in thousandths) is
+    /// drawn as a warning.
+    spike_permille: u64,
+}
+
+impl Default for Ui {
+    fn default() -> Self {
+        Self {
+            graph_samples: DEFAULT_GRAPH_SAMPLES,
+            spike_permille: 1500, // DEFAULT_WARN_RATIO
+        }
+    }
+}
+
+impl From<&TuiSettings> for Ui {
+    fn from(t: &TuiSettings) -> Self {
+        Self {
+            graph_samples: t.graph_samples.value,
+            // Validated to 1.0..=10.0, so the product fits and is not negative.
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "warn_ratio is validated to 1.0..=10.0"
+            )]
+            spike_permille: (t.warn_ratio.value * 1000.0).round() as u64,
+        }
+    }
+}
+
+impl Ui {
+    /// The spike threshold for a window with this median.
+    fn spike_limit(self, median: u64) -> u64 {
+        median * self.spike_permille / 1000
+    }
 }
 
 /// Dashboard state. Changed only by [`update`].
@@ -87,6 +126,7 @@ pub(crate) struct State {
     pub(crate) failed: bool,
     /// Draw without color (`NO_COLOR`); symbols and modifiers still carry state.
     pub(crate) no_color: bool,
+    ui: Ui,
 }
 
 /// Something that happened: a key, a clock tick, or an effect's result.
@@ -111,6 +151,19 @@ pub(crate) enum Effect {
 }
 
 impl State {
+    /// A fresh state with the `[tui]` settings applied.
+    pub(crate) fn with_settings(t: &TuiSettings) -> Self {
+        Self {
+            ui: Ui::from(t),
+            expanded: if t.start_expanded.value {
+                Continent::ALL.into()
+            } else {
+                BTreeSet::new()
+            },
+            ..Self::default()
+        }
+    }
+
     /// Countries matching the query: code-prefix hits first, then other
     /// code/name substring hits, each group alphabetical. An empty query keeps
     /// the catalog order.
@@ -311,7 +364,7 @@ pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
         Event::Status(st, known) => {
             if let TailnetHealth::Reachable { latency_ms, .. } = &st.tailnet {
                 s.latency.push(*latency_ms);
-                if s.latency.len() > HISTORY {
+                if s.latency.len() > s.ui.graph_samples {
                     s.latency.remove(0);
                 }
             }
@@ -464,7 +517,7 @@ pub(crate) fn draw(s: &State, frame: &mut Frame) {
     // show their shape; a flat series draws a low flat line, not a slab.
     let lo = shown.iter().copied().min().unwrap_or(0);
     let span = shown.iter().copied().max().unwrap_or(0) - lo;
-    let limit = median(shown) * SPIKE_NUM_DEN.0 / SPIKE_NUM_DEN.1;
+    let limit = s.ui.spike_limit(median(shown));
     let bars: Vec<SparklineBar> = shown
         .iter()
         .map(|&v| {
@@ -638,7 +691,7 @@ fn header_line(s: &State, width: u16) -> Line<'static> {
         shown.iter().copied().min().unwrap_or(0),
         shown.iter().copied().max().unwrap_or(0),
     );
-    let limit = median(shown) * SPIKE_NUM_DEN.0 / SPIKE_NUM_DEN.1;
+    let limit = s.ui.spike_limit(median(shown));
     let spark: Vec<Span> = shown
         .iter()
         .map(|&v| {
@@ -873,17 +926,53 @@ mod tests {
         assert_eq!(update(s, Event::Tick).1, Vec::new());
     }
 
+    #[allow(
+        clippy::default_trait_access,
+        reason = "Overrides is not imported here"
+    )]
+    fn tui_settings(expanded: bool, samples: usize, ratio: f64) -> TuiSettings {
+        let file = format!(
+            "[tui]\nstart_expanded = {expanded}\ngraph_samples = {samples}\nwarn_ratio = {ratio:?}\n"
+        );
+        wglane_core::FileConfig::parse(&file)
+            .unwrap()
+            .resolve(Default::default(), Default::default())
+            .tui
+    }
+
+    #[test]
+    fn tui_settings_apply() {
+        let s = State::with_settings(&tui_settings(true, 12, 2.0));
+        assert_eq!(s.expanded.len(), Continent::ALL.len());
+        assert_eq!(s.ui.spike_limit(100), 200);
+        let mut s = s;
+        for i in 0..30 {
+            s = up(s, &[], i);
+        }
+        assert_eq!(s.latency.len(), 12);
+        assert!(
+            State::with_settings(&tui_settings(false, 60, 1.5))
+                .expanded
+                .is_empty()
+        );
+        assert_eq!(
+            State::default().ui.spike_limit(100),
+            150,
+            "defaults match the old constants"
+        );
+    }
+
     #[test]
     fn latency_history_is_capped_and_skips_unreachable() {
         let mut s = State::default();
         for i in 0..70 {
             s = up(s, &[], i);
         }
-        assert_eq!(s.latency.len(), HISTORY);
+        assert_eq!(s.latency.len(), DEFAULT_GRAPH_SAMPLES);
         assert_eq!(s.latency.last(), Some(&69));
         let down = TailnetHealth::NotInstalled;
         let s = update(s, Event::Status(status(&[], down), true)).0;
-        assert_eq!(s.latency.len(), HISTORY);
+        assert_eq!(s.latency.len(), DEFAULT_GRAPH_SAMPLES);
     }
 
     #[test]

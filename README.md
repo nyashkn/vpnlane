@@ -141,6 +141,8 @@ sudo "$(command -v wglane)" install-helper --uninstall   # remove the helper
 `--config-dir` (or `WGLANE_CONFIG_DIR`) moves the config directory.
 Dashboard keys and states: [docs/TUI.md](docs/TUI.md).
 
+Saved settings (`config.toml`: default country, extra bypass CIDRs, TUI options): [docs/CONFIG.md](docs/CONFIG.md).
+
 ## Troubleshooting
 
 - `doctor` names the missing piece and the fix. Start there.

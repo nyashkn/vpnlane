@@ -2,6 +2,7 @@
 //! and `run(&Context, &Args)`.
 
 pub(crate) mod completions;
+pub(crate) mod config;
 pub(crate) mod doctor;
 pub(crate) mod down;
 pub(crate) mod gen_conf;
@@ -66,6 +67,7 @@ mod e2e {
                 &FakeExitIp::at("192.0.2.7".parse().unwrap()),
                 &FakeTailnet(TailnetHealth::NotInstalled),
                 ctx.recorded_routes(),
+                true,
             )
             .0
         };
