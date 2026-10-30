@@ -18,6 +18,7 @@ clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
 color-eyre.workspace = true
+serde_json.workspace = true
 wglane-cli.workspace = true
 
 [lints]

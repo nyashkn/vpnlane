@@ -1,0 +1,73 @@
+name: release-notes
+
+# Rewrites the newest CHANGELOG.md section on the Release PR branch into the
+# layout in .github/release-notes-guide.md. Dispatched by release-please.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Release PR branch to rewrite
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-notes-${{ inputs.branch }}
+  cancel-in-progress: true
+
+jobs:
+  notes:
+    if: github.repository == 'nyashkn/wglane' && startsWith(inputs.branch, 'release-please--')
+    runs-on: ubuntu-latest
+    env:
+      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    steps:
+      - name: Skip notice
+        if: env.HAS_CLAUDE_TOKEN != 'true'
+        run: echo "::notice::CLAUDE_CODE_OAUTH_TOKEN is not set; leaving the generated changelog as is."
+
+      - uses: actions/checkout@v6
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      # Subjects only, never diffs. Capped at 12 KB.
+      - name: Collect commit subjects
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        run: |
+          prev=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          range=${prev:+$prev..}HEAD
+          git log --no-merges --format='- %s' "$range" | head -c 12288 > "$RUNNER_TEMP/subjects.txt"
+          if grep -Eiq '(api[_-]?key|secret|token|password|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,})' "$RUNNER_TEMP/subjects.txt"; then
+            echo "::error::commit subjects look like they contain a credential; refusing to continue"
+            exit 1
+          fi
+
+      - uses: anthropics/claude-code-action@v1
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_args: --allowedTools "Read,Edit"
+          prompt: |
+            Follow .github/release-notes-guide.md exactly. Rewrite only the newest
+            version section of CHANGELOG.md. The commit subjects since the last
+            release are in ${{ runner.temp }}/subjects.txt. Edit CHANGELOG.md only.
+
+      - name: Commit if only CHANGELOG.md changed
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        env:
+          BRANCH: ${{ inputs.branch }}
+        run: |
+          changed=$(git status --porcelain | sed 's/^...//')
+          if [ -z "$changed" ]; then echo "no changes"; exit 0; fi
+          if [ "$changed" != "CHANGELOG.md" ]; then
+            echo "::error::unexpected changed files: $changed"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "docs(changelog): release notes in the house layout"
+          git push origin "HEAD:$BRANCH"

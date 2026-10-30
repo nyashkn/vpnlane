@@ -4,7 +4,7 @@ default:
     @just --list
 
 # The gate: format, lint, test, licenses/advisories, docs, slim build.
-ci: fmt-check clippy test deny doc check-no-tui
+ci: fmt-check clippy test deny doc check-no-tui check-versions
 
 # Format everything.
 fmt:
@@ -29,6 +29,10 @@ doc:
 # The binary must still build without the optional TUI.
 check-no-tui:
     cargo check -p wglane-cli --no-default-features
+
+# Release-please manifest, workspace version and Cargo.lock must agree.
+check-versions:
+    cargo xtask check-versions
 
 # Run wglane, e.g. `just run status --json`.
 run *args:

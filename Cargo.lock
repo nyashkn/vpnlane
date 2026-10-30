@@ -2790,6 +2790,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "color-eyre",
+ "serde_json",
  "wglane-cli",
 ]
 

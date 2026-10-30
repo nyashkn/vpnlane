@@ -1,0 +1,40 @@
+name: release-please
+
+# Opens or updates one Release PR on every push to main. Merging that PR (a human
+# action) creates the vX.Y.Z tag, which starts release.yml (cargo-dist).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release-please:
+    if: github.repository == 'nyashkn/wglane'
+    runs-on: ubuntu-latest
+    env:
+      # Without the PAT the action cannot open a PR; skip instead of failing every push to main.
+      HAS_RP_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN != '' }}
+    steps:
+      # A PAT, not GITHUB_TOKEN: tags and PRs made with GITHUB_TOKEN do not start other workflows.
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        if: env.HAS_RP_TOKEN == 'true'
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # claude-code-action rejects push events, so the notes run as a dispatched workflow.
+      - name: Dispatch release-notes for the Release PR branch
+        if: ${{ env.HAS_RP_TOKEN == 'true' && steps.rp.outputs.pr != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          PR_BRANCH: ${{ fromJSON(steps.rp.outputs.pr || '{}').headBranchName }}
+        run: |
+          if [ -n "$PR_BRANCH" ]; then
+            gh workflow run release-notes.yml -R "$GITHUB_REPOSITORY" --ref main -f "branch=$PR_BRANCH"
+          fi
