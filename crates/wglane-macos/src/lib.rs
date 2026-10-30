@@ -7,6 +7,9 @@
 //! `wglane-helper` binary; the unprivileged CLI uses [`HelperClient`], which
 //! implements the same ports by calling `sudo -n wglane-helper <verb>`.
 
+#[macro_use]
+extern crate wglane_core;
+
 mod bypass;
 mod command;
 mod conf_store;

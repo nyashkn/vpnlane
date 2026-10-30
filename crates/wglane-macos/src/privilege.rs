@@ -10,7 +10,7 @@ use crate::helper::{TOOL_DIR, TOOLS};
 use crate::{CommandRunner, HELPER_PATH};
 
 /// sudoers drop-in written by `install-helper`.
-pub const SUDOERS_PATH: &str = "/etc/sudoers.d/wglane";
+pub use wglane_core::brand::SUDOERS_PATH;
 
 const CHOWN: &str = "/usr/sbin/chown";
 const VISUDO: &str = "/usr/sbin/visudo";
@@ -207,7 +207,7 @@ fn trusted_tool_with(
     let canon = fs::canonicalize(path).map_err(|e| {
         Error::io(
             format!(
-                "finding {} (run `sudo wglane install-helper`)",
+                concat!("finding {} (run `sudo ", brand_name!(), " install-helper`)"),
                 path.display()
             ),
             e,
@@ -243,7 +243,7 @@ pub fn check_tool_dir(dir: &Path, top: &Path, owner: u32) -> Result<()> {
     let dir = fs::canonicalize(dir).map_err(|e| {
         Error::io(
             format!(
-                "finding {} (run `sudo wglane install-helper`)",
+                concat!("finding {} (run `sudo ", brand_name!(), " install-helper`)"),
                 dir.display()
             ),
             e,
@@ -329,7 +329,11 @@ fn require_root() -> Result<()> {
         Ok(())
     } else {
         Err(Error::io(
-            "install-helper needs root: run `sudo wglane install-helper`",
+            concat!(
+                "install-helper needs root: run `sudo ",
+                brand_name!(),
+                " install-helper`"
+            ),
             io::Error::from(ErrorKind::PermissionDenied),
         ))
     }

@@ -82,7 +82,11 @@ impl NetworkWatcher for RouteMonitor {
         collect_burst(&running.events, QUIET, MAX_BURST).map_err(|()| {
             self.running = None;
             Error::io(
-                "`route -n monitor` exited; restart `wglane watch`",
+                concat!(
+                    "`route -n monitor` exited; restart `",
+                    brand_name!(),
+                    " watch`"
+                ),
                 std::io::ErrorKind::UnexpectedEof.into(),
             )
         })

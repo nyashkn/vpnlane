@@ -11,10 +11,10 @@ use crate::context::Context;
 #[command(
     about = "Print shell completions (zsh, bash, fish, ...)",
     long_about = "Print a completion script for SHELL to stdout.",
-    after_help = "Examples:
-  wglane completions zsh > \"${fpath[1]}/_wglane\"
-  wglane completions bash > ~/.local/share/bash-completion/completions/wglane
-  wglane completions fish > ~/.config/fish/completions/wglane.fish"
+    after_help = concat!("Examples:
+  ", brand_name!(), " completions zsh > \"${fpath[1]}/_", brand_name!(), "\"
+  ", brand_name!(), " completions bash > ~/.local/share/bash-completion/completions/", brand_name!(), "
+  ", brand_name!(), " completions fish > ~/.config/fish/completions/", brand_name!(), ".fish")
 )]
 pub(crate) struct Args {
     /// Shell to generate for.
@@ -30,7 +30,7 @@ pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
 
 /// Writes the completion script for `shell` to `out`.
 pub(crate) fn write(shell: Shell, out: &mut impl Write) {
-    clap_complete::generate(shell, &mut crate::command(), "wglane", out);
+    clap_complete::generate(shell, &mut crate::command(), brand_name!(), out);
 }
 
 #[cfg(test)]

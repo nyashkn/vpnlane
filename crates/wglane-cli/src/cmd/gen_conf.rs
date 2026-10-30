@@ -22,10 +22,10 @@ use crate::context::Context;
 Fetch your NordLynx key and the best server for each COUNTRY and write
 <config-dir>/<cc>.conf (mode 600). `up` does this automatically; use `gen`
 to prepare configs ahead of time or to force a refresh.",
-    after_help = "\
+    after_help = concat!("\
 Examples:
-  wglane gen ZA US DE
-  wglane gen us --config-dir /tmp/wg"
+  ", brand_name!(), " gen ZA US DE
+  ", brand_name!(), " gen us --config-dir /tmp/wg")
 )]
 pub(crate) struct Args {
     /// One or more two-letter country codes.

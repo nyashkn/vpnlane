@@ -13,7 +13,7 @@ use crate::context::Context;
 #[derive(Debug, clap::Args)]
 #[command(
     about = "Show country, exit IP, tailnet health and bypass routes",
-    long_about = "\
+    long_about = concat!("\
 Show the active tunnel, the exit IP the internet sees, whether a tailnet
 peer answers, and how many bypass routes are installed.
 
@@ -39,20 +39,26 @@ With --json, prints one object for scripts and menu-bar plugins:
 Keys are stable; new keys may be added, none removed or renamed.
 
 The leak check is the exit IP lookup behind `protected` and the exit-country
-warning. `exit_ip_check = false` (or WGLANE_EXIT_IP_CHECK=false) turns it off;
-status then prints a `leak check  disabled` line every time, and `wglane
-doctor` warns.",
-    after_help = "\
+warning. `exit_ip_check = false` (or ", brand_env!("EXIT_IP_CHECK"), "=false) turns it off;
+status then prints a `leak check  disabled` line every time, and `", brand_name!(), "
+doctor` warns."),
+    after_help = concat!("\
 Examples:
-  wglane status
-  wglane st --json | jq .protected
-  wglane status --exit-ip-check false   skip the exit ip lookup",
+  ", brand_name!(), " status
+  ", brand_name!(), " st --json | jq .protected
+  ", brand_name!(), " status --exit-ip-check false   skip the exit ip lookup"),
     visible_alias = "st"
 )]
 pub(crate) struct Args {
-    /// Look up the exit IP (true or false). Default: `exit_ip_check` in
-    /// `config.toml` or `WGLANE_EXIT_IP_CHECK`, else true.
-    #[arg(long, value_name = "BOOL")]
+    #[arg(
+        long,
+        value_name = "BOOL",
+        help = concat!(
+            "Look up the exit IP (true or false). Default: `exit_ip_check` in `config.toml` or `",
+            brand_env!("EXIT_IP_CHECK"),
+            "`, else true"
+        )
+    )]
     exit_ip_check: Option<bool>,
 }
 
@@ -188,7 +194,7 @@ fn render(
         ))?);
     }
     let tunnel = if !known {
-        "unknown: run wglane doctor".to_owned()
+        concat!("unknown: run ", brand_name!(), " doctor").to_owned()
     } else if s.active.is_empty() {
         "none".to_owned()
     } else {

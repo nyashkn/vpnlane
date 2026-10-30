@@ -11,12 +11,12 @@ use crate::context::Context;
 #[derive(Debug, clap::Args)]
 #[command(
     about = "Disconnect and remove bypass routes",
-    long_about = "\
-Bring down every wglane tunnel and remove the bypass routes it added.
-Safe to run when nothing is up.",
-    after_help = "\
+    long_about = concat!("\
+Bring down every ", brand_name!(), " tunnel and remove the bypass routes it added.
+Safe to run when nothing is up."),
+    after_help = concat!("\
 Examples:
-  wglane down"
+  ", brand_name!(), " down")
 )]
 pub(crate) struct Args {}
 

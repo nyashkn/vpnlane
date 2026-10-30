@@ -15,10 +15,10 @@ Runs in the foreground. On each network change (Wi-Fi switch, new
 gateway) it re-reads the physical gateway and the bypass list and
 re-installs the routes, so the tailnet survives roaming. Event-driven,
 not polling.",
-    after_help = "\
+    after_help = concat!("\
 Examples:
-  wglane watch
-  wglane -v watch      log every change"
+  ", brand_name!(), " watch
+  ", brand_name!(), " -v watch      log every change")
 )]
 pub(crate) struct Args {}
 

@@ -21,79 +21,97 @@ use crate::context::{Context, note, unix_now};
 #[derive(Debug, clap::Args)]
 #[command(
     about = "Connect to a location (switches if already connected)",
-    long_about = "\
+    long_about = concat!("\
 Connect to the least-loaded NordLynx server at LOCATION: a country (`DE`) or a
 city in one (`DE/Berlin`; name or identifier, case and accents do not matter;
-`wglane ls DE` lists them). `-` repeats the last request exactly (place, pick,
+`", brand_name!(), " ls DE` lists them). `-` repeats the last request exactly (place, pick,
 bypass routes, preset), like `cd -`; with no argument the configured
 `location` is used. Changing between a city and the whole country regenerates
 the config.
 
 --city CITY is sugar for the city half: `up DE --city Berlin` is `up DE/Berlin`.
 Without LOCATION it takes the country from the layers below (preset,
-WGLANE_LOCATION, config.toml).
+", brand_env!("LOCATION"), ", config.toml).
 
-With --pick fastest (or --fastest, WGLANE_PICK, or `pick = \"fastest\"` in
+With --pick fastest (or --fastest, ", brand_env!("PICK"), ", or `pick = \"fastest\"` in
 config.toml) the 10 least-loaded candidates are pinged at once (about 2 s at
 most) and the lowest round trip wins; ties go to the lower load, and if no
 server answers the least-loaded one is used and the summary says so. It always
 picks anew, so it regenerates the config even when a fresh one exists. While a
-wglane tunnel is up, pings are bound to the physical interface so they do not
-measure the tunnel's exit; if every ping fails while connected, run `wglane
+", brand_name!(), " tunnel is up, pings are bound to the physical interface so they do not
+measure the tunnel's exit; if every ping fails while connected, run `", brand_name!(), "
 down` first.
 
 If the config for the country is missing or older than 7 days it is
-regenerated first (no separate `gen` step). An existing wglane tunnel is
+regenerated first (no separate `gen` step). An existing ", brand_name!(), " tunnel is
 brought down.
 
-With --preset NAME (or WGLANE_PRESET) the request is the top-level settings
+With --preset NAME (or ", brand_env!("PRESET"), ") the request is the top-level settings
 with [presets.NAME] laid over them: the preset's `location` and `pick`
-replace, its `bypass_extra` is added. Then WGLANE_LOCATION and WGLANE_PICK,
+replace, its `bypass_extra` is added. Then ", brand_env!("LOCATION"), " and ", brand_env!("PICK"), ",
 then LOCATION, --pick and --fastest, win over the preset. A LOCATION replaces
 the preset's whole location, city included. When something was overridden,
-`wglane status` shows `NAME (location overridden)`. `wglane preset apply NAME`
+`", brand_name!(), " status` shows `NAME (location overridden)`. `", brand_name!(), " preset apply NAME`
 is the same code path. Precedence for every key is in docs/CONFIG.md.
 
-Why Tailscale breaks, and what wglane does:
+Why Tailscale breaks, and what ", brand_name!(), " does:
   A full tunnel (AllowedIPs 0.0.0.0/0) also captures Tailscale's underlay:
   the control server and DERP relays. netcheck then reports UDP false and the
-  tailnet dies, although 100.64.0.0/10 still routes. wglane adds host routes
+  tailnet dies, although 100.64.0.0/10 still routes. ", brand_name!(), " adds host routes
   for those IPs via your physical gateway, so the tailnet keeps working and
   everything else exits through the VPN. The config has no DNS= line, so
-  MagicDNS keeps working too.",
-    after_help = "\
+  MagicDNS keeps working too."),
+    after_help = concat!("\
 Examples:
-  wglane up ZA            South Africa
-  wglane up us            case does not matter
-  wglane up DE/Berlin     a city
-  wglane up US --city \"New York\"
-  wglane up               the configured location (or WGLANE_LOCATION)
-  wglane up -             the last request again, as it was
-  wglane up DE --pick fastest     lowest latency among the least-loaded servers
-  wglane up --preset work         apply [presets.work] from config.toml
-  wglane up --preset work FR      the preset, but exit in France
-  wglane -v up DE         show each step"
+  ", brand_name!(), " up ZA            South Africa
+  ", brand_name!(), " up us            case does not matter
+  ", brand_name!(), " up DE/Berlin     a city
+  ", brand_name!(), " up US --city \"New York\"
+  ", brand_name!(), " up               the configured location (or ", brand_env!("LOCATION"), ")
+  ", brand_name!(), " up -             the last request again, as it was
+  ", brand_name!(), " up DE --pick fastest     lowest latency among the least-loaded servers
+  ", brand_name!(), " up --preset work         apply [presets.work] from config.toml
+  ", brand_name!(), " up --preset work FR      the preset, but exit in France
+  ", brand_name!(), " -v up DE         show each step")
 )]
 pub(crate) struct Args {
-    /// `CC` (US, DE, ZA; not UK, use GB), `CC/City`, or `-` for the last
-    /// request. Default: `location` from `config.toml` or `WGLANE_LOCATION`.
-    #[arg(value_name = "LOCATION")]
+    #[arg(
+        value_name = "LOCATION",
+        help = concat!(
+            "`CC` (US, DE, ZA; not UK, use GB), `CC/City`, or `-` for the last request. Default: `location` from `config.toml` or `",
+            brand_env!("LOCATION"),
+            "`"
+        )
+    )]
     pub(crate) target: Option<Target>,
 
-    /// City in the country (see `wglane ls CC`); same as `CC/City`.
-    #[arg(long, value_name = "NAME")]
+    #[arg(
+        long,
+        value_name = "NAME",
+        help = concat!("City in the country (see `", brand_name!(), " ls CC`); same as `CC/City`")
+    )]
     pub(crate) city: Option<String>,
 
-    /// Connect with a preset from `[presets.NAME]` in `config.toml`. An
-    /// explicit LOCATION, --city or --pick overrides the preset's.
-    /// Default: `WGLANE_PRESET`.
-    #[arg(long, value_name = "NAME")]
+    #[arg(
+        long,
+        value_name = "NAME",
+        help = concat!(
+            "Connect with a preset from `[presets.NAME]` in `config.toml`. An explicit LOCATION, --city or --pick overrides the preset's. Default: `",
+            brand_env!("PRESET"),
+            "`"
+        )
+    )]
     pub(crate) preset: Option<String>,
 
-    /// How to choose the server: `least-load` or `fastest` (lowest latency
-    /// among the least loaded). Overrides `pick` in `config.toml`, the preset
-    /// and `WGLANE_PICK`.
-    #[arg(long, value_name = "RULE")]
+    #[arg(
+        long,
+        value_name = "RULE",
+        help = concat!(
+            "How to choose the server: `least-load` or `fastest` (lowest latency among the least loaded). Overrides `pick` in `config.toml`, the preset and `",
+            brand_env!("PICK"),
+            "`"
+        )
+    )]
     pub(crate) pick: Option<Pick>,
 
     /// Short for `--pick fastest`.
@@ -158,11 +176,17 @@ fn unknown_preset(settings: &Effective, name: &str) -> color_eyre::Report {
         .map(|p| p.name.as_str())
         .collect();
     let from = match settings.preset.source {
-        Source::Env => " (from WGLANE_PRESET)",
+        Source::Env => concat!(" (from ", brand_env!("PRESET"), ")"),
         _ => "",
     };
     eyre!(
-        "unknown preset {name:?}{from}: {} (see `wglane preset list`)",
+        concat!(
+            "unknown preset {:?}{}: {} (see `",
+            brand_name!(),
+            " preset list`)"
+        ),
+        name,
+        from,
         if names.is_empty() {
             "none defined in config.toml".to_owned()
         } else {
@@ -178,11 +202,21 @@ fn replay(ctx: &Context, args: &Args) -> Result<Plan> {
             "`up -` repeats the last request as it was: drop --city, --preset, --pick and --fastest, or name a location"
         ));
     }
-    let last = ctx
-        .last_request()
-        .ok_or_else(|| eyre!("no previous connection to repeat: run `wglane up CC` first"))?;
+    let last = ctx.last_request().ok_or_else(|| {
+        eyre!(concat!(
+            "no previous connection to repeat: run `",
+            brand_name!(),
+            " up CC` first"
+        ))
+    })?;
     let location = last.location.ok_or_else(|| {
-        eyre!("the last request has no location (it was migrated from an older wglane): run `wglane up CC` once")
+        eyre!(concat!(
+            "the last request has no location (it was migrated from an older ",
+            brand_name!(),
+            "): run `",
+            brand_name!(),
+            " up CC` once"
+        ))
     })?;
     Ok(Plan {
         location,
@@ -228,7 +262,15 @@ pub(crate) fn plan(ctx: &Context, args: &Args) -> Result<Plan> {
         (None, Some(city)) => {
             let below = settings.request(preset, &Overrides::default()).location;
             let l = below.ok_or_else(|| {
-                eyre!("--city {city:?} needs a country: run `wglane up DE/{city}`")
+                eyre!(
+                    concat!(
+                        "--city {:?} needs a country: run `",
+                        brand_name!(),
+                        " up DE/{}`"
+                    ),
+                    city,
+                    city
+                )
             })?;
             Some(Location::new(l.country(), Some(city.clone()))?)
         }
@@ -237,7 +279,13 @@ pub(crate) fn plan(ctx: &Context, args: &Args) -> Result<Plan> {
     let req = settings.request(preset, &flags);
     let location = req.location.ok_or_else(|| {
         eyre!(
-            "no location given: run `wglane up ZA`, or set location in {} (see `wglane config init`)",
+            concat!(
+                "no location given: run `",
+                brand_name!(),
+                " up ZA`, or set location in {} (see `",
+                brand_name!(),
+                " config init`)"
+            ),
             ctx.config_file().display()
         )
     })?;

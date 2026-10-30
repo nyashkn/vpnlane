@@ -7,7 +7,7 @@ use wglane_core::ports::TokenSource;
 use wglane_core::{Error, Result, Token};
 
 /// Environment variable checked first for the access token.
-pub const TOKEN_ENV: &str = "WGLANE_TOKEN";
+pub const TOKEN_ENV: &str = brand_env!("TOKEN");
 
 /// Reads the token from an environment variable.
 #[derive(Clone, Debug)]

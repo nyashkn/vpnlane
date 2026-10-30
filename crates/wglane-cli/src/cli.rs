@@ -16,25 +16,25 @@ const HELP_TEMPLATE: &str = "\
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "wglane",
+    name = brand_name!(),
     version,
     about = "NordLynx (WireGuard) tunnels on macOS that leave Tailscale working",
-    long_about = "\
+    long_about = concat!("\
 NordLynx (WireGuard) tunnels on macOS that leave Tailscale/Headscale working.
 
 A full WireGuard tunnel swallows Tailscale's own underlay traffic (control
-server, DERP relays), so the tailnet dies. wglane brings the tunnel up and
-routes that underlay around it via your physical gateway.",
-    after_help = "\
+server, DERP relays), so the tailnet dies. ", brand_name!(), " brings the tunnel up and
+routes that underlay around it via your physical gateway."),
+    after_help = concat!("\
 Examples:
-  wglane up ZA          connect to South Africa (switches if already up)
-  wglane status         country, exit IP, tailnet check, bypass routes
-  wglane down           disconnect and remove bypass routes
-  wglane preset list    named bundles from config.toml; `preset apply NAME` connects
-  wglane doctor         check prerequisites and print fixes
-  wglane config show    saved settings in effect, and where each came from
+  ", brand_name!(), " up ZA          connect to South Africa (switches if already up)
+  ", brand_name!(), " status         country, exit IP, tailnet check, bypass routes
+  ", brand_name!(), " down           disconnect and remove bypass routes
+  ", brand_name!(), " preset list    named bundles from config.toml; `preset apply NAME` connects
+  ", brand_name!(), " doctor         check prerequisites and print fixes
+  ", brand_name!(), " config show    saved settings in effect, and where each came from
 
-Token: set WGLANE_TOKEN or write it to ~/.config/wglane/token (mode 600).",
+Token: set ", brand_env!("TOKEN"), " or write it to ~/.config/", brand_name!(), "/token (mode 600)."),
     help_template = HELP_TEMPLATE
 )]
 pub(crate) struct Cli {
@@ -56,11 +56,11 @@ pub(crate) struct GlobalArgs {
     #[arg(short, long, global = true, action = clap::ArgAction::Count)]
     pub(crate) verbose: u8,
 
-    /// Config directory [default: ~/.config/wglane].
     #[arg(
+        help = concat!("Config directory [default: ~/.config/", brand_name!(), "]"),
         long,
         global = true,
-        env = "WGLANE_CONFIG_DIR",
+        env = brand_env!("CONFIG_DIR"),
         hide_env_values = true,
         value_name = "DIR"
     )]

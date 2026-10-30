@@ -14,23 +14,23 @@ use crate::context::Context;
 #[derive(Debug, clap::Args)]
 #[command(
     about = "Show or create the saved-settings file (config.toml)",
-    long_about = "\
+    long_about = concat!("\
 Saved settings live in <config dir>/config.toml (the directory that holds the
-token; override it with --config-dir or WGLANE_CONFIG_DIR). A missing file
+token; override it with --config-dir or ", brand_env!("CONFIG_DIR"), "). A missing file
 means the built-in defaults. Unknown keys are an error naming the key and line.
 
 Precedence for each value: CLI flag > environment > config file > default
-(a preset sits in the file layer). The file is yours: wglane never writes to
+(a preset sits in the file layer). The file is yours: ", brand_name!(), " never writes to
 it; what it last applied is kept in state.json beside it. The Nord token is
 never a config key.
 
-Reference: docs/CONFIG.md.",
-    after_help = "\
+Reference: docs/CONFIG.md."),
+    after_help = concat!("\
 Examples:
-  wglane config path       print the file location
-  wglane config show       effective values and where each came from
-  wglane config show --json
-  wglane config init       write a commented sample (never overwrites)"
+  ", brand_name!(), " config path       print the file location
+  ", brand_name!(), " config show       effective values and where each came from
+  ", brand_name!(), " config show --json
+  ", brand_name!(), " config init       write a commented sample (never overwrites)")
 )]
 pub(crate) struct Args {
     #[command(subcommand)]

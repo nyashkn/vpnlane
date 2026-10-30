@@ -21,7 +21,7 @@ use crate::{CommandOutput, CommandRunner, RouteTable};
 pub(crate) const WG_RUN_DIR: &str = "/var/run/wireguard";
 /// File in the run dir where `wireguard-go` reports which `utunN` it created
 /// (`WG_TUN_NAME_FILE`, set by the helper's runner).
-pub(crate) const NAME_FILE: &str = "wglane.name";
+pub(crate) use wglane_core::brand::WG_NAME_FILE as NAME_FILE;
 /// Root-owned record of which `utunN` is which country's tunnel: one
 /// `<cc> <utunN> <endpoint-ip|-> <dev>:<ino>:<boot>` line each (the control
 /// socket's identity and the boot it was made in). Only these are ever torn

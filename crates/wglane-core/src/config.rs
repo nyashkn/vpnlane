@@ -466,38 +466,39 @@ impl Overrides {
         let get = |name: &str| lookup(name).filter(|v| !v.trim().is_empty());
         let named = |name: &str, e: Error| Error::Config(format!("{name}: {e}"));
         let mut deprecated = Vec::new();
-        let mut location = get("WGLANE_LOCATION")
+        let mut location = get(brand_env!("LOCATION"))
             .map(|v| {
                 v.parse::<Location>()
-                    .map_err(|e| named("WGLANE_LOCATION", e))
+                    .map_err(|e| named(brand_env!("LOCATION"), e))
             })
             .transpose()?;
-        if let Some(v) = get("WGLANE_COUNTRY") {
+        if let Some(v) = get(brand_env!("COUNTRY")) {
             let cc = v
                 .parse::<CountryCode>()
-                .map_err(|e| named("WGLANE_COUNTRY", e))?;
+                .map_err(|e| named(brand_env!("COUNTRY"), e))?;
             deprecated.push(Deprecation {
-                old: "WGLANE_COUNTRY".to_owned(),
-                new: "WGLANE_LOCATION".to_owned(),
+                old: brand_env!("COUNTRY").to_owned(),
+                new: brand_env!("LOCATION").to_owned(),
             });
             location = location.or(Some(Location::country_only(cc)));
         }
-        let pick = get("WGLANE_PICK")
-            .map(|v| v.parse::<Pick>().map_err(|e| named("WGLANE_PICK", e)))
+        let pick = get(brand_env!("PICK"))
+            .map(|v| v.parse::<Pick>().map_err(|e| named(brand_env!("PICK"), e)))
             .transpose()?;
-        let exit_ip_check = get("WGLANE_EXIT_IP_CHECK")
+        let exit_ip_check = get(brand_env!("EXIT_IP_CHECK"))
             .map(|v| match v.trim().to_ascii_lowercase().as_str() {
                 "true" | "1" | "yes" | "on" => Ok(true),
                 "false" | "0" | "no" | "off" => Ok(false),
                 _ => Err(Error::Config(format!(
-                    "WGLANE_EXIT_IP_CHECK {v:?}: use true or false"
+                    "{} {v:?}: use true or false",
+                    brand_env!("EXIT_IP_CHECK")
                 ))),
             })
             .transpose()?;
         Ok(Self {
             location,
             pick,
-            preset: get("WGLANE_PRESET").map(|v| v.trim().to_owned()),
+            preset: get(brand_env!("PRESET")).map(|v| v.trim().to_owned()),
             exit_ip_check,
             deprecated,
         })
@@ -608,20 +609,35 @@ pub struct TuiSettings {
 
 /// What `wglane config init` writes. Every key is commented out, so a fresh
 /// file changes nothing.
-pub const SAMPLE_CONFIG: &str = r#"# wglane settings. Every key is optional; uncomment what you want.
+pub const SAMPLE_CONFIG: &str = concat!(
+    r#"# "#,
+    brand_name!(),
+    r#" settings. Every key is optional; uncomment what you want.
 # Precedence: CLI flag > environment > this file > built-in default.
 # Reference: docs/CONFIG.md. The Nord token does NOT go here: it stays in
-# <config dir>/token (mode 600) or WGLANE_TOKEN.
-# This file is yours: wglane never writes to it. What it last applied is kept
+# <config dir>/token (mode 600) or "#,
+    brand_env!("TOKEN"),
+    r#".
+# This file is yours: "#,
+    brand_name!(),
+    r#" never writes to it. What it last applied is kept
 # in state.json beside it.
 
-# Where `wglane up` connects with no argument: a country ("US") or a city in
-# one ("US/Chicago"). `wglane up DE/Berlin` overrides it for one run.
-# Env: WGLANE_LOCATION.
+# Where `"#,
+    brand_name!(),
+    r#" up` connects with no argument: a country ("US") or a city in
+# one ("US/Chicago"). `"#,
+    brand_name!(),
+    r#" up DE/Berlin` overrides it for one run.
+# Env: "#,
+    brand_env!("LOCATION"),
+    r#".
 # location = "US/Chicago"
 
 # Server choice: "least-load" or "fastest". `up --pick fastest` for one run
-# (`--fastest` is the short form). Env: WGLANE_PICK.
+# (`--fastest` is the short form). Env: "#,
+    brand_env!("PICK"),
+    r#".
 # pick = "least-load"
 
 # Extra CIDRs that skip the tunnel, added to the automatic Tailscale ones.
@@ -630,13 +646,21 @@ pub const SAMPLE_CONFIG: &str = r#"# wglane settings. Every key is optional; unc
 
 # Look up the exit IP (the leak check) in `status` and the TUI. Turning it off
 # is allowed but never silent: `status` and `doctor` say so every time.
-# Env: WGLANE_EXIT_IP_CHECK. Top level only.
+# Env: "#,
+    brand_env!("EXIT_IP_CHECK"),
+    r#". Top level only.
 # exit_ip_check = true
 
 # Presets: named overlays of the settings above. A preset may set location,
 # pick and bypass_extra (the last one adds to the top-level list) plus a label.
-# Apply with `wglane preset apply NAME` or `wglane up --preset NAME`
-# (env: WGLANE_PRESET). Names: a-z, 0-9, '_' and '-', up to 32. The first 9
+# Apply with `"#,
+    brand_name!(),
+    r#" preset apply NAME` or `"#,
+    brand_name!(),
+    r#" up --preset NAME`
+# (env: "#,
+    brand_env!("PRESET"),
+    r#"). Names: a-z, 0-9, '_' and '-', up to 32. The first 9
 # (preset_order, then alphabetical) get number keys.
 # preset_order = ["work", "home"]
 
@@ -655,7 +679,8 @@ pub const SAMPLE_CONFIG: &str = r#"# wglane settings. Every key is optional; unc
 # [presets.home]
 # location = "ZA"
 # pick = "fastest"
-"#;
+"#
+);
 
 #[cfg(test)]
 mod tests {

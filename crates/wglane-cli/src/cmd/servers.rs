@@ -15,20 +15,20 @@ use crate::context::Context;
 #[derive(Debug, clap::Args)]
 #[command(
     about = "List countries, or ranked servers in one country",
-    long_about = "\
+    long_about = concat!("\
 Without COUNTRY: every country the provider serves.
 With COUNTRY: its WireGuard servers with their city, least loaded first (ties
 keep Nord's distance order). --city keeps one city (name or identifier; case
-and accents do not matter); `wglane ls COUNTRY` lists the cities.
+and accents do not matter); `", brand_name!(), " ls COUNTRY` lists the cities.
 --probe pings each listed server at once (about 2 s at most) and adds a PING
-column; `-` means no reply. While a wglane tunnel is up the pings are bound to
-the physical interface, so they measure the path without the tunnel.",
-    after_help = "\
+column; `-` means no reply. While a ", brand_name!(), " tunnel is up the pings are bound to
+the physical interface, so they measure the path without the tunnel."),
+    after_help = concat!("\
 Examples:
-  wglane servers
-  wglane servers ZA
-  wglane servers US --city \"New York\" --limit 10 --json
-  wglane servers DE --probe --limit 10"
+  ", brand_name!(), " servers
+  ", brand_name!(), " servers ZA
+  ", brand_name!(), " servers US --city \"New York\" --limit 10 --json
+  ", brand_name!(), " servers DE --probe --limit 10")
 )]
 pub(crate) struct Args {
     /// Country to list servers for; omit to list countries.

@@ -37,7 +37,7 @@ impl Context {
             d.clone()
         } else {
             let home = std::env::var_os("HOME").ok_or_else(|| eyre!("HOME is not set"))?;
-            PathBuf::from(home).join(".config").join("wglane")
+            PathBuf::from(home).join(".config").join(brand_name!())
         };
         Ok(Self {
             json: g.json,
@@ -148,9 +148,16 @@ impl Context {
             Ok(text) => match serde_json::from_str::<State>(&text) {
                 Ok(s) if s.version == STATE_VERSION => Ok(Some(s)),
                 Ok(s) => Err(eyre!(
-                    "{} is version {}, this wglane reads version {STATE_VERSION}: upgrade wglane or delete the file",
+                    concat!(
+                        "{} is version {}, this ",
+                        brand_name!(),
+                        " reads version {}: upgrade ",
+                        brand_name!(),
+                        " or delete the file"
+                    ),
                     path.display(),
-                    s.version
+                    s.version,
+                    STATE_VERSION
                 )),
                 Err(e) => {
                     tracing::warn!("ignoring unreadable {}: {e}", path.display());

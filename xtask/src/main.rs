@@ -1,5 +1,8 @@
 //! `cargo xtask <task>`: repo automation in Rust instead of shell scripts.
 
+#[macro_use]
+extern crate wglane_core;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,7 +13,7 @@ use color_eyre::Result;
 use color_eyre::eyre::{WrapErr, bail};
 
 #[derive(Parser)]
-#[command(about = "wglane development tasks")]
+#[command(about = concat!(brand_name!(), " development tasks"))]
 struct Cli {
     #[command(subcommand)]
     task: Task,
@@ -170,7 +173,7 @@ fn release(root: &Path) -> Result<()> {
     if !status.success() {
         bail!("cargo build --release failed: {status}");
     }
-    for bin in ["wglane", "wglane-helper"] {
+    for bin in [brand_name!(), concat!(brand_name!(), "-helper")] {
         println!("{}", root.join("target/release").join(bin).display());
     }
     Ok(())
@@ -186,7 +189,8 @@ fn workspace_root() -> PathBuf {
 fn completions(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
     for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
-        let path = clap_complete::generate_to(shell, &mut wglane_cli::command(), "wglane", dir)?;
+        let path =
+            clap_complete::generate_to(shell, &mut wglane_cli::command(), brand_name!(), dir)?;
         eprintln!("wrote {}", path.display());
     }
     Ok(())

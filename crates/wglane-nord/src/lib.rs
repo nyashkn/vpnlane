@@ -2,6 +2,9 @@
 //! [`wglane_core::ports::ExitIpProbe`] over Nord's undocumented public API,
 //! plus the token sources.
 
+#[macro_use]
+extern crate wglane_core;
+
 mod api;
 mod token;
 #[allow(

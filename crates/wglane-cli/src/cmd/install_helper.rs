@@ -10,18 +10,18 @@ use crate::context::Context;
 #[derive(Debug, clap::Args)]
 #[command(
     about = "One-time setup: install the root helper for passwordless switching",
-    long_about = "\
-Run once with sudo. Copies wglane-helper to a root-owned path
-(/usr/local/libexec/wglane-helper), copies wg and wireguard-go from
-Homebrew into root-owned /usr/local/libexec/wglane/bin, refusing any that
+    long_about = concat!("\
+Run once with sudo. Copies ", brand_name!(), "-helper to a root-owned path
+(/usr/local/libexec/", brand_name!(), "-helper), copies wg and wireguard-go from
+Homebrew into root-owned /usr/local/libexec/", brand_name!(), "/bin, refusing any that
 load libraries outside /usr/lib and /System/Library (re-run after upgrading
 wireguard-tools or wireguard-go), and adds a sudoers rule allowing
 only the helper. Afterwards `up`, `down` and `watch` never prompt for a
-password. The helper accepts only fixed verbs with validated arguments.",
-    after_help = "\
+password. The helper accepts only fixed verbs with validated arguments."),
+    after_help = concat!("\
 Examples:
-  sudo wglane install-helper
-  sudo wglane install-helper --uninstall"
+  sudo ", brand_name!(), " install-helper
+  sudo ", brand_name!(), " install-helper --uninstall")
 )]
 pub(crate) struct Args {
     /// Remove the helper and its sudoers rule instead.
@@ -40,7 +40,11 @@ pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
         return Ok(());
     }
     let user = std::env::var("SUDO_USER").map_err(|_| {
-        eyre!("SUDO_USER is not set: run `sudo wglane install-helper` from your own account")
+        eyre!(concat!(
+            "SUDO_USER is not set: run `sudo ",
+            brand_name!(),
+            " install-helper` from your own account"
+        ))
     })?;
     let source = helper_next_to(&std::env::current_exe()?)?;
     wglane_macos::install_helper(&wglane_macos::SystemRunner, &user, &source)?;
@@ -50,12 +54,16 @@ pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
 
 /// `wglane-helper` in the same directory as the running `wglane` binary.
 fn helper_next_to(exe: &Path) -> Result<PathBuf> {
-    let helper = exe.with_file_name("wglane-helper");
+    let helper = exe.with_file_name(concat!(brand_name!(), "-helper"));
     if helper.is_file() {
         Ok(helper)
     } else {
         Err(eyre!(
-            "{} not found: reinstall wglane so both binaries are together",
+            concat!(
+                "{} not found: reinstall ",
+                brand_name!(),
+                " so both binaries are together"
+            ),
             helper.display()
         ))
     }
