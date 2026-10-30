@@ -79,7 +79,14 @@ by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
 `down`, `bypass <gw> <cidr>...`. The helper takes no paths from the caller and
 validates every argument with the core parsers. `install-helper` copies it to a
 root-owned path; a sudoers rule on a user-writable binary would be a root
-exploit. This verb set is the future daemon socket protocol.
+exploit. The same rule covers what root executes: `install-helper` copies
+`bash`, `wg-quick`, `wg` and `wireguard-go` from Homebrew into root:wheel
+`/usr/local/libexec/wglane/bin` (refuses if any is missing, and if any ancestor
+of the helper or tool dir is not root-owned and g/o-unwritable). `RootRunner`
+resolves only there, re-verifies the canonical file and every ancestor at each
+call, runs `bash wg-quick` explicitly and sets `PATH` to that dir plus system
+dirs. Upgrading wireguard-tools or bash requires re-running `install-helper`.
+This verb set is the future daemon socket protocol.
 
 ## File ownership map
 
