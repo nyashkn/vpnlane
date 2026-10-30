@@ -1275,7 +1275,10 @@ mod tests {
             ("privilege.rs", include_str!("privilege.rs")),
             ("routes.rs", include_str!("routes.rs")),
             ("command.rs", include_str!("command.rs")),
-            ("bin/wglane-helper.rs", include_str!("bin/wglane-helper.rs")),
+            (
+                "wglane-cli/src/bin/wglane-helper.rs",
+                include_str!("../../wglane-cli/src/bin/wglane-helper.rs"),
+            ),
         ] {
             let code = src.split("#[cfg(test)]").next().unwrap().to_lowercase();
             for word in [
