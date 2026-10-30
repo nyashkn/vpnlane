@@ -2686,6 +2686,7 @@ dependencies = [
  "insta",
  "ratatui",
  "serde_json",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "wglane-core",

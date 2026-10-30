@@ -1,12 +1,11 @@
 //! `wglane status`: active country, exit IP, tailnet check, bypass routes.
 
 use std::fmt::Write as _;
-use std::net::IpAddr;
 
 use color_eyre::Result;
-use wglane_core::ports::{ExitIpProbe, RouteBypass, TailnetProbe, Tunnel};
+use wglane_core::ports::{ExitIpProbe, TailnetProbe, Tunnel};
 use wglane_core::{TailnetHealth, TunnelStatus};
-use wglane_macos::{CommandRunner, RouteTable, SystemRunner, TailscalePing, WgQuick};
+use wglane_macos::{SystemRunner, TailscalePing, WgQuick};
 use wglane_nord::NordApi;
 
 use crate::context::Context;
@@ -33,48 +32,30 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
         &WgQuick::new(runner),
         &NordApi::new(),
         &TailscalePing::new(runner),
-        RouteTable::new(runner)
-            .physical_gateway()
-            .map_or(0, |gw| bypass_route_count(&runner, gw)),
+        ctx.recorded_routes(),
     );
     println!("{}", render(&status, ctx.json)?);
     Ok(())
 }
 
 /// A failing probe is a field value, not a command failure.
-fn gather<T: Tunnel, E: ExitIpProbe, N: TailnetProbe>(
+pub(crate) fn gather<T: Tunnel, E: ExitIpProbe, N: TailnetProbe>(
     tunnel: &T,
     exit: &E,
     tailnet: &N,
     bypass_routes: usize,
 ) -> TunnelStatus {
+    let active = tunnel.active().unwrap_or_default();
     TunnelStatus {
-        active: tunnel.active().unwrap_or_default(),
+        bypass_routes: if active.is_empty() { 0 } else { bypass_routes },
+        active,
         exit_ip: exit.exit_ip().ok(),
         tailnet: tailnet
             .tailnet()
             .unwrap_or_else(|e| TailnetHealth::Unreachable {
                 reason: e.to_string(),
             }),
-        bypass_routes,
     }
-}
-
-/// IPv4 routes (other than `default`) whose next hop is the physical gateway.
-/// 0 when the routing table cannot be read.
-// shortcut: counts every route via the gateway, not only wglane's; exact once the helper tags its routes.
-fn bypass_route_count<R: CommandRunner>(runner: &R, gw: IpAddr) -> usize {
-    let Ok(out) = runner.run_ok("netstat", &["-rn", "-f", "inet"]) else {
-        return 0;
-    };
-    let gw = gw.to_string();
-    out.stdout
-        .lines()
-        .filter(|l| {
-            let mut f = l.split_whitespace();
-            f.next().is_some_and(|d| d != "default") && f.next() == Some(gw.as_str())
-        })
-        .count()
 }
 
 fn render(s: &TunnelStatus, json: bool) -> Result<String> {
@@ -104,7 +85,6 @@ fn render(s: &TunnelStatus, json: bool) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use wglane_core::testing::{FakeExitIp, FakeTailnet, FakeTunnel};
-    use wglane_macos::testing::FakeRunner;
 
     use super::*;
 
@@ -141,17 +121,13 @@ mod tests {
     }
 
     #[test]
-    fn counts_non_default_routes_via_physical_gateway() {
-        let netstat = "\
-Destination        Gateway            Flags               Netif Expire
-default            192.168.1.1        UGScg                 en0
-default            link#25            UCSIg               utun4
-198.51.100.9/32    192.168.1.1        UGSc                  en0
-203.0.113.0/24     192.168.1.1        UGSc                  en0
-192.168.1/24       link#6             UCS                   en0
-";
-        let r = FakeRunner::new();
-        r.push_stdout(netstat);
-        assert_eq!(bypass_route_count(&r, "192.168.1.1".parse().unwrap()), 2);
+    fn no_tunnel_means_no_bypass_routes() {
+        let s = gather(
+            &FakeTunnel::default(),
+            &FakeExitIp("192.0.2.7".parse().unwrap()),
+            &FakeTailnet(TailnetHealth::NotInstalled),
+            5,
+        );
+        assert_eq!(s.bypass_routes, 0);
     }
 }
