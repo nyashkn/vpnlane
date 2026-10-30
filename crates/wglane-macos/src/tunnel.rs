@@ -30,6 +30,10 @@ const STATE_FILE: &str = "tunnels";
 const MAX_CONF_BYTES: u64 = 4096;
 /// A full tunnel as two half-routes, so the physical default route survives.
 const SPLIT_ROUTES: [&str; 2] = ["0.0.0.0/1", "128.0.0.0/1"];
+/// Global unicast IPv6. The tunnel is IPv4-only, so while it is up this prefix is
+/// rejected and apps fall back to IPv4. Narrower than `::/1` + `8000::/1`: loopback,
+/// link-local, multicast and Tailscale's `fd7a::/48` stay reachable.
+const V6_REJECT: &str = "2000::/3";
 
 /// [`Tunnel`] that drives `wireguard-go` and `wg` directly (no helper script, no
 /// shell). Must run as root, so in production it is used only inside
@@ -344,6 +348,15 @@ impl<R: CommandRunner> WgGo<R> {
                 &["-q", "-n", "add", "-inet", net, "-interface", utun],
             )?;
         }
+        // One route shared by all tunnels: the first one up adds it.
+        if state.len() == 1 {
+            r.run_ok(
+                "route",
+                &[
+                    "-q", "-n", "add", "-inet6", "-net", V6_REJECT, "::1", "-reject",
+                ],
+            )?;
+        }
         Ok(())
     }
 
@@ -373,6 +386,13 @@ impl<R: CommandRunner> WgGo<R> {
         if let Some(ip) = entry.endpoint {
             self.runner
                 .run("route", &["-q", "-n", "delete", "-inet", &ip.to_string()])?;
+        }
+        // The shared v6 reject goes with the last tunnel.
+        if state.len() == 1 {
+            self.runner.run(
+                "route",
+                &["-q", "-n", "delete", "-inet6", "-net", V6_REJECT],
+            )?;
         }
         rm(&self.sock(&entry.utun))?;
         state.remove(cc);
@@ -482,6 +502,8 @@ default            192.0.2.1          UGScg                 en0
         run_dir: PathBuf,
         /// Programs (by name) that fail with exit 1.
         failing: RefCell<Vec<&'static str>>,
+        /// Fail any call with `-inet6` on argv.
+        fail_v6: std::cell::Cell<bool>,
     }
 
     impl Sim {
@@ -500,7 +522,11 @@ default            192.0.2.1          UGScg                 en0
                 fs::write(self.run_dir.join(NAME_FILE), "utun7\n").unwrap();
                 fs::write(self.run_dir.join("utun7.sock"), "").unwrap();
             }
-            Ok(self.finish(program, self.inner.run(program, args)?))
+            let mut out = self.finish(program, self.inner.run(program, args)?);
+            if self.fail_v6.get() && args.contains(&"add") && args.contains(&"-inet6") {
+                out.code = Some(1);
+            }
+            Ok(out)
         }
 
         fn run_with_stdin(&self, p: &str, a: &[&str], stdin: &[u8]) -> Result<CommandOutput> {
@@ -528,6 +554,7 @@ default            192.0.2.1          UGScg                 en0
                 inner: FakeRunner::new(),
                 run_dir: run.clone(),
                 failing: RefCell::default(),
+                fail_v6: std::cell::Cell::default(),
             };
             sim.inner.push_stdout(netstat);
             let conf = state.join("za.conf");
@@ -632,6 +659,9 @@ default            192.0.2.1          UGScg                 en0
                     "-interface",
                     "utun7"
                 ]),
+                argv(&[
+                    "route", "-q", "-n", "add", "-inet6", "-net", "2000::/3", "::1", "-reject"
+                ]),
             ]
         );
         let m = fs::metadata(f.engine.run_dir.join("utun7.sock")).unwrap();
@@ -702,6 +732,7 @@ default            192.0.2.1          UGScg                 en0
                     "utun7"
                 ]),
                 argv(&["route", "-q", "-n", "delete", "-inet", EP]),
+                argv(&["route", "-q", "-n", "delete", "-inet6", "-net", "2000::/3"]),
             ]
         );
         assert!(
@@ -811,14 +842,15 @@ default            192.0.2.1          UGScg                 en0
         f.engine.runner.inner.push_stdout(""); // route delete 0/1
         f.engine.runner.inner.push_stdout(""); // route delete 128/1
         f.engine.runner.inner.push_stdout(""); // route delete endpoint
+        f.engine.runner.inner.push_stdout(""); // route delete v6 reject
         f.engine.runner.inner.push_stdout(NETSTAT);
         let before = f.calls().len();
         f.engine.up(&f.conf).unwrap();
         let calls = f.calls();
         assert_eq!(calls[before][..2], ["route", "-q"]);
         assert_eq!(calls[before][3], "delete");
-        assert_eq!(calls[before + 3], argv(&["netstat", "-rn", "-f", "inet"]));
-        assert_eq!(calls[before + 4], argv(&["wireguard-go", "utun"]));
+        assert_eq!(calls[before + 4], argv(&["netstat", "-rn", "-f", "inet"]));
+        assert_eq!(calls[before + 5], argv(&["wireguard-go", "utun"]));
         assert_eq!(f.state_file().lines().count(), 1);
     }
 
@@ -831,8 +863,8 @@ default            192.0.2.1          UGScg                 en0
         assert!(err.contains("ifconfig"), "{err}");
         let calls = f.calls();
         assert_eq!(
-            calls.last().unwrap(),
-            &argv(&[
+            calls[calls.len() - 2],
+            argv(&[
                 "route",
                 "-q",
                 "-n",
@@ -864,6 +896,27 @@ default            192.0.2.1          UGScg                 en0
             g.calls()
         );
         assert_eq!(g.state_file(), "");
+    }
+
+    #[test]
+    fn failing_v6_reject_fails_up_and_removes_the_tunnel() {
+        let f = Fixture::new();
+        f.engine.runner.fail_v6.set(true);
+        assert!(f.engine.up(&f.conf).is_err());
+        let calls = f.calls();
+        assert!(calls.contains(&argv(&[
+            "route",
+            "-q",
+            "-n",
+            "delete",
+            "-inet",
+            "0.0.0.0/1",
+            "-interface",
+            "utun7"
+        ])));
+        assert!(calls.contains(&argv(&["route", "-q", "-n", "delete", "-inet", EP])));
+        assert_eq!(f.state_file(), "");
+        assert!(!f.engine.run_dir.join("utun7.sock").exists());
     }
 
     #[test]
