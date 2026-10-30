@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use wglane_core::CountryCode;
+use vpnlane_core::CountryCode;
 
 /// A server-tree group, in display order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

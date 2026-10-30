@@ -79,7 +79,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    use wglane_core::CountryCode;
+    use vpnlane_core::CountryCode;
 
     use super::*;
 
@@ -98,12 +98,12 @@ mod tests {
         panic!("no event within 10 s");
     }
 
-    fn server(host: &str) -> wglane_core::Server {
-        wglane_core::Server {
+    fn server(host: &str) -> vpnlane_core::Server {
+        vpnlane_core::Server {
             hostname: host.into(),
             station: "203.0.113.1".parse().unwrap(),
             load: 1,
-            public_key: wglane_core::PublicKey(String::new()),
+            public_key: vpnlane_core::PublicKey(String::new()),
             country: cc(),
             city: None,
         }

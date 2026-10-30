@@ -31,11 +31,11 @@ pub(crate) struct Args {
 
 pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
     if args.uninstall {
-        wglane_macos::uninstall_helper()?;
+        vpnlane_macos::uninstall_helper()?;
         println!(
             "removed {} and {}",
-            wglane_macos::HELPER_PATH,
-            wglane_macos::SUDOERS_PATH
+            vpnlane_macos::HELPER_PATH,
+            vpnlane_macos::SUDOERS_PATH
         );
         return Ok(());
     }
@@ -47,8 +47,8 @@ pub(crate) fn run(_ctx: &Context, args: &Args) -> Result<()> {
         ))
     })?;
     let source = helper_next_to(&std::env::current_exe()?)?;
-    wglane_macos::install_helper(&wglane_macos::SystemRunner, &user, &source)?;
-    println!("installed {} for user {user}", wglane_macos::HELPER_PATH);
+    vpnlane_macos::install_helper(&vpnlane_macos::SystemRunner, &user, &source)?;
+    println!("installed {} for user {user}", vpnlane_macos::HELPER_PATH);
     Ok(())
 }
 

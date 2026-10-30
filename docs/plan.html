@@ -93,9 +93,9 @@ ol.phases h3{margin:.1rem 0 .2rem}
 <div class="arch" role="img" aria-label="Crate dependency diagram: cli depends on core, nord and macos; nord and macos depend on core">
   <div class="row"><div class="box"><b>wglane-cli</b>clap commands, ratatui TUI (feature), output formatting. Binary. Wires adapters.</div><div class="box"><b>xtask</b>completions, man pages, release, fixtures.</div></div>
   <div class="arrow">depends on ↓</div>
-  <div class="row"><div class="box"><b>wglane-nord</b>API client, server ranking, token sources (env, config-dir file).</div><div class="box"><b>wglane-macos</b>tunnel runner, route manager, bypass providers, network watcher, privilege client.</div></div>
+  <div class="row"><div class="box"><b>vpnlane-nord</b>API client, server ranking, token sources (env, config-dir file).</div><div class="box"><b>vpnlane-macos</b>tunnel runner, route manager, bypass providers, network watcher, privilege client.</div></div>
   <div class="arrow">implement ports from ↓</div>
-  <div class="row"><div class="box core"><b>wglane-core</b>domain types (Country, Server, TunnelConfig), ports (<code>ServerCatalog</code>, <code>TokenSource</code>, <code>Tunnel</code>, <code>RouteBypass</code>), pure logic, no I/O.</div></div>
+  <div class="row"><div class="box core"><b>vpnlane-core</b>domain types (Country, Server, TunnelConfig), ports (<code>ServerCatalog</code>, <code>TokenSource</code>, <code>Tunnel</code>, <code>RouteBypass</code>), pure logic, no I/O.</div></div>
 </div>
 <ul>
 <li><strong>Bypass providers</strong> are a trait: Tailscale/Headscale first (control host plus DERP map), plus user-listed hosts and CIDRs in config, so the tool is not Tailscale-only.</li>

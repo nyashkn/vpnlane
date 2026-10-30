@@ -1,5 +1,0 @@
----
-source: crates/wglane-core/src/config.rs
-expression: err(text)
----
-line 1: default_city needs default_country: write location = "CC/City" instead

@@ -1,5 +1,0 @@
----
-source: crates/wglane-core/src/config.rs
-expression: err(text)
----
-line 2: presets.work.label "this label is much too long": use 1 to 24 characters, no control characters

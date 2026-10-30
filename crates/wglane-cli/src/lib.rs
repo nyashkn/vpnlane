@@ -3,7 +3,7 @@
 //! One file per subcommand in `cmd/`; this file only wires them up.
 
 #[macro_use]
-extern crate wglane_core;
+extern crate vpnlane_core;
 
 mod cli;
 mod cmd;

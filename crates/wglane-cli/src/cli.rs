@@ -118,7 +118,7 @@ mod tests {
         assert_eq!(up(&[]).unwrap().target, None);
         assert_eq!(
             up(&["--pick", "fastest"]).unwrap().pick,
-            Some(wglane_core::Pick::Fastest)
+            Some(vpnlane_core::Pick::Fastest)
         );
         assert!(up(&["--fastest"]).unwrap().fastest);
         assert!(up(&["--fastest", "--pick", "least-load"]).is_err());

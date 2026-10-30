@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use color_eyre::Result;
-use wglane_core::ports::Tunnel;
-use wglane_macos::{HelperClient, SystemRunner};
+use vpnlane_core::ports::Tunnel;
+use vpnlane_macos::{HelperClient, SystemRunner};
 
 use crate::context::Context;
 
@@ -72,7 +72,7 @@ pub(crate) fn disconnect<T: Tunnel>(tunnel: &T, conf_dir: &Path) -> Result<Disco
 
 #[cfg(test)]
 mod tests {
-    use wglane_core::testing::FakeTunnel;
+    use vpnlane_core::testing::FakeTunnel;
 
     use super::*;
 

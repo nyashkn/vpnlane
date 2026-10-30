@@ -1,0 +1,5 @@
+---
+source: crates/vpnlane-core/src/config.rs
+expression: err(text)
+---
+line 1: preset name "has space": use 1 to 32 characters from a-z, 0-9, '_' and '-'

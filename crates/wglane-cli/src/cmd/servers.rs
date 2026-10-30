@@ -6,9 +6,9 @@ use color_eyre::Result;
 use serde_json::json;
 use std::time::Duration;
 
-use wglane_core::ports::{Prober, ServerCatalog, Tunnel};
-use wglane_core::{City, CountryCode, Server, rank_by_load};
-use wglane_nord::NordApi;
+use vpnlane_core::ports::{Prober, ServerCatalog, Tunnel};
+use vpnlane_core::{City, CountryCode, Server, rank_by_load};
+use vpnlane_nord::NordApi;
 
 use crate::context::Context;
 
@@ -52,10 +52,10 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     let prober = if args.probe {
         // shortcut: if the helper cannot say (not installed), no wglane tunnel
         // can be up, so probe unbound; revisit if tunnels get another owner.
-        let helper = wglane_macos::HelperClient::new(wglane_macos::SystemRunner);
+        let helper = vpnlane_macos::HelperClient::new(vpnlane_macos::SystemRunner);
         Some(match helper.active() {
             Ok(_) => crate::cmd::fastest::real_prober(&helper)?,
-            Err(_) => wglane_macos::PingProbe::new(wglane_macos::SystemRunner, None),
+            Err(_) => vpnlane_macos::PingProbe::new(vpnlane_macos::SystemRunner, None),
         })
     } else {
         None
@@ -97,7 +97,7 @@ pub(crate) fn resolve_city<C: ServerCatalog>(
     let country = countries
         .iter()
         .find(|c| c.code == cc)
-        .ok_or(wglane_core::Error::UnknownCountry(cc))?;
+        .ok_or(vpnlane_core::Error::UnknownCountry(cc))?;
     Ok(country.find_city(query)?.clone())
 }
 
@@ -166,8 +166,8 @@ fn render<C: ServerCatalog>(
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use wglane_core::testing::FakeCatalog;
-    use wglane_core::{City, Country, PublicKey, Server};
+    use vpnlane_core::testing::FakeCatalog;
+    use vpnlane_core::{City, Country, PublicKey, Server};
 
     use super::*;
 
@@ -259,7 +259,8 @@ pub(crate) mod tests {
 
     #[test]
     fn probe_adds_a_latency_column_and_json_field() {
-        let p = wglane_core::testing::FakeProber::with_ms(&[("192.0.2.2", 41), ("192.0.2.1", 380)]);
+        let p =
+            vpnlane_core::testing::FakeProber::with_ms(&[("192.0.2.2", 41), ("192.0.2.1", 380)]);
         let prober: Option<&(dyn Prober + Sync)> = Some(&p);
         insta::assert_snapshot!(
             render(&fake(), &args(Some("ZA"), None, 5), false, prober).unwrap()

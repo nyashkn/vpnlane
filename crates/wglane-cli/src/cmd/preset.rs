@@ -4,12 +4,12 @@ use std::fmt::Write as _;
 
 use color_eyre::Result;
 use serde_json::json;
-use wglane_core::ports::Tunnel;
-use wglane_core::{
+use vpnlane_core::ports::Tunnel;
+use vpnlane_core::{
     ActiveState, CountryCode, Effective, KEYED_PRESETS, Location, NamedPreset, Overrides, Pick,
     PresetUse, describe_change,
 };
-use wglane_macos::{HelperClient, SystemRunner};
+use vpnlane_macos::{HelperClient, SystemRunner};
 
 use crate::cmd::up;
 use crate::context::Context;
@@ -297,10 +297,10 @@ fn show(
 mod tests {
     use std::net::IpAddr;
 
-    use wglane_core::testing::{
+    use vpnlane_core::testing::{
         FakeBypassProvider, FakeCatalog, FakeRoutes, FakeToken, FakeTunnel,
     };
-    use wglane_core::{City, Country, FileConfig, PublicKey, Server};
+    use vpnlane_core::{City, Country, FileConfig, PublicKey, Server};
 
     use super::*;
 
@@ -459,7 +459,7 @@ mod tests {
                 &ctx,
                 &self.tunnel,
                 &self.routes,
-                &FakeBypassProvider(wglane_core::BypassSet::default()),
+                &FakeBypassProvider(vpnlane_core::BypassSet::default()),
                 &catalog(),
                 &FakeToken(Some("tok".into())),
                 up::plan(&ctx, args)?,
@@ -624,7 +624,7 @@ mod tests {
             &ctx,
             &rig.tunnel,
             &rig.routes,
-            &FakeBypassProvider(wglane_core::BypassSet::default()),
+            &FakeBypassProvider(vpnlane_core::BypassSet::default()),
             &catalog(),
             &FakeToken(Some("tok".into())),
             plan,

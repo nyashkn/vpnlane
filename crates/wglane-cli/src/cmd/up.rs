@@ -7,14 +7,16 @@ use std::time::Duration;
 
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
-use wglane_core::ports::{BypassProvider, Prober, RouteBypass, ServerCatalog, TokenSource, Tunnel};
-use wglane_core::{
+use vpnlane_core::ports::{
+    BypassProvider, Prober, RouteBypass, ServerCatalog, TokenSource, Tunnel,
+};
+use vpnlane_core::{
     BypassSet, Choice, City, CountryCode, Effective, Error, FASTEST_CANDIDATES, LastRequest,
     Location, MAX_BYPASS, Overrides, Pick, PresetUse, Source, generate_config, generate_config_by,
     is_stale, render_wg_conf,
 };
-use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
-use wglane_nord::NordApi;
+use vpnlane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
+use vpnlane_nord::NordApi;
 
 use crate::context::{Context, note, unix_now};
 
@@ -131,7 +133,7 @@ pub(crate) enum Target {
 impl std::str::FromStr for Target {
     type Err = Error;
 
-    fn from_str(s: &str) -> wglane_core::Result<Self> {
+    fn from_str(s: &str) -> vpnlane_core::Result<Self> {
         if s == "-" {
             Ok(Self::Last)
         } else {
@@ -464,7 +466,7 @@ fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
 }
 
 /// The helper takes at most [`MAX_BYPASS`] routes; say which setting to trim.
-pub(crate) fn check_limit(set: &BypassSet) -> wglane_core::Result<()> {
+pub(crate) fn check_limit(set: &BypassSet) -> vpnlane_core::Result<()> {
     if set.len() > MAX_BYPASS {
         return Err(Error::Config(format!(
             "{} bypass routes, the limit is {MAX_BYPASS}: shorten bypass_extra in config.toml",
@@ -667,10 +669,10 @@ mod tests {
     use std::cell::Cell;
     use std::net::IpAddr;
 
-    use wglane_core::testing::{
+    use vpnlane_core::testing::{
         FakeBypassProvider, FakeCatalog, FakeProber, FakeRoutes, FakeToken, FakeTunnel,
     };
-    use wglane_core::{Error, MAX_CONF_AGE, PublicKey, Server};
+    use vpnlane_core::{Error, MAX_CONF_AGE, PublicKey, Server};
 
     use super::*;
     use crate::context::Context;

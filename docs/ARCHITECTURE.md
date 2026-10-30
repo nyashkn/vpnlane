@@ -23,44 +23,44 @@ layers beyond that.
    xtask ──▶ wglane-cli (bin `wglane`, bin `wglane-helper`, lib for xtask)
                   │        │
                   ▼        ▼
-            wglane-nord  wglane-macos
+            vpnlane-nord  vpnlane-macos
                   │        │
                   ▼        ▼
-            wglane-core  (no I/O, no async, no network, no process spawning)
+            vpnlane-core  (no I/O, no async, no network, no process spawning)
 
    `wglane-helper` is a second binary of the `wglane-cli` package; its logic
-   lives in `wglane-macos` (`helper_main`).
+   lives in `vpnlane-macos` (`helper_main`).
 ```
 
 Dependency rules (the compiler enforces direction; review enforces the rest):
 
-1. `wglane-core` depends on nothing in the workspace and does no I/O. Types
+1. `vpnlane-core` depends on nothing in the workspace and does no I/O. Types
    from `std::io` may appear in errors; calls to it may not.
-2. `wglane-nord` and `wglane-macos` depend only on `wglane-core`, never on each
+2. `vpnlane-nord` and `vpnlane-macos` depend only on `vpnlane-core`, never on each
    other. A Linux adapter would be a sibling `wglane-linux`.
 3. Only `wglane-cli` knows concrete adapter types. Library code is generic over
    ports (`fn f<C: ServerCatalog>(c: &C)`), not `dyn`.
-4. `thiserror` (`wglane_core::Error`) in libraries; `color-eyre` only in
+4. `thiserror` (`vpnlane_core::Error`) in libraries; `color-eyre` only in
    `wglane-cli` and `xtask`.
 5. Blocking only. HTTP is `ureq`; no tokio anywhere.
 
 ## Ports and adapters
 
-| Port (`wglane_core::ports`) | Production adapter | Fake (`wglane_core::testing`) |
+| Port (`vpnlane_core::ports`) | Production adapter | Fake (`vpnlane_core::testing`) |
 |---|---|---|
-| `ServerCatalog` | `wglane_nord::NordApi` | `FakeCatalog` |
-| `TokenSource` | `wglane_nord::{EnvToken, FileToken, TokenChain}` | `FakeToken` |
-| `ExitIpProbe` | `wglane_nord::NordApi` | `FakeExitIp` |
-| `Tunnel` | `wglane_macos::WgGo` (root, in helper), `HelperClient` (CLI) | `FakeTunnel` |
-| `RouteBypass` | `wglane_macos::RouteTable` (root, in helper), `HelperClient` (CLI) | `FakeRoutes` |
-| `BypassProvider` | `wglane_macos::{TailscaleBypass, StaticBypass}` | `FakeBypassProvider` |
-| `NetworkWatcher` | `wglane_macos::RouteMonitor` | `FakeWatcher` |
-| `TailnetProbe` | `wglane_macos::TailscalePing` | `FakeTailnet` |
-| `UdpProbe` | `wglane_macos::UdpSend` | `FakeUdp` |
-| `Prober` | `wglane_macos::PingProbe` (system `ping`, bound to the physical interface while a tunnel is up) | `FakeProber` |
+| `ServerCatalog` | `vpnlane_nord::NordApi` | `FakeCatalog` |
+| `TokenSource` | `vpnlane_nord::{EnvToken, FileToken, TokenChain}` | `FakeToken` |
+| `ExitIpProbe` | `vpnlane_nord::NordApi` | `FakeExitIp` |
+| `Tunnel` | `vpnlane_macos::WgGo` (root, in helper), `HelperClient` (CLI) | `FakeTunnel` |
+| `RouteBypass` | `vpnlane_macos::RouteTable` (root, in helper), `HelperClient` (CLI) | `FakeRoutes` |
+| `BypassProvider` | `vpnlane_macos::{TailscaleBypass, StaticBypass}` | `FakeBypassProvider` |
+| `NetworkWatcher` | `vpnlane_macos::RouteMonitor` | `FakeWatcher` |
+| `TailnetProbe` | `vpnlane_macos::TailscalePing` | `FakeTailnet` |
+| `UdpProbe` | `vpnlane_macos::UdpSend` | `FakeUdp` |
+| `Prober` | `vpnlane_macos::PingProbe` (system `ping`, bound to the physical interface while a tunnel is up) | `FakeProber` |
 
-External programs in `wglane-macos` run through `CommandRunner`
-(`SystemRunner` in production, `wglane_macos::testing::FakeRunner` in tests),
+External programs in `vpnlane-macos` run through `CommandRunner`
+(`SystemRunner` in production, `vpnlane_macos::testing::FakeRunner` in tests),
 with these exceptions, which spawn directly: the streaming `route -n monitor`
 in `watcher.rs`, the `ls -lde` ACL check in `privilege.rs`, the `sysctl -n
 kern.boottime` read in `tunnel.rs`, and the helper's own `RootRunner`
@@ -80,7 +80,7 @@ the TUI owns the screen; `up::run`/`down::run` print the outcome. The
 CLI cannot read it). The count is 0 when no tunnel is active.
 
 Runtime state lives in one file, `<config_dir>/state.json` (schema:
-`wglane_core::State`, documented in [CONFIG.md](CONFIG.md)), never in
+`vpnlane_core::State`, documented in [CONFIG.md](CONFIG.md)), never in
 `config.toml`. `Context` is the only reader and writer. `up` records the
 resolved request (`LastRequest`: place, pick, bypass set, preset); `down` keeps
 it and clears the active preset; `watch` and TUI connects read the bypass set
@@ -92,7 +92,7 @@ files; they are imported once and deleted.
 
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
 by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
-(`wglane_macos::helper_main`, started by the thin
+(`vpnlane_macos::helper_main`, started by the thin
 `crates/wglane-cli/src/bin/wglane-helper.rs`) runs as root and uses `WgGo` +
 `RouteTable` with a `RootRunner`.
 
@@ -206,10 +206,10 @@ that `.snap` diff.
 
 | X | Place |
 |---|---|
-| New domain type or pure function | `wglane-core/src/<item>.rs`, re-export in `lib.rs` |
-| New port | `wglane-core/src/ports/<port>.rs` + fake in `src/testing/<port>.rs` |
-| Anything that talks to Nord | `wglane-nord` (`api.rs` transport, `wire.rs` parsing) |
-| Anything that runs a macOS program or touches the filesystem | `wglane-macos`, via `CommandRunner` |
+| New domain type or pure function | `vpnlane-core/src/<item>.rs`, re-export in `lib.rs` |
+| New port | `vpnlane-core/src/ports/<port>.rs` + fake in `src/testing/<port>.rs` |
+| Anything that talks to Nord | `vpnlane-nord` (`api.rs` transport, `wire.rs` parsing) |
+| Anything that runs a macOS program or touches the filesystem | `vpnlane-macos`, via `CommandRunner` |
 | Something that needs root | a helper verb in `helper.rs`, implemented by `tunnel.rs`, `routes.rs` or `privilege.rs`; nowhere else |
 | Subcommand behaviour, flags, help text | `wglane-cli/src/cmd/<name>.rs` |
 | Output formatting (text / `--json`) | the subcommand's own file |
@@ -222,7 +222,7 @@ that `.snap` diff.
 - `insta` snapshots for rendered output: wg configs, help text, TUI frames,
   sudoers rule. Accept new snapshots with `INSTA_UPDATE=always just test` and
   review the `.snap` diff.
-- Nord responses come from `crates/wglane-nord/fixtures/` (synthetic).
+- Nord responses come from `crates/vpnlane-nord/fixtures/` (synthetic).
 - No network, no root, no real `wireguard-go`/`route` in tests. A few tests do
   spawn harmless processes: `SystemRunner`'s own (`/bin/sh`), the privilege
   tests (`/bin/chmod`), and `doctor_exit` (runs the built `wglane` binary).
@@ -236,7 +236,7 @@ that `.snap` diff.
 - Bypass cleanup is folded into the `down` verb.
 - Token file mode is checked; the owner check is not yet done. It would not need
   `unsafe` (`MetadataExt::uid` and `rustix::process::geteuid` are safe), but
-  `wglane-nord` does not depend on `rustix` today.
+  `vpnlane-nord` does not depend on `rustix` today.
 
 ## Credits
 

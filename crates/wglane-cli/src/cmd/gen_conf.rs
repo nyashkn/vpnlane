@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 
 use color_eyre::Result;
 use serde_json::json;
-use wglane_core::ports::{ServerCatalog, TokenSource};
-use wglane_core::{
+use vpnlane_core::ports::{ServerCatalog, TokenSource};
+use vpnlane_core::{
     City, Country, CountryCode, PrivateKey, Server, Token, generate_config, rank_by_load,
     render_wg_conf,
 };
-use wglane_nord::NordApi;
+use vpnlane_nord::NordApi;
 
 use crate::context::Context;
 
@@ -140,17 +140,17 @@ impl<'a, C: ServerCatalog> Cached<'a, C> {
     }
 
     /// The server `generate_config` picked: least loaded of the cached list.
-    fn best(&self, cc: CountryCode) -> wglane_core::Result<Server> {
+    fn best(&self, cc: CountryCode) -> vpnlane_core::Result<Server> {
         let mut v = self.recommended(cc, None, 5)?;
         rank_by_load(&mut v);
         v.into_iter()
             .next()
-            .ok_or(wglane_core::Error::NoServers(cc))
+            .ok_or(vpnlane_core::Error::NoServers(cc))
     }
 }
 
 impl<C: ServerCatalog> ServerCatalog for Cached<'_, C> {
-    fn countries(&self) -> wglane_core::Result<Vec<Country>> {
+    fn countries(&self) -> vpnlane_core::Result<Vec<Country>> {
         self.inner.countries()
     }
 
@@ -159,7 +159,7 @@ impl<C: ServerCatalog> ServerCatalog for Cached<'_, C> {
         cc: CountryCode,
         city: Option<&City>,
         limit: usize,
-    ) -> wglane_core::Result<Vec<Server>> {
+    ) -> vpnlane_core::Result<Vec<Server>> {
         // `gen` never asks for a city; the cache is per country.
         if city.is_some() {
             return self.inner.recommended(cc, city, limit);
@@ -172,7 +172,7 @@ impl<C: ServerCatalog> ServerCatalog for Cached<'_, C> {
         Ok(v)
     }
 
-    fn private_key(&self, token: &Token) -> wglane_core::Result<PrivateKey> {
+    fn private_key(&self, token: &Token) -> vpnlane_core::Result<PrivateKey> {
         if let Some(k) = self.key.borrow().as_ref() {
             return Ok(k.clone());
         }
@@ -184,8 +184,8 @@ impl<C: ServerCatalog> ServerCatalog for Cached<'_, C> {
 
 #[cfg(test)]
 mod tests {
-    use wglane_core::testing::{FakeCatalog, FakeToken};
-    use wglane_core::{Error, PublicKey};
+    use vpnlane_core::testing::{FakeCatalog, FakeToken};
+    use vpnlane_core::{Error, PublicKey};
 
     use super::*;
 

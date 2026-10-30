@@ -22,11 +22,11 @@ pub(crate) mod watch;
 mod e2e {
     use std::net::IpAddr;
 
-    use wglane_core::TailnetHealth;
-    use wglane_core::testing::{
+    use vpnlane_core::TailnetHealth;
+    use vpnlane_core::testing::{
         FakeBypassProvider, FakeCatalog, FakeExitIp, FakeRoutes, FakeTailnet, FakeToken, FakeTunnel,
     };
-    use wglane_core::{PublicKey, Server};
+    use vpnlane_core::{PublicKey, Server};
 
     use super::{down, status, up};
     use crate::context::Context;
@@ -96,7 +96,7 @@ mod e2e {
         assert_eq!(ctx.recorded_city("za").as_deref(), Some("Johannesburg"));
 
         // A fresh config is reused only for the same request.
-        let again = |city: Option<&wglane_core::City>| {
+        let again = |city: Option<&vpnlane_core::City>| {
             up::connect_recorded(
                 &ctx,
                 &tunnel,
@@ -111,7 +111,7 @@ mod e2e {
             .unwrap()
         };
         assert!(!again(None).summary(za).contains("regenerated"));
-        let jnb = wglane_core::City {
+        let jnb = vpnlane_core::City {
             id: 1,
             name: "Johannesburg".into(),
             identifier: "za_johannesburg".into(),

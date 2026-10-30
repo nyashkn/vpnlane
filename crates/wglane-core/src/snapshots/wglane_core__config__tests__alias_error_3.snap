@@ -1,5 +1,0 @@
----
-source: crates/wglane-core/src/config.rs
-expression: err(text)
----
-line 2: presets.work.city needs presets.work.country: write presets.work.location = "CC/City" instead

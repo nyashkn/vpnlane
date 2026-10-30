@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use wglane_core::{
+use vpnlane_core::{
     ActiveState, ChangeLine, CountryCode, EffectiveRequest, Location, Pick, describe_change,
 };
 

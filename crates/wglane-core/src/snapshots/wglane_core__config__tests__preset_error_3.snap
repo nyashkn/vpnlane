@@ -1,9 +1,0 @@
----
-source: crates/wglane-core/src/config.rs
-expression: err(text)
----
-TOML parse error at line 2, column 12
-  |
-2 | location = "DE/Berlin/de1"
-  |            ^^^^^^^^^^^^^^^
-location "DE/Berlin/de1": CC/City/hostname is not supported yet; use CC or CC/City

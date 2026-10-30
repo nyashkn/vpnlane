@@ -2576,6 +2576,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vpnlane-core"
+version = "0.4.0"
+dependencies = [
+ "insta",
+ "ipnet",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml",
+ "zeroize",
+]
+
+[[package]]
+name = "vpnlane-macos"
+version = "0.4.0"
+dependencies = [
+ "insta",
+ "ipnet",
+ "proptest",
+ "rustix",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "vpnlane-core",
+ "zeroize",
+]
+
+[[package]]
+name = "vpnlane-nord"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
+ "vpnlane-core",
+ "zeroize",
+]
+
+[[package]]
 name = "vtparse"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2729,50 +2770,9 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
- "wglane-core",
- "wglane-macos",
- "wglane-nord",
-]
-
-[[package]]
-name = "wglane-core"
-version = "0.4.0"
-dependencies = [
- "insta",
- "ipnet",
- "proptest",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "toml",
- "zeroize",
-]
-
-[[package]]
-name = "wglane-macos"
-version = "0.4.0"
-dependencies = [
- "insta",
- "ipnet",
- "proptest",
- "rustix",
- "serde_json",
- "tempfile",
- "tracing",
- "wglane-core",
- "zeroize",
-]
-
-[[package]]
-name = "wglane-nord"
-version = "0.4.0"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
- "ureq",
- "wglane-core",
- "zeroize",
+ "vpnlane-core",
+ "vpnlane-macos",
+ "vpnlane-nord",
 ]
 
 [[package]]
@@ -2839,9 +2839,9 @@ dependencies = [
  "clap_mangen",
  "color-eyre",
  "serde_json",
+ "vpnlane-core",
+ "vpnlane-nord",
  "wglane-cli",
- "wglane-core",
- "wglane-nord",
 ]
 
 [[package]]

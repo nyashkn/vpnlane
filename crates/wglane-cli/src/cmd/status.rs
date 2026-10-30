@@ -3,10 +3,10 @@
 use std::fmt::Write as _;
 
 use color_eyre::Result;
-use wglane_core::ports::{ExitIpProbe, TailnetProbe, Tunnel};
-use wglane_core::{CountryCode, Overrides, PresetUse, TailnetHealth, TunnelStatus};
-use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
-use wglane_nord::NordApi;
+use vpnlane_core::ports::{ExitIpProbe, TailnetProbe, Tunnel};
+use vpnlane_core::{CountryCode, Overrides, PresetUse, TailnetHealth, TunnelStatus};
+use vpnlane_macos::{HelperClient, SystemRunner, TailscalePing};
+use vpnlane_nord::NordApi;
 
 use crate::context::Context;
 
@@ -232,8 +232,8 @@ fn render(
 
 #[cfg(test)]
 mod tests {
-    use wglane_core::ExitInsights;
-    use wglane_core::testing::{FakeExitIp, FakeTailnet, FakeTunnel};
+    use vpnlane_core::ExitInsights;
+    use vpnlane_core::testing::{FakeExitIp, FakeTailnet, FakeTunnel};
 
     use super::*;
 
@@ -414,14 +414,14 @@ mod tests {
     fn an_unreadable_tunnel_is_unknown_not_none() {
         struct Broken;
         impl Tunnel for Broken {
-            fn up(&self, _: &std::path::Path) -> wglane_core::Result<()> {
+            fn up(&self, _: &std::path::Path) -> vpnlane_core::Result<()> {
                 unreachable!()
             }
-            fn down(&self, _: &std::path::Path) -> wglane_core::Result<()> {
+            fn down(&self, _: &std::path::Path) -> vpnlane_core::Result<()> {
                 unreachable!()
             }
-            fn active(&self) -> wglane_core::Result<Vec<String>> {
-                Err(wglane_core::Error::Api("no helper".into()))
+            fn active(&self) -> vpnlane_core::Result<Vec<String>> {
+                Err(vpnlane_core::Error::Api("no helper".into()))
             }
         }
         let (s, known) = gather(
