@@ -6,15 +6,13 @@ members = ["cargo:crates/wglane-cli", "cargo:crates/wglane-macos"]
 [dist]
 # CI backends to support
 ci = "github"
-# The installers to generate for each app
-installers = ["homebrew"]
+# The installers to generate for each app. GitHub release archives only for now;
+# to add Homebrew later: installers = ["homebrew"], tap = "nyashkn/homebrew-tap",
+# publish-jobs = ["homebrew"], then `dist generate` (needs HOMEBREW_TAP_TOKEN).
+installers = []
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
-# A GitHub repo to push Homebrew formulas to
-tap = "nyashkn/homebrew-tap"
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
 # publish = false (workspace-wide) hides binaries from dist; opt packages back in.
 dist = true
-# Formula is pushed to the tap only by the tag-triggered workflow (needs HOMEBREW_TAP_TOKEN).
-publish-jobs = ["homebrew"]
