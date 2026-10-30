@@ -1,4 +1,4 @@
-# wglane tasks. `just ci` is the single gate: what CI runs, run it before pushing.
+# vpnlane tasks. `just ci` is the single gate: what CI runs, run it before pushing.
 
 default:
     @just --list
@@ -28,7 +28,7 @@ doc:
 
 # The binary must still build without the optional TUI.
 check-no-tui:
-    cargo check -p wglane-cli --no-default-features
+    cargo check -p vpnlane-cli --no-default-features
 
 # Release-please manifest, workspace version and Cargo.lock must agree.
 # --locked: cargo must not quietly rewrite Cargo.lock before the check reads it.
@@ -39,9 +39,9 @@ check-versions:
 check-continents:
     cargo run --locked -p xtask -- check-continents
 
-# Run wglane, e.g. `just run status --json`.
+# Run vpnlane, e.g. `just run status --json`.
 run *args:
-    cargo run -p wglane-cli -- {{args}}
+    cargo run -p vpnlane-cli -- {{args}}
 
 # Generate completions and man pages into target/assets/.
 assets:
@@ -51,22 +51,23 @@ assets:
 # Build, install both binaries into cargo's bin dir, install the root helper, check.
 # sudo's PATH excludes ~/.cargo/bin, so the full path is used.
 install:
-    cargo install --path crates/wglane-cli --locked
-    sudo "${CARGO_HOME:-$HOME/.cargo}/bin/wglane" install-helper
-    "${CARGO_HOME:-$HOME/.cargo}/bin/wglane" doctor
+    cargo uninstall wglane-cli 2>/dev/null || true
+    cargo install --path crates/vpnlane-cli --locked
+    sudo "${CARGO_HOME:-$HOME/.cargo}/bin/vpnlane" install-helper
+    "${CARGO_HOME:-$HOME/.cargo}/bin/vpnlane" doctor
 
 # Real-Mac smoke test. Needs sudo, a token and a live network, so it is NOT in `ci`.
-# `just mac-test US`. Test `wglane watch` by hand afterwards (switch Wi-Fi).
+# `just mac-test US`. Test `vpnlane watch` by hand afterwards (switch Wi-Fi).
 mac-test cc="US":
     cargo build --release
-    sudo ./target/release/wglane install-helper
-    ./target/release/wglane doctor
-    ./target/release/wglane up {{cc}}
-    ./target/release/wglane status   # also pings a tailnet peer
-    ./target/release/wglane down
+    sudo ./target/release/vpnlane install-helper
+    ./target/release/vpnlane doctor
+    ./target/release/vpnlane up {{cc}}
+    ./target/release/vpnlane status   # also pings a tailnet peer
+    ./target/release/vpnlane down
 
 # Re-record docs/media/{cli,tui}.gif with VHS (not part of ci). Needs `brew install vhs` and node; see
 # demos/README.md. Hits api.nordvpn.com; no token or sudo.
 demo:
-    cargo build -p wglane-cli
+    cargo build -p vpnlane-cli
     demos/record.sh

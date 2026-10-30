@@ -16,7 +16,7 @@ Setup: `brew install vhs` (pulls ttyd + ffmpeg), node (for the proxy), network a
 ## Editing the scripts
 
 `tui.tape` is a short keystroke list: re-edit it after a UI change and run `just demo`.
-`demos/record.sh tui` (after `cargo build -p wglane-cli`) re-records only the TUI GIF.
+`demos/record.sh tui` (after `cargo build -p vpnlane-cli`) re-records only the TUI GIF.
 - `Type "x"` types literally; `Type@200ms "za"` slows typing; `Down@400ms 3` repeats a key with a gap.
 - `Sleep` after any key that redraws or hits the network (1.5 s+ after launch, 0.5 to 1 s between navigation keys).
 - In `cli.tape`, `Wait+Line@20s /^\$$/` waits for the prompt to return, so network latency cannot race the typing.
@@ -24,7 +24,7 @@ Setup: `brew install vhs` (pulls ttyd + ffmpeg), node (for the proxy), network a
 
 ## Privacy
 
-`record.sh` runs with an empty temp `HOME`, `WGLANE_CONFIG_DIR=/tmp/wglane-demo`, prompt `$ `, a PATH without
+`record.sh` runs with an empty temp `HOME`, `VPNLANE_CONFIG_DIR=/tmp/vpnlane-demo`, prompt `$ `, a PATH without
 `tailscale`, and `RUST_LOG=error` for the CLI tape (the TUI logs to `<config dir>/tui.log`, so it needs none), and
 made-up presets in `config.toml`. For the TUI, `proxy-first-only.mjs`
 lets only the country-list request through so the exit-IP lookup fails and reads `unknown`; the server

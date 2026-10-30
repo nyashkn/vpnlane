@@ -7,17 +7,17 @@ Type 'exec sandbox-exec -p "$NOTUN" bash' Enter
 Sleep 500ms
 Type "clear" Enter
 Show
-Type "wglane --help | head -16" Enter
+Type "vpnlane --help | head -16" Enter
 Wait+Line@20s /^\$$/
 Sleep 1500ms
 Type "clear" Enter
-Type "wglane doctor" Enter
+Type "vpnlane doctor" Enter
 Wait+Line@20s /^\$$/
 Sleep 2s
 Type "clear" Enter
-Type "wglane servers | head -6" Enter
+Type "vpnlane servers | head -6" Enter
 Wait+Line@20s /^\$$/
 Sleep 1500ms
-Type "wglane servers ZA --limit 5 | awk '{print $1, $2}'" Enter
+Type "vpnlane servers ZA --limit 5 | awk '{print $1, $2}'" Enter
 Wait+Line@20s /^\$$/
 Sleep 2s

@@ -25,7 +25,7 @@ enum Task {
     Completions,
     /// Write man pages (one per subcommand) to target/assets/man/.
     Man,
-    /// Build release binaries (wglane, wglane-helper) and print their paths.
+    /// Build release binaries (vpnlane, vpnlane-helper) and print their paths.
     Release,
     /// Fail if the release-please manifest, workspace version and Cargo.lock entries disagree.
     CheckVersions,
@@ -45,7 +45,7 @@ fn main() -> Result<()> {
     }
 }
 
-const CONTINENT_FILE: &str = "crates/wglane-cli/src/tui/continent.rs";
+const CONTINENT_FILE: &str = "crates/vpnlane-cli/src/tui/continent.rs";
 
 fn check_continents(root: &Path) -> Result<()> {
     use vpnlane_core::ports::ServerCatalog;
@@ -132,7 +132,7 @@ fn check_versions(manifest: &str, cargo_toml: &str, lock: &str) -> Vec<String> {
         if let Some(n) = quoted("name", line) {
             name = Some(n);
         } else if let (Some(v), Some(n)) = (quoted("version", line), name.take())
-            && (n.starts_with("wglane-") || n.starts_with("vpnlane-") || n == "xtask")
+            && (n.starts_with("vpnlane-") || n == "xtask")
         {
             seen += 1;
             if v != want {
@@ -164,7 +164,7 @@ fn release(root: &Path) -> Result<()> {
             "build",
             "--release",
             "-p",
-            "wglane-cli",
+            "vpnlane-cli",
             "-p",
             "vpnlane-macos",
         ])
@@ -190,7 +190,7 @@ fn completions(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
     for shell in [Shell::Bash, Shell::Zsh, Shell::Fish] {
         let path =
-            clap_complete::generate_to(shell, &mut wglane_cli::command(), brand_name!(), dir)?;
+            clap_complete::generate_to(shell, &mut vpnlane_cli::command(), brand_name!(), dir)?;
         eprintln!("wrote {}", path.display());
     }
     Ok(())
@@ -198,7 +198,7 @@ fn completions(dir: &Path) -> Result<()> {
 
 fn man(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).wrap_err_with(|| format!("creating {}", dir.display()))?;
-    clap_mangen::generate_to(wglane_cli::command(), dir)?;
+    clap_mangen::generate_to(vpnlane_cli::command(), dir)?;
     eprintln!("wrote man pages to {}", dir.display());
     Ok(())
 }
@@ -208,12 +208,12 @@ mod tests {
     use super::{check_versions, table_codes};
 
     const TOML: &str = "[workspace]\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace.dependencies]\n";
-    const LOCK: &str = "[[package]]\nname = \"wglane-cli\"\nversion = \"0.1.0\"\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n[[package]]\nname = \"xtask\"\nversion = \"0.1.0\"\n";
+    const LOCK: &str = "[[package]]\nname = \"vpnlane-cli\"\nversion = \"0.1.0\"\n[[package]]\nname = \"serde\"\nversion = \"1.0.0\"\n[[package]]\nname = \"xtask\"\nversion = \"0.1.0\"\n";
     const MANIFEST: &str = r#"{ ".": "0.1.0" }"#;
 
     #[test]
     fn continent_table_has_no_duplicate_codes() {
-        let src = include_str!("../../crates/wglane-cli/src/tui/continent.rs");
+        let src = include_str!("../../crates/vpnlane-cli/src/tui/continent.rs");
         let codes = table_codes(src);
         assert!(codes.len() > 100, "table scan found {} codes", codes.len());
         let unique: std::collections::BTreeSet<_> = codes.iter().collect();

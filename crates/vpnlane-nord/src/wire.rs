@@ -1,7 +1,7 @@
 //! Nord API JSON shapes and their mapping to domain types.
 //!
 //! Pure functions over `&str` so tests run against `fixtures/` with no network.
-//! Fields are the subset wglane reads; unknown fields are ignored so additive
+//! Fields are the subset vpnlane reads; unknown fields are ignored so additive
 //! API changes do not break us, missing fields surface as `Error::Api`.
 
 use serde::Deserialize;

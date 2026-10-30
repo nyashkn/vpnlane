@@ -10,7 +10,7 @@ Type 'exec sandbox-exec -p "$NOTUN" bash' Enter
 Sleep 500ms
 Type "clear" Enter
 Show
-Type "wglane tui" Enter
+Type "vpnlane tui" Enter
 Sleep 3800ms
 Space
 Sleep 600ms

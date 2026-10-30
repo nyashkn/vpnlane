@@ -1,6 +1,6 @@
 [package]
 name = "vpnlane-macos"
-description = "macOS adapters for wglane: WireGuard tunnel, routes, bypass, watcher, privileged helper."
+description = "macOS adapters for vpnlane: WireGuard tunnel, routes, bypass, watcher, privileged helper."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

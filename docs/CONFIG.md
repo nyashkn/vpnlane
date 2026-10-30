@@ -1,25 +1,25 @@
 # Configuration
 
 Saved settings live in `config.toml` in the config directory: the directory
-that holds the token, `~/.config/wglane` unless `--config-dir` or
-`WGLANE_CONFIG_DIR` says otherwise.
+that holds the token, `~/.config/vpnlane` unless `--config-dir` or
+`VPNLANE_CONFIG_DIR` says otherwise.
 
 ```
-wglane config path     # where the file is (it may not exist yet)
-wglane config init     # write a commented sample; never overwrites
-wglane config show     # effective values, the source of each, deprecated spellings (--json too)
+vpnlane config path     # where the file is (it may not exist yet)
+vpnlane config init     # write a commented sample; never overwrites
+vpnlane config show     # effective values, the source of each, deprecated spellings (--json too)
 ```
 
 Three rules:
 
-- **`config.toml` is yours.** wglane reads it and never writes it.
+- **`config.toml` is yours.** vpnlane reads it and never writes it.
 - **Runtime state is one file**, `state.json` beside it (see [State file](#state-file)).
 - **One value says where**: `location`, spelled the same in the file, in a
-  preset, in `WGLANE_LOCATION` and on the command line.
+  preset, in `VPNLANE_LOCATION` and on the command line.
 
 A missing file means the built-in defaults. An unknown key, or a wrong type or
 value, is an error that names the key and the line. The Nord token is **not**
-a config key: it stays in the mode-600 `token` file or `WGLANE_TOKEN`.
+a config key: it stays in the mode-600 `token` file or `VPNLANE_TOKEN`.
 
 ## Location
 
@@ -40,8 +40,8 @@ release. Today they are rejected with a "not supported yet" error, so a file
 written for a future release fails loudly.
 
 One parser serves every place a location appears: the positional argument
-(`wglane up DE/Berlin`), `--city` (sugar: `up DE --city Berlin` is
-`up DE/Berlin`; alone it takes the country from the layers below), `WGLANE_LOCATION`,
+(`vpnlane up DE/Berlin`), `--city` (sugar: `up DE --city Berlin` is
+`up DE/Berlin`; alone it takes the country from the layers below), `VPNLANE_LOCATION`,
 top-level `location`, and a preset's `location`. A location always replaces
 the one below it whole: naming `DE` over a preset's `DE/Berlin` gives the
 whole country, and a city in the file never follows a different country.
@@ -52,7 +52,7 @@ All keys are optional. The top level is the **unnamed base preset**.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `location` | `CC` or `CC/City` | unset (`up` with no argument errors) | where `wglane up` connects |
+| `location` | `CC` or `CC/City` | unset (`up` with no argument errors) | where `vpnlane up` connects |
 | `pick` | `"least-load"` or `"fastest"` | `"least-load"` | how the server is chosen. `fastest` pings the 10 least-loaded candidates and takes the lowest round trip |
 | `bypass_extra` | list of CIDRs | `[]` | routes that skip the tunnel, added to the automatic Tailscale ones |
 | `exit_ip_check` | bool | `true` | the leak check: look up the exit IP in `status` and the TUI. `false` is allowed but loud, see [below](#exit_ip_check-false-is-loud). Top level only |
@@ -60,7 +60,7 @@ All keys are optional. The top level is the **unnamed base preset**.
 | `tui.graph_samples` | integer, 10 to 600 | `60` | TUI latency samples kept. Top level only |
 | `tui.warn_ratio` | float, 1.0 to 10.0 | `1.5` | TUI draws a sample above this multiple of the window median as a spike. Top level only |
 | `preset_order` | list of preset names | `[]` | number-key order of presets; each name must exist |
-| `[presets.<name>]` | table, see below | none | `wglane preset ...`, `wglane up --preset` |
+| `[presets.<name>]` | table, see below | none | `vpnlane preset ...`, `vpnlane up --preset` |
 
 `bypass_extra` entries must be IPv4 `/8` or longer (IPv6 `/16` or longer), the
 same floor the root helper enforces. The automatic and extra routes together
@@ -70,7 +70,7 @@ before changing routes, and both fail with a message naming `bypass_extra`.
 ## Presets are overlays
 
 A preset is a named overlay of the top level. Apply one with
-`wglane preset apply NAME`, `wglane up --preset NAME` or `WGLANE_PRESET=NAME`
+`vpnlane preset apply NAME`, `vpnlane up --preset NAME` or `VPNLANE_PRESET=NAME`
 (all the same code path).
 
 Any **connection key** valid at the top level (`location`, `pick`,
@@ -89,7 +89,7 @@ The name is 1 to 32 characters of `a-z`, `0-9`, `_`, `-`. Order: names in
 1 to 9 (in `preset list` and the TUI), later ones still work by name.
 
 ```toml
-location = "ZA"                      # the base: plain `wglane up` goes to South Africa
+location = "ZA"                      # the base: plain `vpnlane up` goes to South Africa
 pick = "least-load"
 bypass_extra = ["198.51.100.0/24"]
 preset_order = ["work", "home"]
@@ -108,15 +108,15 @@ pick = "fastest"
 ```
 
 ```
-$ wglane preset list
+$ vpnlane preset list
   KEY  NAME  LABEL        SUMMARY
   1    work  Office exit  DE/Berlin, +2 routes
   2    home               ZA, fastest
   3    fast               fastest
 
-$ wglane preset apply work       # = wglane up --preset work
-$ wglane up --preset work FR     # the preset, but exit in France; status: work (location overridden)
-$ wglane preset show home
+$ vpnlane preset apply work       # = vpnlane up --preset work
+$ vpnlane up --preset work FR     # the preset, but exit in France; status: work (location overridden)
+$ vpnlane preset show home
 preset        home
 key           2
 location      ZA
@@ -142,14 +142,14 @@ to the file layer, below the environment.
 
 | Key | 1. flag | 2. environment | 3. preset (if chosen) | 4. `config.toml` top level | 5. default |
 |---|---|---|---|---|---|
-| `location` | `up LOCATION`, `up CC --city C` | `WGLANE_LOCATION` | preset `location` | `location` | unset |
-| `pick` | `up --pick RULE` (`--fastest`) | `WGLANE_PICK` | preset `pick` | `pick` | `least-load` |
+| `location` | `up LOCATION`, `up CC --city C` | `VPNLANE_LOCATION` | preset `location` | `location` | unset |
+| `pick` | `up --pick RULE` (`--fastest`) | `VPNLANE_PICK` | preset `pick` | `pick` | `least-load` |
 | `bypass_extra` | none | none | **added** | the list | `[]` |
-| which preset | `up --preset NAME` | `WGLANE_PRESET` | n/a | n/a | none |
-| `exit_ip_check` | `status --exit-ip-check BOOL` | `WGLANE_EXIT_IP_CHECK` | not allowed | `exit_ip_check` | `true` |
+| which preset | `up --preset NAME` | `VPNLANE_PRESET` | n/a | n/a | none |
+| `exit_ip_check` | `status --exit-ip-check BOOL` | `VPNLANE_EXIT_IP_CHECK` | not allowed | `exit_ip_check` | `true` |
 | `tui.*` | none | none | not allowed | the key | see Keys |
 
-`up -` skips all layers: it repeats the last request as recorded. `wglane up`
+`up -` skips all layers: it repeats the last request as recorded. `vpnlane up`
 with no argument is always the layers above, never "last used".
 `config show` has no flags, so it reports `env`, `file` or `default`; `flag`
 appears only for values a command takes on its own command line.
@@ -158,17 +158,17 @@ appears only for values a command takes on its own command line.
 
 | Variable | Meaning |
 |---|---|
-| `WGLANE_CONFIG_DIR` | the config directory (same as `--config-dir`) |
-| `WGLANE_TOKEN` | the Nord token (see [TOKEN.md](TOKEN.md)) |
-| `WGLANE_LOCATION` | `location`, same grammar |
-| `WGLANE_PICK` | `pick` |
-| `WGLANE_PRESET` | the preset to apply, like `AWS_PROFILE`; `--preset` beats it |
-| `WGLANE_EXIT_IP_CHECK` | `exit_ip_check`: `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off` |
-| `WGLANE_COUNTRY` | **deprecated** alias of `WGLANE_LOCATION` (country only) |
+| `VPNLANE_CONFIG_DIR` | the config directory (same as `--config-dir`) |
+| `VPNLANE_TOKEN` | the Nord token (see [TOKEN.md](TOKEN.md)) |
+| `VPNLANE_LOCATION` | `location`, same grammar |
+| `VPNLANE_PICK` | `pick` |
+| `VPNLANE_PRESET` | the preset to apply, like `AWS_PROFILE`; `--preset` beats it |
+| `VPNLANE_EXIT_IP_CHECK` | `exit_ip_check`: `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off` |
+| `VPNLANE_COUNTRY` | **deprecated** alias of `VPNLANE_LOCATION` (country only) |
 
 ## State file
 
-What wglane last applied is kept in `<config dir>/state.json` (the same
+What vpnlane last applied is kept in `<config dir>/state.json` (the same
 directory as the token and the generated configs). It is machine-written, so it
 is not in `config.toml`; delete it freely, you lose only `up -`, the active
 preset and cached-config notes.
@@ -197,7 +197,7 @@ preset and cached-config notes.
 | `bypass_routes` | routes the helper last installed, for `status` (0 after `down`) |
 | `confs` | per tunnel: the city the cached `.conf` was requested for and the city its server is in |
 
-- `wglane up -` reconnects to `last` exactly (place, pick, bypass set, preset),
+- `vpnlane up -` reconnects to `last` exactly (place, pick, bypass set, preset),
   like `cd -`. It works after `down` too: `down` clears `connected` and the
   active preset but keeps `last`.
 - The **active preset** is the preset of `last` while `connected`. It is set by
@@ -212,7 +212,7 @@ preset and cached-config notes.
 Writers (`up`, `watch`, `down`) take an exclusive lock on `state.json.lock`
 around each read-change-write and replace the file by rename, so overlapping
 commands do not lose updates. If the state cannot be written after a connect,
-wglane prints a warning on stderr and the command still succeeds.
+vpnlane prints a warning on stderr and the command still succeeds.
 
 **Downgrading.** `state.json` replaces `active-preset`, `bypass-routes` and
 `<cc>.city`, which are deleted on import. An older binary does not read
@@ -229,7 +229,7 @@ one:
 - `status` prints `leak check     disabled (exit_ip_check = false)` every time;
 - `status --json` has `"leak_check": "ok" | "disabled" | "unavailable"` (the
   last: enabled, but the lookup failed);
-- `wglane doctor` shows `WARN  leak check ...` (a warning, not a failure).
+- `vpnlane doctor` shows `WARN  leak check ...` (a warning, not a failure).
 
 ## Migration from the old keys
 
@@ -247,7 +247,7 @@ warning: deprecated spelling, still works for this release: default_country, def
 | `default_country = "US"` + `default_city = "Chicago"` | `location = "US/Chicago"` | `default_city` alone is an error |
 | `[presets.x] country = "DE"` | `location = "DE"` | |
 | `[presets.x] country = "DE"` + `city = "Berlin"` | `location = "DE/Berlin"` | `city` alone is an error |
-| `WGLANE_COUNTRY=DE` | `WGLANE_LOCATION=DE` | `WGLANE_LOCATION` wins if both are set |
+| `VPNLANE_COUNTRY=DE` | `VPNLANE_LOCATION=DE` | `VPNLANE_LOCATION` wins if both are set |
 | `up --fastest` | `up --pick fastest` | `--fastest` stays as a short form |
 | `<config dir>/active-preset`, `bypass-routes`, `<cc>.city` | `state.json` | imported once on first read, then deleted |
 
@@ -256,13 +256,13 @@ Using an old key together with its replacement (`location` and
 
 - a positional `DE` now replaces a preset's `DE/Berlin` whole (it used to keep
   the city when the country matched);
-- a city in the file no longer survives `WGLANE_LOCATION=DE` (it used to
-  clash with `WGLANE_COUNTRY`);
+- a city in the file no longer survives `VPNLANE_LOCATION=DE` (it used to
+  clash with `VPNLANE_COUNTRY`);
 - a plain `up` that happens to equal a preset no longer counts as that preset;
   the active preset is the one you applied.
 
 **Timeline.** This release: both spellings work, one stderr line per run.
-Next minor release: the old keys, `WGLANE_COUNTRY` and the old record files
+Next minor release: the old keys, `VPNLANE_COUNTRY` and the old record files
 are removed, and using them is an error pointing here.
 
 ## `pick = "fastest"` and `--pick fastest`
@@ -280,17 +280,17 @@ connected to DE, config regenerated, 12 bypass routes, server de1622.example loa
 
 Choosing by latency means measuring now, so `fastest` always re-picks and
 regenerates the config, even when a fresh one exists. A configured `fastest`
-is switched off for one run with `--pick least-load` (or `WGLANE_PICK`).
+is switched off for one run with `--pick least-load` (or `VPNLANE_PICK`).
 
 **Probing while a tunnel is up.** Packets to any server except the connected
-one would travel through the tunnel and measure its exit. So while a wglane
+one would travel through the tunnel and measure its exit. So while a vpnlane
 tunnel is up, `ping` is bound to the physical interface (the interface of the
 first non-tunnel default route, as the bypass gateway is found) and a probe
 that cannot leave that way fails rather than leaking into the tunnel. Where
 that interface has no interface-scoped default route (common while a full
 tunnel is up) every probe fails and `fastest` falls back to the least loaded
-server. To measure, run `wglane down` first, or use `--pick least-load`.
-`wglane servers CC --probe` shows the same measurement as a PING column next
+server. To measure, run `vpnlane down` first, or use `--pick least-load`.
+`vpnlane servers CC --probe` shows the same measurement as a PING column next
 to the load. A TUI connect to a place uses the least-loaded server there (it
 ignores `pick`); TUI number keys and the preset palette go through
 `up --preset`, so a preset's `pick` holds. The TUI's latency columns use the
@@ -312,7 +312,7 @@ warn_ratio = 2.0
 ```
 
 ```
-$ WGLANE_LOCATION=DE wglane config show
+$ VPNLANE_LOCATION=DE vpnlane config show
 location               DE               env
 pick                   least-load       default
 bypass_extra           198.51.100.0/24  file
@@ -324,6 +324,6 @@ tui.warn_ratio         2.0              file
 presets                (none)           default
 ```
 
-`wglane up` connects to `DE` (env beats file); `wglane up US` connects to `US`
-(flag beats env); `wglane status --exit-ip-check true` looks the exit IP up
+`vpnlane up` connects to `DE` (env beats file); `vpnlane up US` connects to `US`
+(flag beats env); `vpnlane status --exit-ip-check true` looks the exit IP up
 despite the file.

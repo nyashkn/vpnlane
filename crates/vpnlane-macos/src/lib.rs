@@ -4,8 +4,8 @@
 //! [`testing::FakeRunner`] and never touch the real network stack.
 //!
 //! Privilege split: [`WgGo`] and [`RouteTable`] run as root inside the
-//! `wglane-helper` binary; the unprivileged CLI uses [`HelperClient`], which
-//! implements the same ports by calling `sudo -n wglane-helper <verb>`.
+//! `vpnlane-helper` binary; the unprivileged CLI uses [`HelperClient`], which
+//! implements the same ports by calling `sudo -n vpnlane-helper <verb>`.
 
 #[macro_use]
 extern crate vpnlane_core;

@@ -1,13 +1,15 @@
-# wglane
+# vpnlane
 
 Use NordVPN (NordLynx/WireGuard) on macOS without breaking Tailscale or
 Headscale. One command connects to a Nord country; your tailnet keeps working,
-and it keeps working when you change Wi-Fi (leave `wglane watch` running in a
+and it keeps working when you change Wi-Fi (leave `vpnlane watch` running in a
 terminal for that). Rust CLI and TUI.
+
+> **Upgrading from wglane?** The project was renamed; see [docs/UPGRADING.md](docs/UPGRADING.md).
 
 > **Status: pre-alpha.** Unit tested against fakes and smoke-tested by hand on
 > one Mac across several networks (home Wi-Fi and two phone hotspots). Not
-> audited, no long soak: expect rough edges and run `wglane doctor` first.
+> audited, no long soak: expect rough edges and run `vpnlane doctor` first.
 > macOS only. Prebuilt archives for Apple silicon and Intel are on the
 > [releases page](https://github.com/nyashkn/wglane/releases) (unsigned: see
 > [Install and set up](#install-and-set-up)); Homebrew comes later.
@@ -23,31 +25,31 @@ netcheck` then reports `UDP: false` and the tailnet dies, even though
 `100.64.0.0/10` still routes. The Nord macOS app, and `wg-quick` with a
 `DNS =` line, also replace the resolver and break MagicDNS.
 
-wglane brings the tunnel up without a `DNS =` line and adds host routes via
+vpnlane brings the tunnel up without a `DNS =` line and adds host routes via
 your physical gateway for the control server and every DERP IP. The tailnet
 keeps working; everything else exits through the VPN.
 
-wglane is not affiliated with Nord Security. It uses Nord's public API to
+vpnlane is not affiliated with Nord Security. It uses Nord's public API to
 fetch your WireGuard key and server list.
 
 ## Demo
 
-![wglane CLI: help, doctor, servers](docs/media/cli.gif)
+![vpnlane CLI: help, doctor, servers](docs/media/cli.gif)
 
-![wglane TUI: status home, jump palette searching a city, preset preview, help](docs/media/tui.gif)
+![vpnlane TUI: status home, jump palette searching a city, preset preview, help](docs/media/tui.gif)
 
 ## How it works
 
 ```
- you ── wglane up ZA ──┐
+ you ── vpnlane up ZA ──┐
                        ▼
    ┌──────────────────────────────┐   unprivileged (your user)
-   │ wglane  (CLI / TUI / watch)  │   token ─▶ Nord API ─▶ za.conf (key + server)
+   │ vpnlane  (CLI / TUI / watch)  │   token ─▶ Nord API ─▶ za.conf (key + server)
    └───────────────┬──────────────┘
                    │ sudo, one rule, one binary
                    ▼
    ┌──────────────────────────────┐   root, no shell
-   │ wglane-helper                │   wireguard-go + wg + ifconfig + route
+   │ vpnlane-helper                │   wireguard-go + wg + ifconfig + route
    └───────────────┬──────────────┘
                    ▼
    routing table
@@ -57,10 +59,10 @@ fetch your WireGuard key and server list.
      every DERP relay /32 ─┘
      100.64.0.0/10 ──────────────────────▶ Tailscale (unchanged)
 
-   wglane watch: Wi-Fi changes ─▶ re-point those host routes at the new gateway
+   vpnlane watch: Wi-Fi changes ─▶ re-point those host routes at the new gateway
 ```
 
-Surviving a Wi-Fi change needs `wglane watch` running in the foreground. Without
+Surviving a Wi-Fi change needs `vpnlane watch` running in the foreground. Without
 it the routes keep pointing at the old gateway.
 
 The tunnel's own packets and Tailscale's underlay must skip the tunnel or the
@@ -76,8 +78,8 @@ you extract it to run:
 
 ```sh
 xattr -dr com.apple.quarantine .    # the binaries are not signed or notarized
-sudo "$PWD/wglane" install-helper   # reads wglane-helper from the same folder
-./wglane doctor
+sudo "$PWD/vpnlane" install-helper   # reads vpnlane-helper from the same folder
+./vpnlane doctor
 ```
 
 Then continue at step 4 (token). Check the download against the `.sha256` file
@@ -90,18 +92,18 @@ Do these in order.
    - macOS with the Xcode Command Line Tools (`xcode-select --install`).
    - Rust, via [rustup](https://rustup.rs).
    - Homebrew packages: `brew install wireguard-tools wireguard-go`.
-   - The `tailscale` CLI on your `PATH`. wglane needs it to find the control
+   - The `tailscale` CLI on your `PATH`. vpnlane needs it to find the control
      server and relays it must protect; without it `up` installs 0 bypass
      routes and the tailnet is not protected. With the Tailscale app: Settings
      > Install CLI.
    - A NordVPN subscription. Quit the Nord app first; two VPNs on one Mac conflict.
 3. Build and install: `just install`. It runs the three commands below, with the
-   full path to `wglane` because `sudo` does not search `~/.cargo/bin`:
+   full path to `vpnlane` because `sudo` does not search `~/.cargo/bin`:
 
    ```sh
-   cargo install --path crates/wglane-cli --locked   # wglane and wglane-helper
-   sudo "$(command -v wglane)" install-helper        # one time, asks for your password
-   wglane doctor                                     # what is still missing, and the fix
+   cargo install --path crates/vpnlane-cli --locked   # vpnlane and vpnlane-helper
+   sudo "$(command -v vpnlane)" install-helper        # one time, asks for your password
+   vpnlane doctor                                     # what is still missing, and the fix
    ```
 
    After this, `up` and `down` need no password.
@@ -110,56 +112,56 @@ Do these in order.
    settings > Get access token). Copy it, then:
 
    ```sh
-   mkdir -p ~/.config/wglane && (umask 077; pbpaste > ~/.config/wglane/token)
+   mkdir -p ~/.config/vpnlane && (umask 077; pbpaste > ~/.config/vpnlane/token)
    ```
 
-   Or `export WGLANE_TOKEN=...` (the env var wins over the file). Never pass
+   Or `export VPNLANE_TOKEN=...` (the env var wins over the file). Never pass
    the token as an argument.
-5. `wglane doctor` should print `ok` on every line.
-6. `wglane up US`, then `wglane status`: the exit IP is Nord's and `tailnet`
-   says `ok`. Run `wglane down` when done. (`up` leaves the rendered key in a
+5. `vpnlane doctor` should print `ok` on every line.
+6. `vpnlane up US`, then `vpnlane status`: the exit IP is Nord's and `tailnet`
+   says `ok`. Run `vpnlane down` when done. (`up` leaves the rendered key in a
    root-only state directory until `down` removes it.)
 
 ## Quick use
 
 ```sh
 # Token saved as in "Install and set up" above.
-wglane up ZA        # connect (the config is generated or refreshed as needed)
-wglane status       # country, exit IP, tailnet check, bypass routes
-wglane down
-wglane tui          # dashboard: status home, space to jump to a city or preset, 1-9 apply presets
-wglane watch        # re-apply bypass routes when you change networks
-wglane doctor       # checks wg, tailscale, helper, sudoers, token, config dir
-wglane up US/Chicago    # a city (same as `up US --city Chicago`); `wglane up -` repeats the last request
-wglane ls US        # cities of a country with their server counts
-wglane servers US   # ranked servers with their city (--city NAME to filter)
-wglane ls           # list countries
-wglane gen ZA       # write the WireGuard config without connecting
-wglane completions zsh   # shell completions
-sudo "$(command -v wglane)" install-helper --uninstall   # remove the helper
+vpnlane up ZA        # connect (the config is generated or refreshed as needed)
+vpnlane status       # country, exit IP, tailnet check, bypass routes
+vpnlane down
+vpnlane tui          # dashboard: status home, space to jump to a city or preset, 1-9 apply presets
+vpnlane watch        # re-apply bypass routes when you change networks
+vpnlane doctor       # checks wg, tailscale, helper, sudoers, token, config dir
+vpnlane up US/Chicago    # a city (same as `up US --city Chicago`); `vpnlane up -` repeats the last request
+vpnlane ls US        # cities of a country with their server counts
+vpnlane servers US   # ranked servers with their city (--city NAME to filter)
+vpnlane ls           # list countries
+vpnlane gen ZA       # write the WireGuard config without connecting
+vpnlane completions zsh   # shell completions
+sudo "$(command -v vpnlane)" install-helper --uninstall   # remove the helper
 ```
 
-`wglane --help` and `wglane <command> --help` have examples for everything.
+`vpnlane --help` and `vpnlane <command> --help` have examples for everything.
 `--json` works on every command, `-v`/`-vv`/`-vvv` add log output, and
-`--config-dir` (or `WGLANE_CONFIG_DIR`) moves the config directory.
+`--config-dir` (or `VPNLANE_CONFIG_DIR`) moves the config directory.
 Dashboard keys and states: [docs/TUI.md](docs/TUI.md).
 
-Saved settings (`config.toml`: one `location` value, `pick`, extra bypass CIDRs, TUI options, and presets that overlay them, applied with `wglane preset apply NAME`; what wglane last applied lives in `state.json`, never in your config): [docs/CONFIG.md](docs/CONFIG.md).
+Saved settings (`config.toml`: one `location` value, `pick`, extra bypass CIDRs, TUI options, and presets that overlay them, applied with `vpnlane preset apply NAME`; what vpnlane last applied lives in `state.json`, never in your config): [docs/CONFIG.md](docs/CONFIG.md).
 
 ## Troubleshooting
 
 - `doctor` names the missing piece and the fix. Start there.
-- Internet works but the tailnet is down: run `wglane status`. If bypass routes
+- Internet works but the tailnet is down: run `vpnlane status`. If bypass routes
   read `0`, check that `tailscale status` works and the `tailscale` CLI is on
-  your `PATH`, then run `wglane up <CC>`.
-- After switching Wi-Fi with no `wglane watch` running, routes point at the old
-  gateway. Run `wglane watch` (leave it open) or `wglane up <CC>` again.
-- After upgrading `wireguard-tools`/`wireguard-go`: `sudo wglane install-helper`.
+  your `PATH`, then run `vpnlane up <CC>`.
+- After switching Wi-Fi with no `vpnlane watch` running, routes point at the old
+  gateway. Run `vpnlane watch` (leave it open) or `vpnlane up <CC>` again.
+- After upgrading `wireguard-tools`/`wireguard-go`: `sudo vpnlane install-helper`.
 
 ## Privilege model
 
-Bringing a tunnel up and editing routes needs root; wglane itself does not run
-as root. `sudo wglane install-helper` copies a small helper to a root-owned path
+Bringing a tunnel up and editing routes needs root; vpnlane itself does not run
+as root. `sudo vpnlane install-helper` copies a small helper to a root-owned path
 and adds one sudoers rule that lets you run only that binary without a password.
 The helper has four fixed verbs, takes no paths from the caller, runs no shell,
 and refuses bypass routes unless the gateway is the real physical gateway. It
@@ -172,9 +174,9 @@ account, not isolation from it. Full design:
 
 ## Security model and known limits
 
-wglane is pre-alpha and has not been audited. What it does not protect against:
+vpnlane is pre-alpha and has not been audited. What it does not protect against:
 
-- IPv6. The Nord config is IPv4-only, so while a tunnel is up wglane adds
+- IPv6. The Nord config is IPv4-only, so while a tunnel is up vpnlane adds
   reject routes for global IPv6 (`2000::/3`) and the NAT64 prefixes
   (`64:ff9b::/96`, `64:ff9b:1::/48`), and apps should fall back to IPv4 through
   Nord. This is best effort and not a kill switch: sockets bound to a physical

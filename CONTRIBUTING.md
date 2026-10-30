@@ -32,7 +32,7 @@ git diff -- '*.snap'      # review every changed line
 
 ## Add a subcommand
 
-1. Create `crates/wglane-cli/src/cmd/<name>.rs` with `Args` (`#[derive(clap::Args)]`
+1. Create `crates/vpnlane-cli/src/cmd/<name>.rs` with `Args` (`#[derive(clap::Args)]`
    and `#[command(about, long_about, after_help = "Examples: ...")]`) and
    `pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()>`. Copy
    `cmd/completions.rs`.

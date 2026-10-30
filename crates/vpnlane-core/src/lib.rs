@@ -1,4 +1,4 @@
-//! Domain types, port traits and pure logic for wglane.
+//! Domain types, port traits and pure logic for vpnlane.
 //!
 //! This crate does no I/O: adapters in `vpnlane-nord` and `vpnlane-macos`
 //! implement the traits in [`ports`], and the binary wires them together.

@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   release-please:
-    if: github.repository == 'nyashkn/wglane'
+    if: github.repository_owner == 'nyashkn'
     runs-on: ubuntu-latest
     env:
       # Without the PAT the action cannot open a PR; skip instead of failing every push to main.

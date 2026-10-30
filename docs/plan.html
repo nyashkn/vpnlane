@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wglane: plan (working name)</title>
+<title>vpnlane: plan (working name)</title>
 <style>
 :root{--bg:#faf9f5;--fg:#1f1e1b;--mut:#6b675e;--line:#e3dfd3;--card:#fff;--acc:#c15f3c;--ok:#3f7d58;--warn:#a9741a;--bad:#b3402f;--code:#f1eee4}
 @media (prefers-color-scheme:dark){:root{--bg:#1b1a17;--fg:#ece9df;--mut:#9a958a;--line:#38352e;--card:#24221e;--acc:#e08a63;--ok:#7fc29a;--warn:#e2b25a;--bad:#e27c6b;--code:#2c2a25}}
@@ -49,7 +49,7 @@ ol.phases h3{margin:.1rem 0 .2rem}
 <div class="wrap">
 <header>
   <span class="tag q">DRAFT</span> <span class="tag">2026-10-30</span>
-  <h1>wglane</h1>
+  <h1>vpnlane</h1>
   <p class="lede">An open-source Rust CLI (then TUI and menu bar) that manages NordLynx WireGuard tunnels on macOS <em>without breaking Tailscale or Headscale</em>. Grown from the working <code>nord-wg</code> script, diagnosed and proven on 2026-10-30.</p>
 </header>
 <nav aria-label="Sections">
@@ -79,7 +79,7 @@ ol.phases h3{margin:.1rem 0 .2rem}
 
 <h2 id="scope">3. Scope</h2>
 <div class="grid">
-<div class="card"><h3><span class="tag ok">AGREED</span> Token from <code>~/.config</code></h3><p>Read from the env or <code>~/.config/wglane/token</code> (mode 600). Never argv. Infisical dropped from scope.</p></div>
+<div class="card"><h3><span class="tag ok">AGREED</span> Token from <code>~/.config</code></h3><p>Read from the env or <code>~/.config/vpnlane/token</code> (mode 600). Never argv. Infisical dropped from scope.</p></div>
 <div class="card"><h3><span class="tag ok">AGREED</span> <code>status</code></h3><p>Active country, exit IP, tailnet ping, bypass-route count. <code>--json</code> for other surfaces.</p></div>
 <div class="card"><h3><span class="tag ok">AGREED</span> Passwordless privilege</h3><p>No sudo prompt per switch. Design in section 5.</p></div>
 <div class="card"><h3><span class="tag ok">AGREED</span> Completions and aliases</h3><p>clap-generated completions and man page; short aliases.</p></div>
@@ -91,7 +91,7 @@ ol.phases h3{margin:.1rem 0 .2rem}
 <h2 id="arch">4. Architecture</h2>
 <p>From your template note: a Cargo workspace of <strong>3 to 6 crates</strong>, hexagonal-lite (ports as traits in the core, adapters outside), <code>thiserror</code> in libraries and <code>anyhow</code> only in the binary, generics over <code>dyn</code>, no DDD ceremony. Crate boundaries are compiler-enforced; the platform adapter is the one boundary that is a real contract (a Linux adapter could follow).</p>
 <div class="arch" role="img" aria-label="Crate dependency diagram: cli depends on core, nord and macos; nord and macos depend on core">
-  <div class="row"><div class="box"><b>wglane-cli</b>clap commands, ratatui TUI (feature), output formatting. Binary. Wires adapters.</div><div class="box"><b>xtask</b>completions, man pages, release, fixtures.</div></div>
+  <div class="row"><div class="box"><b>vpnlane-cli</b>clap commands, ratatui TUI (feature), output formatting. Binary. Wires adapters.</div><div class="box"><b>xtask</b>completions, man pages, release, fixtures.</div></div>
   <div class="arrow">depends on ↓</div>
   <div class="row"><div class="box"><b>vpnlane-nord</b>API client, server ranking, token sources (env, config-dir file).</div><div class="box"><b>vpnlane-macos</b>tunnel runner, route manager, bypass providers, network watcher, privilege client.</div></div>
   <div class="arrow">implement ports from ↓</div>
@@ -109,7 +109,7 @@ ol.phases h3{margin:.1rem 0 .2rem}
 <div class="scroll"><table>
 <thead><tr><th>Option</th><th>How</th><th>Security</th><th>Ease for open source</th></tr></thead>
 <tbody>
-<tr><td><strong>A. Root-owned helper + sudoers</strong></td><td>One-time <code>sudo wglane install-helper</code> copies a helper binary to a root-owned path and adds a <code>sudoers.d</code> rule for that binary only. Helper accepts fixed verbs (<code>up</code>, <code>down</code>, <code>bypass</code>) and reads configs only from a root-owned directory.</td><td>Sound if the helper is root-owned (not the user-writable Homebrew copy), no wildcards, strict argument validation.</td><td>Good. One command, no Apple signing.</td></tr>
+<tr><td><strong>A. Root-owned helper + sudoers</strong></td><td>One-time <code>sudo vpnlane install-helper</code> copies a helper binary to a root-owned path and adds a <code>sudoers.d</code> rule for that binary only. Helper accepts fixed verbs (<code>up</code>, <code>down</code>, <code>bypass</code>) and reads configs only from a root-owned directory.</td><td>Sound if the helper is root-owned (not the user-writable Homebrew copy), no wildcards, strict argument validation.</td><td>Good. One command, no Apple signing.</td></tr>
 <tr><td>B. Launchd root daemon</td><td>Daemon plus a unix-socket protocol; CLI becomes a client. The proper long-term route (as Tailscale's tailscaled).</td><td>Strongest, and the right base for a menu bar app.</td><td>Heavier. Signed daemon and Login Items approval need a $99 Apple Developer ID.</td></tr>
 <tr><td>C. Plain sudo, cached</td><td>Keep prompting; rely on sudo's timeout.</td><td>No new attack surface.</td><td>What you want to leave.</td></tr>
 </tbody></table></div>
@@ -120,7 +120,7 @@ ol.phases h3{margin:.1rem 0 .2rem}
 <thead><tr><th>Surface</th><th>Tech</th><th>Feasibility</th><th>Cost</th></tr></thead>
 <tbody>
 <tr><td>CLI</td><td>clap (derive)</td><td>Certain</td><td>Core of v0.1</td></tr>
-<tr><td>TUI with stats card</td><td>ratatui + crossterm; <code>Sparkline</code> and <code>Gauge</code> for latency and throughput</td><td>Certain. Ship as <code>wglane tui</code>, same binary behind a cargo feature</td><td>Moderate</td></tr>
+<tr><td>TUI with stats card</td><td>ratatui + crossterm; <code>Sparkline</code> and <code>Gauge</code> for latency and throughput</td><td>Certain. Ship as <code>vpnlane tui</code>, same binary behind a cargo feature</td><td>Moderate</td></tr>
 <tr><td>Menu bar item <span class="tag">LATER</span></td><td><code>tray-icon</code> + <code>muda</code> in pure Rust, or SwiftBar plugin fed by <code>status --json</code> as a zero-build start</td><td>Feasible. Needs the root daemon (option B) to be pleasant</td><td>Moderate; cask distribution wants signing</td></tr>
 <tr><td>Control Center tile <span class="tag warn">DROPPED FOR NOW</span></td><td>WidgetKit <code>ControlWidget</code> + App Intents, which Rust cannot write: a small Swift extension that calls the Rust core</td><td>Feasible on macOS 26 but not pure Rust</td><td>Highest: Xcode, Developer ID, notarization ($99/yr)</td></tr>
 </tbody></table></div>
@@ -128,15 +128,15 @@ ol.phases h3{margin:.1rem 0 .2rem}
 
 <h2 id="cli">7. CLI design and DX</h2>
 <p>A new user should learn the tool from the tool. Rich help, not a bare usage line.</p>
-<pre>wglane up US            connect (switches if already connected)
-wglane down             disconnect and remove bypass routes
-wglane status [--json]  country, exit IP, tailnet check, routes
-wglane servers [CC]     ranked servers, by load and distance
-wglane gen CC...        write configs without connecting
-wglane doctor           check wireguard-tools, tailscale, helper, token
-wglane watch            re-apply bypass routes on network change
-wglane tui              full-screen dashboard
-wglane completions SH   shell completions (zsh, bash, fish)</pre>
+<pre>vpnlane up US            connect (switches if already connected)
+vpnlane down             disconnect and remove bypass routes
+vpnlane status [--json]  country, exit IP, tailnet check, routes
+vpnlane servers [CC]     ranked servers, by load and distance
+vpnlane gen CC...        write configs without connecting
+vpnlane doctor           check wireguard-tools, tailscale, helper, token
+vpnlane watch            re-apply bypass routes on network change
+vpnlane tui              full-screen dashboard
+vpnlane completions SH   shell completions (zsh, bash, fish)</pre>
 <ul>
 <li><code>after_help</code> examples on every subcommand; a short "why Tailscale breaks and what we do" in <code>--help</code> of <code>up</code>.</li>
 <li><code>doctor</code> prints exactly what to run to fix each failed check.</li>
@@ -148,7 +148,7 @@ wglane completions SH   shell completions (zsh, bash, fish)</pre>
 <ol class="phases">
 <li><h3>Parity and safety</h3><p>Workspace, core ports, Nord client, auto-gen on <code>up</code>, token sources (env, config-dir file), <code>up</code>/<code>down</code>/<code>status</code>/<code>gen</code>, Tailscale bypass, helper install (option A), <code>doctor</code>. <strong>Done when:</strong> it reproduces today's script on a clean Mac and <code>status</code> reports a passing tailnet check.</p></li>
 <li><h3>Hands-off</h3><p>Network-change watcher, completions, aliases, man page, Homebrew tap via <code>cargo-dist</code>, README with the Tailscale explanation. <strong>Done when:</strong> switching Wi-Fi keeps the tailnet alive with the VPN on.</p></li>
-<li><h3>TUI</h3><p><code>wglane tui</code>: server list, connect, stats card with latency sparkline. <strong>Done when:</strong> every CLI action is reachable from it.</p></li>
+<li><h3>TUI</h3><p><code>vpnlane tui</code>: server list, connect, stats card with latency sparkline. <strong>Done when:</strong> every CLI action is reachable from it.</p></li>
 <li><h3>Later: menu bar and daemon</h3><p>Not planned now. If wanted, revisit the root daemon (option B) first.</p></li>
 </ol>
 
@@ -164,13 +164,13 @@ wglane completions SH   shell completions (zsh, bash, fish)</pre>
 <tr><td>Not verified: Control Center sandbox and entitlements on macOS 26; cargo-dist Homebrew details</td><td>Spike before committing to phase 5 and the tap.</td></tr>
 </tbody></table></div>
 
-<h2 id="names">10. Name candidates <span class="tag ok">DECIDED: wglane</span></h2>
+<h2 id="names">10. Name candidates <span class="tag ok">DECIDED: vpnlane</span></h2>
 <p>None contain "Nord" (trademark). Checked against crates.io and Homebrew formula names only: all six are free on both. GitHub, domain and trademark searches are not done. Taken on crates.io, so ruled out: <code>detour</code>, <code>sluice</code>, <code>slipway</code>.</p>
 <div class="scroll"><table>
 <thead><tr><th>Name</th><th>Why it fits</th><th>Catch</th></tr></thead>
 <tbody>
 <tr><td><code>sidestep</code> <span class="tag ok">TOP PICK</span></td><td>Names the trick: traffic steps around the tunnel. Reads well as a command (<code>sidestep up US</code>).</td><td>Generic word; may be harder to search for.</td></tr>
-<tr><td><code>wglane</code></td><td>Short, says WireGuard, hints at keeping separate lanes for the VPN and tailnet.</td><td>Says less about the Tailscale value.</td></tr>
+<tr><td><code>vpnlane</code></td><td>Short, says WireGuard, hints at keeping separate lanes for the VPN and tailnet.</td><td>Says less about the Tailscale value.</td></tr>
 <tr><td><code>twintun</code></td><td>Two tunnels (VPN and tailnet) living together.</td><td>Awkward to say aloud.</td></tr>
 <tr><td><code>wgbridge</code></td><td>Plain description: WireGuard bridging the VPN and the tailnet.</td><td>"Bridge" suggests bridged networking, which it isn't.</td></tr>
 <tr><td><code>wgferry</code></td><td>Carries traffic across; friendly and memorable.</td><td>Not clearly about Tailscale.</td></tr>
@@ -180,8 +180,8 @@ wglane completions SH   shell completions (zsh, bash, fish)</pre>
 <h2 id="questions">11. Open questions and decisions</h2>
 <h3>Decided (2026-10-30)</h3>
 <ul>
-<li><strong>Name:</strong> wglane.</li>
-<li><strong>Token:</strong> env or <code>~/.config/wglane/token</code>; Infisical dropped.</li>
+<li><strong>Name:</strong> vpnlane.</li>
+<li><strong>Token:</strong> env or <code>~/.config/vpnlane/token</code>; Infisical dropped.</li>
 <li><strong>Privilege:</strong> option A, root-owned helper plus sudoers. Daemon is a later option, not needed now.</li>
 <li><strong>Surfaces:</strong> CLI and TUI only for now; no control panel or menu bar.</li>
 <li><strong>Auto-gen on <code>up</code>:</strong> in v0.1.</li>

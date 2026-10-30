@@ -21,7 +21,7 @@ use crate::routes::{check_dest, is_bad_bypass};
 use crate::tunnel::{NAME_FILE, WG_RUN_DIR};
 use crate::{CommandOutput, CommandRunner, RouteTable, WgGo};
 
-/// Root-owned install location of `wglane-helper` (never the user-writable
+/// Root-owned install location of `vpnlane-helper` (never the user-writable
 /// Homebrew copy: a sudoers rule on a user-writable binary is a root exploit).
 pub use vpnlane_core::brand::HELPER_PATH;
 
@@ -49,17 +49,17 @@ const MAX_CONF_BYTES: u64 = 4096;
 const MAX_CIDRS: usize = 1024;
 
 /// The complete helper protocol. This verb set becomes the socket protocol
-/// if wglane later grows a launchd daemon.
+/// if vpnlane later grows a launchd daemon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelperVerb {
     /// `up <CC>` + stdin: render a config from the stdin fields into the
     /// root-owned dir and bring that tunnel up.
     Up,
-    /// `down`: tear down every wglane tunnel and its bypass routes.
+    /// `down`: tear down every vpnlane tunnel and its bypass routes.
     Down,
     /// `bypass <gateway> <cidr>...`: (re)install bypass routes.
     Bypass,
-    /// `active`: print the lowercase country code of each running wglane
+    /// `active`: print the lowercase country code of each running vpnlane
     /// tunnel, one per line (the state dir is private to root).
     Active,
 }
@@ -308,14 +308,14 @@ impl<R: CommandRunner> Tunnel for HelperClient<R> {
         Ok(())
     }
 
-    /// Tears down every wglane tunnel, not just `conf`'s: the helper knows
+    /// Tears down every vpnlane tunnel, not just `conf`'s: the helper knows
     /// only its own configs, never a caller-supplied path.
     fn down(&self, _conf: &Path) -> Result<()> {
         self.call(&[HelperVerb::Down.as_str()], &[])?;
         Ok(())
     }
 
-    /// Only wglane's own tunnels, as the helper records them: `up`/`down`/
+    /// Only vpnlane's own tunnels, as the helper records them: `up`/`down`/
     /// `status` must never see, or claim to have stopped, the user's other
     /// WireGuard tunnels. The state dir is private to root, hence a helper verb.
     fn active(&self) -> Result<Vec<String>> {
@@ -733,7 +733,7 @@ impl CommandRunner for RootRunner {
     }
 }
 
-/// Entry point of the `wglane-helper` binary. Exit 0 ok, 1 request failed,
+/// Entry point of the `vpnlane-helper` binary. Exit 0 ok, 1 request failed,
 /// 2 bad usage or not root.
 pub fn helper_main() -> ExitCode {
     if !rustix::process::geteuid().is_root() {
@@ -1114,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    fn down_tears_down_only_wglane_tunnels_and_cleans_up() {
+    fn down_tears_down_only_vpnlane_tunnels_and_cleans_up() {
         let dir = tempfile::tempdir().unwrap();
         let h = helper(dir.path());
         run(&h, &["up", "ZA"], &wire("192.0.2.10:51820")).unwrap();
@@ -1327,8 +1327,8 @@ mod tests {
             ("routes.rs", include_str!("routes.rs")),
             ("command.rs", include_str!("command.rs")),
             (
-                "wglane-cli/src/bin/wglane-helper.rs",
-                include_str!("../../wglane-cli/src/bin/wglane-helper.rs"),
+                "vpnlane-cli/src/bin/vpnlane-helper.rs",
+                include_str!("../../vpnlane-cli/src/bin/vpnlane-helper.rs"),
             ),
         ] {
             let code = src.split("#[cfg(test)]").next().unwrap().to_lowercase();
@@ -1367,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn client_up_refuses_configs_wglane_did_not_generate() {
+    fn client_up_refuses_configs_vpnlane_did_not_generate() {
         let dir = tempfile::tempdir().unwrap();
         let good = conf_text();
         let cases = [
@@ -1409,7 +1409,7 @@ mod tests {
             ..Default::default()
         });
         let err = HelperClient::new(runner).up(&conf).unwrap_err().to_string();
-        assert!(err.contains("run `sudo wglane install-helper`"), "{err}");
+        assert!(err.contains("run `sudo vpnlane install-helper`"), "{err}");
     }
 
     #[test]

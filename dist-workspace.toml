@@ -1,6 +1,6 @@
 # cargo-dist config. Regenerate with `dist init` once cargo-dist is installed.
 [workspace]
-members = ["cargo:crates/wglane-cli", "cargo:crates/vpnlane-macos"]
+members = ["cargo:crates/vpnlane-cli", "cargo:crates/vpnlane-macos"]
 
 # Config for 'dist'
 [dist]

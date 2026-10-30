@@ -7,7 +7,7 @@ use vpnlane_core::{BypassSet, Error, Result};
 use crate::CommandRunner;
 
 /// [`RouteBypass`] via `/sbin/route`. Needs root, so production use is
-/// inside `wglane-helper`.
+/// inside `vpnlane-helper`.
 #[derive(Debug)]
 pub struct RouteTable<R> {
     runner: R,

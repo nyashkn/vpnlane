@@ -1,0 +1,25 @@
+---
+source: crates/vpnlane-cli/src/cmd/doctor.rs
+expression: "render(&rows, true).unwrap()"
+---
+[
+  {
+    "check": "wireguard-tools",
+    "status": "pass"
+  },
+  {
+    "check": "helper",
+    "fix": "sudo vpnlane install-helper",
+    "status": "fail"
+  },
+  {
+    "check": "config dir",
+    "fix": "chmod 700 /home/u/.config/vpnlane",
+    "status": "fail"
+  },
+  {
+    "check": "udp 51820",
+    "note": "packet left this machine; delivery cannot be tested without a tunnel. If `vpnlane up` never handshakes, this network may block UDP 51820",
+    "status": "unknown"
+  }
+]

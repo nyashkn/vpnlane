@@ -98,7 +98,7 @@ fn url_host(url: &str) -> Option<&str> {
     (!host.is_empty()).then_some(host)
 }
 
-/// User-listed hosts and CIDRs from config, so wglane is not Tailscale-only.
+/// User-listed hosts and CIDRs from config, so vpnlane is not Tailscale-only.
 #[derive(Clone, Debug, Default)]
 pub struct StaticBypass(pub BypassSet);
 

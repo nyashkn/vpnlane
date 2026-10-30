@@ -339,7 +339,7 @@ fn require_root() -> Result<()> {
     }
 }
 
-/// One-time install, run via `sudo wglane install-helper`: copy the helper to
+/// One-time install, run via `sudo vpnlane install-helper`: copy the helper to
 /// [`crate::HELPER_PATH`] root:wheel 0755, copy `wg` and `wireguard-go` from
 /// Homebrew into root:wheel [`TOOL_DIR`], and write [`SUDOERS_PATH`] 0440 for
 /// `user` after `visudo -cf` validates it.
@@ -590,9 +590,9 @@ mod tests {
             fs::write(brew.join(tool), tool).unwrap();
         }
         let l = Layout {
-            helper: dir.join("wglane-helper"),
-            sudoers: sudoers_d.join("wglane"),
-            tools: dir.join("wglane/bin"),
+            helper: dir.join("vpnlane-helper"),
+            sudoers: sudoers_d.join("vpnlane"),
+            tools: dir.join("vpnlane/bin"),
             tool_sources: vec![brew],
             owner_uid: fs::metadata(t.path()).unwrap().uid(),
             top: fs::canonicalize(t.path()).unwrap(),

@@ -9,6 +9,6 @@ pub trait TokenSource {
     /// sources and stop at the first `Some`.
     fn token(&self) -> Result<Option<Token>>;
 
-    /// Human hint for `TokenMissing`, e.g. "set `WGLANE_TOKEN`".
+    /// Human hint for `TokenMissing`, e.g. "set `VPNLANE_TOKEN`".
     fn describe(&self) -> String;
 }

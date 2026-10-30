@@ -1,0 +1,27 @@
+---
+source: crates/vpnlane-cli/src/cmd/preset.rs
+expression: "list(&s, None, true).unwrap()"
+---
+[
+  {
+    "active": false,
+    "key": 1,
+    "label": "Office exit",
+    "name": "work",
+    "summary": "DE/Berlin, +2 routes"
+  },
+  {
+    "active": false,
+    "key": 2,
+    "label": null,
+    "name": "ghost",
+    "summary": "DE/Atlantis"
+  },
+  {
+    "active": false,
+    "key": 3,
+    "label": null,
+    "name": "home",
+    "summary": "ZA, fastest"
+  }
+]

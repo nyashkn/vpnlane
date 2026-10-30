@@ -1,0 +1,10 @@
+---
+source: crates/vpnlane-cli/src/cmd/status.rs
+expression: text
+---
+tunnel         za
+exit ip        unknown
+protected      unknown
+leak check     disabled (exit_ip_check = false)
+tailnet        tailscale not installed
+bypass routes  1

@@ -2576,6 +2576,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vpnlane-cli"
+version = "0.4.0"
+dependencies = [
+ "clap",
+ "clap_complete",
+ "color-eyre",
+ "insta",
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "vpnlane-core",
+ "vpnlane-macos",
+ "vpnlane-nord",
+]
+
+[[package]]
 name = "vpnlane-core"
 version = "0.4.0"
 dependencies = [
@@ -2758,24 +2776,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wglane-cli"
-version = "0.4.0"
-dependencies = [
- "clap",
- "clap_complete",
- "color-eyre",
- "insta",
- "ratatui",
- "serde_json",
- "tempfile",
- "tracing",
- "tracing-subscriber",
- "vpnlane-core",
- "vpnlane-macos",
- "vpnlane-nord",
-]
-
-[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2839,9 +2839,9 @@ dependencies = [
  "clap_mangen",
  "color-eyre",
  "serde_json",
+ "vpnlane-cli",
  "vpnlane-core",
  "vpnlane-nord",
- "wglane-cli",
 ]
 
 [[package]]

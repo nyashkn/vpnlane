@@ -4,10 +4,10 @@ use serde::Serialize;
 
 use crate::CountryCode;
 
-/// Snapshot shown by `wglane status` (and `--json`).
+/// Snapshot shown by `vpnlane status` (and `--json`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TunnelStatus {
-    /// Names of active wglane tunnels (normally zero or one).
+    /// Names of active vpnlane tunnels (normally zero or one).
     pub active: Vec<String>,
     /// Public IP the internet sees, if it could be determined.
     pub exit_ip: Option<IpAddr>,

@@ -1,5 +1,0 @@
----
-source: crates/wglane-cli/src/cmd/preset.rs
-expression: e.to_string()
----
---city "Berlin" needs a country: run `wglane up DE/Berlin`

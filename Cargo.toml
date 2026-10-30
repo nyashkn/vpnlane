@@ -18,7 +18,7 @@ publish = false
 vpnlane-core = { path = "crates/vpnlane-core" }
 vpnlane-nord = { path = "crates/vpnlane-nord" }
 vpnlane-macos = { path = "crates/vpnlane-macos" }
-wglane-cli = { path = "crates/wglane-cli" }
+vpnlane-cli = { path = "crates/vpnlane-cli" }
 
 clap = { version = "4.6", features = ["derive", "wrap_help", "env"] }
 clap_complete = "4.6"

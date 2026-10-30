@@ -64,7 +64,7 @@ impl fmt::Display for Pick {
 /// unnamed base preset, `[presets.<name>]` tables overlay it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FileConfig {
-    /// Where `wglane up` connects with no argument.
+    /// Where `vpnlane up` connects with no argument.
     pub location: Option<Location>,
     /// Server selection rule.
     pub pick: Option<Pick>,
@@ -85,7 +85,7 @@ pub struct FileConfig {
 /// An old spelling that still works for one release.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Deprecation {
-    /// What the user wrote, e.g. `default_country` or `WGLANE_COUNTRY`.
+    /// What the user wrote, e.g. `default_country` or `VPNLANE_COUNTRY`.
     pub old: String,
     /// What replaces it, e.g. `location`.
     pub new: String,
@@ -451,17 +451,17 @@ pub struct Overrides {
     pub location: Option<Location>,
     /// `pick`.
     pub pick: Option<Pick>,
-    /// Which preset to apply (`--preset`, `WGLANE_PRESET`).
+    /// Which preset to apply (`--preset`, `VPNLANE_PRESET`).
     pub preset: Option<String>,
     /// `exit_ip_check`.
     pub exit_ip_check: Option<bool>,
-    /// Old spellings that were read (`WGLANE_COUNTRY`).
+    /// Old spellings that were read (`VPNLANE_COUNTRY`).
     pub deprecated: Vec<Deprecation>,
 }
 
 impl Overrides {
-    /// Reads `WGLANE_LOCATION`, `WGLANE_PICK`, `WGLANE_PRESET`,
-    /// `WGLANE_EXIT_IP_CHECK` and the deprecated `WGLANE_COUNTRY` through `lookup`.
+    /// Reads `VPNLANE_LOCATION`, `VPNLANE_PICK`, `VPNLANE_PRESET`,
+    /// `VPNLANE_EXIT_IP_CHECK` and the deprecated `VPNLANE_COUNTRY` through `lookup`.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let get = |name: &str| lookup(name).filter(|v| !v.trim().is_empty());
         let named = |name: &str, e: Error| Error::Config(format!("{name}: {e}"));
@@ -523,7 +523,7 @@ pub struct Effective {
     pub pick: Setting<Pick>,
     /// Extra bypass CIDRs (not the auto ones).
     pub bypass_extra: Setting<Vec<IpNet>>,
-    /// The preset chosen by flag or `WGLANE_PRESET`, if any.
+    /// The preset chosen by flag or `VPNLANE_PRESET`, if any.
     pub preset: Setting<Option<String>>,
     /// Look up the exit IP.
     pub exit_ip_check: Setting<bool>,
@@ -607,7 +607,7 @@ pub struct TuiSettings {
     pub warn_ratio: Setting<f64>,
 }
 
-/// What `wglane config init` writes. Every key is commented out, so a fresh
+/// What `vpnlane config init` writes. Every key is commented out, so a fresh
 /// file changes nothing.
 pub const SAMPLE_CONFIG: &str = concat!(
     r#"# "#,
@@ -976,10 +976,10 @@ mod tests {
             })
         };
         let o = env(&[
-            ("WGLANE_LOCATION", "de/berlin"),
-            ("WGLANE_PICK", "Fastest"),
-            ("WGLANE_PRESET", "work"),
-            ("WGLANE_EXIT_IP_CHECK", "0"),
+            ("VPNLANE_LOCATION", "de/berlin"),
+            ("VPNLANE_PICK", "Fastest"),
+            ("VPNLANE_PRESET", "work"),
+            ("VPNLANE_EXIT_IP_CHECK", "0"),
         ])
         .unwrap();
         assert_eq!(o.location, Some(loc("DE/berlin")));
@@ -989,23 +989,23 @@ mod tests {
         );
         assert_eq!(o.deprecated, []);
         assert_eq!(
-            env(&[("WGLANE_LOCATION", "  ")]).unwrap(),
+            env(&[("VPNLANE_LOCATION", "  ")]).unwrap(),
             Overrides::default()
         );
         for (var, bad) in [
-            ("WGLANE_LOCATION", "usa"),
-            ("WGLANE_COUNTRY", "usa"),
-            ("WGLANE_PICK", "slowest"),
+            ("VPNLANE_LOCATION", "usa"),
+            ("VPNLANE_COUNTRY", "usa"),
+            ("VPNLANE_PICK", "slowest"),
         ] {
             let pairs: &'static [(&str, &str)] = Box::leak(Box::new([(var, bad)]));
             let e = env(pairs).unwrap_err().to_string();
             assert!(e.contains(var), "{e}");
         }
-        assert!(env(&[("WGLANE_EXIT_IP_CHECK", "maybe")]).is_err());
+        assert!(env(&[("VPNLANE_EXIT_IP_CHECK", "maybe")]).is_err());
     }
 
     #[test]
-    fn wglane_country_is_an_alias_and_wglane_location_wins() {
+    fn vpnlane_country_is_an_alias_and_vpnlane_location_wins() {
         let env = |pairs: Vec<(&'static str, &'static str)>| {
             Overrides::from_env(move |k| {
                 pairs
@@ -1015,13 +1015,13 @@ mod tests {
             })
             .unwrap()
         };
-        let o = env(vec![("WGLANE_COUNTRY", "de")]);
+        let o = env(vec![("VPNLANE_COUNTRY", "de")]);
         assert_eq!(o.location, Some(loc("DE")));
         assert_eq!(
             deprecation_line(&o.deprecated).unwrap(),
-            "warning: deprecated spelling, still works for this release: WGLANE_COUNTRY -> WGLANE_LOCATION (see docs/CONFIG.md)"
+            "warning: deprecated spelling, still works for this release: VPNLANE_COUNTRY -> VPNLANE_LOCATION (see docs/CONFIG.md)"
         );
-        let o = env(vec![("WGLANE_COUNTRY", "de"), ("WGLANE_LOCATION", "fr")]);
+        let o = env(vec![("VPNLANE_COUNTRY", "de"), ("VPNLANE_LOCATION", "fr")]);
         assert_eq!(o.location, Some(loc("FR")));
         // The deprecation reaches `Effective`, with the file's.
         let eff = FileConfig::parse("default_country = \"US\"")

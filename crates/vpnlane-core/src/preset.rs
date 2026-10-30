@@ -417,7 +417,7 @@ mod tests {
     }
 
     /// Regression (#29): a city never leaks from the file into another place.
-    /// It used to be `default_city` surviving `WGLANE_COUNTRY=DE`.
+    /// It used to be `default_city` surviving `VPNLANE_COUNTRY=DE`.
     #[test]
     fn a_file_city_never_follows_another_place() {
         let file = "location = \"US/Chicago\"\n";

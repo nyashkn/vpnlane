@@ -39,7 +39,7 @@ const V6_BLOCKS: [(&str, u8); 3] = [("2000::", 3), ("64:ff9b::", 96), ("64:ff9b:
 
 /// [`Tunnel`] that drives `wireguard-go` and `wg` directly (no helper script, no
 /// shell). Must run as root, so in production it is used only inside
-/// `wglane-helper`, whose runner allows just these programs.
+/// `vpnlane-helper`, whose runner allows just these programs.
 #[derive(Debug)]
 pub struct WgGo<R> {
     runner: R,
