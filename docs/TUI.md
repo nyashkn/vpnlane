@@ -229,6 +229,4 @@ made up (203.0.113.x, 198.51.100.x, invented hosts). Review the diff before you
 commit them.
 
 To look at it by hand without touching your tunnel, run it the way
-`demos/record.sh` does: a temp `HOME` and `VPNLANE_CONFIG_DIR`, under
-`sandbox-exec` hiding `/private/var/run/wireguard` (the tunnel then reads
-`? unknown`), in a `tmux` window you resize to 100x30, 60x20 and 34x7.
+`demos/record.sh` does: a temp `HOME` and `VPNLANE_CONFIG_DIR` while no tunnel is up, in a `tmux` window you resize to 100x30, 60x20 and 34x7.

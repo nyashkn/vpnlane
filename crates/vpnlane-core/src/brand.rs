@@ -53,8 +53,8 @@ pub const LEGACY_SUDOERS_PATH: &str = "/etc/sudoers.d/wglane";
 pub const LEGACY_WG_NAME_FILE: &str = "wglane.name";
 /// The hint printed when the root helper is missing.
 pub const INSTALL_HINT: &str = concat!("sudo ", brand_name!(), " install-helper");
-/// GitHub repository slug. TODO(R5): becomes `nyashkn/vpnlane` once the owner renames the repo.
-pub const REPO_SLUG: &str = "nyashkn/wglane";
+/// GitHub repository slug.
+pub const REPO_SLUG: &str = "nyashkn/vpnlane";
 
 /// Environment variable name for `key` (`"COUNTRY"` -> `VPNLANE_COUNTRY`).
 pub fn env(key: &str) -> String {

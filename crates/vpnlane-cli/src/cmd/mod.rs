@@ -1,6 +1,7 @@
 //! One module per subcommand. Each defines `Args` (with its own help text)
 //! and `run(&Context, &Args)`.
 
+pub(crate) mod alias;
 pub(crate) mod completions;
 pub(crate) mod config;
 pub(crate) mod doctor;

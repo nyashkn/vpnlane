@@ -1,0 +1,7 @@
+---
+source: crates/vpnlane-cli/src/cmd/alias.rs
+expression: "render(\"vl\", s).unwrap()"
+---
+# vpnlane alias (printed by `vpnlane alias`)
+alias vl=vpnlane
+complete -F _vpnlane -o bashdefault -o default vl

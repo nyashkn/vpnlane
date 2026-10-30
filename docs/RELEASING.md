@@ -19,7 +19,7 @@ Pull requests run `dist plan` only; they never publish.
 
 ## One-time owner setup
 
-1. `repository`/`homepage` in the root `Cargo.toml` already point at `https://github.com/nyashkn/wglane`; change them only if the repo moves.
+1. `repository`/`homepage` in the root `Cargo.toml` point at `https://github.com/nyashkn/vpnlane`; change them only if the repo moves.
 2. Repository secrets (create them yourself; never commit them):
    - `RELEASE_PLEASE_TOKEN`: fine-grained personal access token for this repo with contents and pull-requests write, plus actions write (to dispatch the notes workflow). Required so the tag it creates starts `release.yml` and the Release PR gets CI; events from the default `GITHUB_TOKEN` start nothing.
    - `CLAUDE_CODE_OAUTH_TOKEN`: lets the notes rewrite run. Optional; without it the generated changelog is used as is.
@@ -39,8 +39,6 @@ Pull requests run `dist plan` only; they never publish.
 
 `release.toml` and `cargo xtask release` predate this flow. `cargo release` bumps and tags locally, which would fight release-please's manifest; do not use it for real releases. `cargo xtask release` (a local release build) is harmless.
 
-## Rename notes (wglane -> vpnlane)
+## Rename history (wglane -> vpnlane)
 
-- Archive names follow the cargo package: `vpnlane-cli-<target>.tar.xz` from 0.5.0 (older releases keep `wglane-cli-*`).
-- Changing release-please `package-name` changes its PR branch to `release-please--branches--main--components--vpnlane`. An open release PR on the old branch would be orphaned; none was open at the rename. Do not merge a release PR created before this change landed.
-- Workflow guards use `github.repository_owner == 'nyashkn'`, so a later GitHub repo rename does not silently skip them.
+The GitHub repo was renamed to `nyashkn/vpnlane` and all URLs now point at it; GitHub redirects the old ones. From 0.5.0 archives are `vpnlane-cli-<target>.tar.xz` (older releases keep `wglane-cli-*`). Release-please's PR branch is `release-please--branches--main--components--vpnlane`. Workflow guards use `github.repository_owner == 'nyashkn'`, so a repo rename cannot silently skip them. Never create a new repo named `wglane`: that would break the redirects.
