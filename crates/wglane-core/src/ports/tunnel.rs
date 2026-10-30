@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::path::Path;
 
 use crate::Result;
@@ -16,4 +17,11 @@ pub trait Tunnel {
 
     /// Names of tunnels currently up.
     fn active(&self) -> Result<Vec<String>>;
+
+    /// Re-points each tunnel's endpoint host route at `gateway` after the
+    /// physical network changed. Without it the tunnel's own packets keep
+    /// going to the old gateway and every VPN-bound connection stalls.
+    fn refresh_endpoint(&self, _gateway: IpAddr) -> Result<()> {
+        Ok(())
+    }
 }

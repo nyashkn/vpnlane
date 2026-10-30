@@ -430,6 +430,30 @@ impl<R: CommandRunner> Tunnel for WgGo<R> {
         self.prune(&mut state)?;
         Ok(state.into_keys().collect())
     }
+
+    fn refresh_endpoint(&self, gateway: IpAddr) -> Result<()> {
+        let mut state = self.load()?;
+        self.prune(&mut state)?;
+        for ip in state.values().filter_map(|e| e.endpoint) {
+            let host = ip.to_string();
+            // Delete then add: `route change` is not reliable across gateway families.
+            self.runner
+                .run("route", &["-q", "-n", "delete", "-inet", &host])?;
+            self.runner.run_ok(
+                "route",
+                &[
+                    "-q",
+                    "-n",
+                    "add",
+                    "-inet",
+                    &host,
+                    "-gateway",
+                    &gateway.to_string(),
+                ],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -540,6 +564,32 @@ default            192.0.2.1          UGScg                 en0
 
     fn argv(call: &[&str]) -> Vec<String> {
         call.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn refresh_endpoint_repoints_the_host_route() {
+        let f = Fixture::new();
+        f.engine.up(&f.conf).unwrap();
+        let before = f.calls().len();
+        f.engine
+            .refresh_endpoint("203.0.113.1".parse().unwrap())
+            .unwrap();
+        assert_eq!(
+            f.calls()[before..],
+            [
+                argv(&["route", "-q", "-n", "delete", "-inet", EP]),
+                argv(&[
+                    "route",
+                    "-q",
+                    "-n",
+                    "add",
+                    "-inet",
+                    EP,
+                    "-gateway",
+                    "203.0.113.1"
+                ]),
+            ]
+        );
     }
 
     #[test]

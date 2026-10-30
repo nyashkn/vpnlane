@@ -521,6 +521,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
             check_dest(net, gateway)?;
         }
         let _lock = self.lock(true)?;
+        self.tunnel.refresh_endpoint(gateway)?;
         let old = self.load_bypass()?;
         // Record before installing, so a partial failure is still cleaned up by `down`.
         let json = serde_json::to_vec(new).map_err(|e| Error::Api(e.to_string()))?;
