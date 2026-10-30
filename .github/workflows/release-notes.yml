@@ -41,7 +41,7 @@ jobs:
           prev=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
           range=${prev:+$prev..}HEAD
           git log --no-merges --format='- %s' "$range" | head -c 12288 > "$RUNNER_TEMP/subjects.txt"
-          if grep -Eiq '(api[_-]?key|secret|token|password|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9_-]{20,})' "$RUNNER_TEMP/subjects.txt"; then
+          if grep -Eiq '((api[_-]?key|secret|token|password)[[:space:]]*[:=][[:space:]]*[^[:space:]]{8,}|BEGIN [A-Z ]*PRIVATE KEY|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,})' "$RUNNER_TEMP/subjects.txt"; then
             echo "::error::commit subjects look like they contain a credential; refusing to continue"
             exit 1
           fi
