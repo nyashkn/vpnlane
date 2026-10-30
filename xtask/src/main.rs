@@ -1,7 +1,7 @@
 //! `cargo xtask <task>`: repo automation in Rust instead of shell scripts.
 
 #[macro_use]
-extern crate wglane_core;
+extern crate vpnlane_core;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,10 +48,10 @@ fn main() -> Result<()> {
 const CONTINENT_FILE: &str = "crates/wglane-cli/src/tui/continent.rs";
 
 fn check_continents(root: &Path) -> Result<()> {
-    use wglane_core::ports::ServerCatalog;
+    use vpnlane_core::ports::ServerCatalog;
     let src = fs::read_to_string(root.join(CONTINENT_FILE)).wrap_err(CONTINENT_FILE)?;
     let table = table_codes(&src);
-    let live = wglane_nord::NordApi::new().countries()?;
+    let live = vpnlane_nord::NordApi::new().countries()?;
     let missing: Vec<&str> = live
         .iter()
         .map(|c| c.code.as_str())
@@ -132,7 +132,7 @@ fn check_versions(manifest: &str, cargo_toml: &str, lock: &str) -> Vec<String> {
         if let Some(n) = quoted("name", line) {
             name = Some(n);
         } else if let (Some(v), Some(n)) = (quoted("version", line), name.take())
-            && (n.starts_with("wglane-") || n == "xtask")
+            && (n.starts_with("wglane-") || n.starts_with("vpnlane-") || n == "xtask")
         {
             seen += 1;
             if v != want {
@@ -166,7 +166,7 @@ fn release(root: &Path) -> Result<()> {
             "-p",
             "wglane-cli",
             "-p",
-            "wglane-macos",
+            "vpnlane-macos",
         ])
         .status()
         .wrap_err("running cargo build --release")?;

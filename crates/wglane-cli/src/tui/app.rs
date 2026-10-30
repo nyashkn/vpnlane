@@ -10,7 +10,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph};
-use wglane_core::{
+use vpnlane_core::{
     City, Country, CountryCode, DEFAULT_GRAPH_SAMPLES, Effective, LastRequest, PresetUse, Server,
     TailnetHealth, TuiSettings, TunnelStatus, fold,
 };
@@ -627,7 +627,7 @@ impl State {
         let last = self.last.as_ref().and_then(|l| l.location.clone());
         let anchor = self
             .connected_cc()
-            .or(last.as_ref().map(wglane_core::Location::country));
+            .or(last.as_ref().map(vpnlane_core::Location::country));
         let mut keys: Vec<PlaceKey> = Vec::new();
         if let Some(cc) = anchor {
             let k = continent(cc);

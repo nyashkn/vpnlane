@@ -33,15 +33,15 @@ ratatui = { workspace = true, optional = true }
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-wglane-core.workspace = true
-wglane-macos.workspace = true
-wglane-nord.workspace = true
+vpnlane-core.workspace = true
+vpnlane-macos.workspace = true
+vpnlane-nord.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
 tempfile.workspace = true
-wglane-core = { workspace = true, features = ["testing"] }
-wglane-macos = { workspace = true, features = ["testing"] }
+vpnlane-core = { workspace = true, features = ["testing"] }
+vpnlane-macos = { workspace = true, features = ["testing"] }
 
 [lints]
 workspace = true

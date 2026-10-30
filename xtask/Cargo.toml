@@ -20,8 +20,8 @@ clap_mangen.workspace = true
 color-eyre.workspace = true
 serde_json.workspace = true
 wglane-cli.workspace = true
-wglane-core.workspace = true
-wglane-nord.workspace = true
+vpnlane-core.workspace = true
+vpnlane-nord.workspace = true
 
 [lints]
 workspace = true

@@ -5,9 +5,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
-use wglane_core::ports::{Prober, Tunnel};
-use wglane_core::{Choice, PROBE_TIMEOUT, Result, Server, pick_fastest};
-use wglane_macos::{PingProbe, SystemRunner, physical_interface};
+use vpnlane_core::ports::{Prober, Tunnel};
+use vpnlane_core::{Choice, PROBE_TIMEOUT, Result, Server, pick_fastest};
+use vpnlane_macos::{PingProbe, SystemRunner, physical_interface};
 
 /// Probes every server at once. `on` runs on the calling thread as each result
 /// arrives (the dashboard streams them); the returned list is in `servers` order.
@@ -68,8 +68,8 @@ pub(crate) fn real_prober<T: Tunnel>(tunnel: &T) -> Result<PingProbe<SystemRunne
 mod tests {
     use std::cell::Cell;
 
-    use wglane_core::PublicKey;
-    use wglane_core::testing::{FakeProber, FakeTunnel};
+    use vpnlane_core::PublicKey;
+    use vpnlane_core::testing::{FakeProber, FakeTunnel};
 
     use super::*;
 
@@ -131,6 +131,6 @@ mod tests {
         up.up.borrow_mut().push("us".into());
         assert_eq!(probe_scope(&up, find).unwrap().as_deref(), Some("en0"));
         // No physical interface while up: fail, never probe unbound.
-        assert!(probe_scope(&up, || Err(wglane_core::Error::NotImplemented("x"))).is_err());
+        assert!(probe_scope(&up, || Err(vpnlane_core::Error::NotImplemented("x"))).is_err());
     }
 }

@@ -20,10 +20,10 @@ use std::time::{Duration, Instant};
 
 use color_eyre::Result;
 use ratatui::crossterm::event::{self, Event as Term, KeyCode, KeyEventKind, KeyModifiers};
-use wglane_core::ports::ServerCatalog;
-use wglane_core::{Overrides, Server};
-use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
-use wglane_nord::NordApi;
+use vpnlane_core::ports::ServerCatalog;
+use vpnlane_core::{Overrides, Server};
+use vpnlane_macos::{HelperClient, SystemRunner, TailscalePing};
+use vpnlane_nord::NordApi;
 
 use crate::cmd::{doctor, down, fastest, status, up};
 use crate::context::{self, Context};

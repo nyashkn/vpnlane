@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Sparkline, SparklineBar};
-use wglane_core::{CountryCode, TailnetHealth};
+use vpnlane_core::{CountryCode, TailnetHealth};
 
 use super::app::{Busy, State, Udp, median};
 use super::places::{self, Scale};

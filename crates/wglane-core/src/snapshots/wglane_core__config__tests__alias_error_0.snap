@@ -1,5 +1,0 @@
----
-source: crates/wglane-core/src/config.rs
-expression: err(text)
----
-line 2: default_country is the old spelling of location: set only location

@@ -1010,7 +1010,7 @@ fn quitting_during_a_connect_keeps_the_change_pending_for_the_shell() {
 
 // ---- palette-first redesign -------------------------------------------------
 
-use wglane_core::{FileConfig, Location, Overrides, Pick, PublicKey};
+use vpnlane_core::{FileConfig, Location, Overrides, Pick, PublicKey};
 
 use super::super::hud::{Safety, safety};
 use super::super::palette::{Item, Kind};

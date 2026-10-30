@@ -1,5 +1,0 @@
----
-source: crates/wglane-core/src/config.rs
-expression: err(text)
----
-line 2: presets.work.exit_ip_check: not a connection setting, so it cannot differ per preset; set it at the top level of config.toml

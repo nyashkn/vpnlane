@@ -6,9 +6,9 @@ use std::path::Path;
 
 use color_eyre::Result;
 use serde_json::json;
-use wglane_core::Error;
-use wglane_core::ports::{TokenSource, UdpProbe};
-use wglane_macos::{
+use vpnlane_core::Error;
+use vpnlane_core::ports::{TokenSource, UdpProbe};
+use vpnlane_macos::{
     CommandRunner, HELPER_PATH, SUDOERS_PATH, SystemRunner, TOOL_DIR, UdpSend, check_tool_dir,
 };
 
@@ -190,7 +190,7 @@ pub(crate) fn udp_blocked(ctx: &Context) -> Option<bool> {
 /// Holds the token and generated configs, so group/world access is a leak.
 /// The exit IP lookup (`exit_ip_check`) is on. Off is allowed, so only a warning.
 fn check_leak(ctx: &Context) -> Check {
-    match ctx.settings(wglane_core::Overrides::default()) {
+    match ctx.settings(vpnlane_core::Overrides::default()) {
         Ok(s) => leak_check(s.exit_ip_check.value),
         Err(e) => Check::Unknown {
             note: format!("settings unreadable: {e}"),
@@ -250,7 +250,7 @@ fn render(rows: &[(&str, Check)], json: bool) -> Result<String> {
 mod tests {
     use std::fs;
 
-    use wglane_core::testing::{FakeToken, FakeUdp};
+    use vpnlane_core::testing::{FakeToken, FakeUdp};
 
     use super::*;
 
@@ -265,11 +265,15 @@ mod tests {
     fn program_missing_fails_with_fix() {
         struct Missing;
         impl CommandRunner for Missing {
-            fn run(&self, p: &str, _: &[&str]) -> wglane_core::Result<wglane_macos::CommandOutput> {
+            fn run(
+                &self,
+                p: &str,
+                _: &[&str],
+            ) -> vpnlane_core::Result<vpnlane_macos::CommandOutput> {
                 Err(Error::io(p, std::io::ErrorKind::NotFound.into()))
             }
         }
-        let runner = wglane_macos::testing::FakeRunner::new();
+        let runner = vpnlane_macos::testing::FakeRunner::new();
         assert_eq!(check_program(&runner, "wg", "x"), Check::Pass);
         assert_eq!(runner.calls(), vec![vec!["wg", "--version"]]);
         assert_eq!(

@@ -8,7 +8,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
-use wglane_core::fold;
+use vpnlane_core::fold;
 
 use super::actions::{self, ACTIONS, Action};
 use super::app::{Effect, State};

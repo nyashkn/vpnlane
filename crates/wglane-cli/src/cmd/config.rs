@@ -7,7 +7,7 @@ use std::path::Path;
 
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
-use wglane_core::{Effective, Overrides, SAMPLE_CONFIG};
+use vpnlane_core::{Effective, Overrides, SAMPLE_CONFIG};
 
 use crate::context::Context;
 
@@ -140,7 +140,7 @@ fn show(e: &Effective, json: bool) -> Result<String> {
         &e.presets.source,
     );
     for (i, p) in e.presets.value.iter().enumerate() {
-        let key = if i < wglane_core::KEYED_PRESETS {
+        let key = if i < vpnlane_core::KEYED_PRESETS {
             (i + 1).to_string()
         } else {
             "-".to_owned()
@@ -162,7 +162,7 @@ fn show(e: &Effective, json: bool) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use wglane_core::FileConfig;
+    use vpnlane_core::FileConfig;
 
     use super::*;
 
@@ -180,7 +180,7 @@ mod tests {
         );
         let env = Overrides {
             location: Some("fr".parse().unwrap()),
-            pick: Some(wglane_core::Pick::LeastLoad),
+            pick: Some(vpnlane_core::Pick::LeastLoad),
             preset: Some("work".into()),
             ..Overrides::default()
         };
@@ -196,7 +196,7 @@ mod tests {
                     [presets.work]\ncountry = \"DE\"\n";
         let env = Overrides {
             location: Some("de".parse().unwrap()),
-            deprecated: vec![wglane_core::Deprecation {
+            deprecated: vec![vpnlane_core::Deprecation {
                 old: "WGLANE_COUNTRY".into(),
                 new: "WGLANE_LOCATION".into(),
             }],

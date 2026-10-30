@@ -4,9 +4,9 @@ use std::fmt::Write as _;
 
 use color_eyre::Result;
 use serde_json::json;
-use wglane_core::CountryCode;
-use wglane_core::ports::ServerCatalog;
-use wglane_nord::NordApi;
+use vpnlane_core::CountryCode;
+use vpnlane_core::ports::ServerCatalog;
+use vpnlane_nord::NordApi;
 
 use super::servers::countries_listing;
 use crate::context::Context;
@@ -43,7 +43,7 @@ fn render<C: ServerCatalog>(catalog: &C, args: &Args, json: bool) -> Result<Stri
     let country = countries
         .iter()
         .find(|c| c.code == cc)
-        .ok_or(wglane_core::Error::UnknownCountry(cc))?;
+        .ok_or(vpnlane_core::Error::UnknownCountry(cc))?;
     let mut cities: Vec<_> = country.cities.iter().collect();
     cities.sort_by(|a, b| a.name.cmp(&b.name));
     if json {

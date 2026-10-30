@@ -1,5 +1,0 @@
----
-source: crates/wglane-core/src/config.rs
-expression: err(text)
----
-line 2: presets.work.bypass_extra 10.0.0.0/4: too broad, the prefix must be /8 or longer

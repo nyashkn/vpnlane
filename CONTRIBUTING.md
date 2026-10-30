@@ -43,12 +43,12 @@ git diff -- '*.snap'      # review every changed line
 
 ## Add an adapter
 
-1. If no port fits, add one in `wglane-core/src/ports/<port>.rs` with doc
+1. If no port fits, add one in `vpnlane-core/src/ports/<port>.rs` with doc
    comments, plus a fake in `src/testing/<port>.rs`.
 2. Implement it in the adapter crate, one file per adapter. Run external
    programs through `CommandRunner`; HTTP through `NordApi`'s agent.
 3. Test with `FakeRunner` / fixtures. Copy the style of
-   `crates/wglane-nord/src/token.rs`.
+   `crates/vpnlane-nord/src/token.rs`.
 4. Wire it in the subcommand that needs it.
 
 ## Commits

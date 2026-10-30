@@ -35,4 +35,4 @@ recording machine's state. Review the frames before committing.
 The recording shell also runs under `sandbox-exec` with the wireguard run dir hidden (and a dummy mode-600
 token in the temp config dir), so the recorder's real tunnel never shows. The side effect is that `sudo` cannot
 run in there (macOS blocks setuid under sandbox-exec), so the TUI tunnel state reads `? unknown  the helper did not answer`
-instead of `down`. A true `down` needs a seam (e.g. an env override for the sudo path) in wglane-macos.
+instead of `down`. A true `down` needs a seam (e.g. an env override for the sudo path) in vpnlane-macos.

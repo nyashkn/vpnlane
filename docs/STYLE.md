@@ -35,7 +35,7 @@ filtered for a small CLI.
 
 ## Project rules (not from Google)
 
-- Library errors: `wglane_core::Error` via `thiserror`; messages say what to
+- Library errors: `vpnlane_core::Error` via `thiserror`; messages say what to
   do next. `color-eyre` only in binaries.
 - Secrets: never on argv, never in `Debug`, zeroized on drop, files mode 0600.
 - `#[allow]` only narrowly, with `reason = "..."`.

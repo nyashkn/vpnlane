@@ -1,9 +1,9 @@
 //! `wglane watch`: re-apply bypass routes on every network change.
 
 use color_eyre::Result;
-use wglane_core::BypassSet;
-use wglane_core::ports::{BypassProvider, NetworkWatcher, RouteBypass, Tunnel};
-use wglane_macos::{HelperClient, RouteMonitor, SystemRunner, TailscaleBypass};
+use vpnlane_core::BypassSet;
+use vpnlane_core::ports::{BypassProvider, NetworkWatcher, RouteBypass, Tunnel};
+use vpnlane_macos::{HelperClient, RouteMonitor, SystemRunner, TailscaleBypass};
 
 use crate::context::Context;
 
@@ -38,11 +38,11 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
 struct ActiveBypass<'a>(&'a Context);
 
 impl BypassProvider for ActiveBypass<'_> {
-    fn collect(&self) -> wglane_core::Result<BypassSet> {
+    fn collect(&self) -> vpnlane_core::Result<BypassSet> {
         self.0
             .applied_bypass()
             .map(|set| set.0)
-            .map_err(|e| wglane_core::Error::Config(e.to_string()))
+            .map_err(|e| vpnlane_core::Error::Config(e.to_string()))
     }
 }
 
@@ -82,7 +82,7 @@ fn reapply<T: Tunnel, R: RouteBypass>(
     tunnel: &T,
     routes: &R,
     bypass: &[&dyn BypassProvider],
-) -> wglane_core::Result<Option<usize>> {
+) -> vpnlane_core::Result<Option<usize>> {
     if tunnel.active()?.is_empty() {
         return Ok(None);
     }
@@ -99,11 +99,11 @@ fn reapply<T: Tunnel, R: RouteBypass>(
 mod tests {
     use std::path::Path;
 
-    use wglane_core::testing::{FakeBypassProvider, FakeRoutes, FakeTunnel, FakeWatcher};
+    use vpnlane_core::testing::{FakeBypassProvider, FakeRoutes, FakeTunnel, FakeWatcher};
 
     use super::*;
 
-    fn set() -> wglane_core::BypassSet {
+    fn set() -> vpnlane_core::BypassSet {
         ["203.0.113.5/32".parse().unwrap()].into_iter().collect()
     }
 
@@ -161,14 +161,14 @@ mod tests {
         assert_eq!(n, Some(1));
 
         // `up --preset work` recorded both routes; the refresh re-applies both.
-        ctx.record_applied(wglane_core::LastRequest {
+        ctx.record_applied(vpnlane_core::LastRequest {
             location: Some("US".parse().unwrap()),
-            pick: wglane_core::Pick::LeastLoad,
+            pick: vpnlane_core::Pick::LeastLoad,
             bypass_extra: vec![
                 "203.0.113.0/24".parse().unwrap(),
                 "198.51.100.0/24".parse().unwrap(),
             ],
-            preset: Some(wglane_core::PresetUse {
+            preset: Some(vpnlane_core::PresetUse {
                 name: "work".into(),
                 overridden: vec![],
             }),

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
-use wglane_core::{City, CountryCode, Server};
+use vpnlane_core::{City, CountryCode, Server};
 
 use super::app::{Effect, State};
 use super::probe::{Probe, key as server_key, rank_with_probes};

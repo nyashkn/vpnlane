@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use wglane_core::Server;
+use vpnlane_core::Server;
 
 /// Identifies a server across re-sorts: its hostname.
 pub(crate) type ServerKey = String;
@@ -66,7 +66,7 @@ pub(crate) fn cursor_after<T: PartialEq>(prev: &[T], cursor: usize, next: &[T]) 
 
 #[cfg(test)]
 mod tests {
-    use wglane_core::PublicKey;
+    use vpnlane_core::PublicKey;
 
     use super::*;
 

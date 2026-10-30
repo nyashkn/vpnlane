@@ -15,9 +15,9 @@ homepage = "https://github.com/nyashkn/wglane"
 publish = false
 
 [workspace.dependencies]
-wglane-core = { path = "crates/wglane-core" }
-wglane-nord = { path = "crates/wglane-nord" }
-wglane-macos = { path = "crates/wglane-macos" }
+vpnlane-core = { path = "crates/vpnlane-core" }
+vpnlane-nord = { path = "crates/vpnlane-nord" }
+vpnlane-macos = { path = "crates/vpnlane-macos" }
 wglane-cli = { path = "crates/wglane-cli" }
 
 clap = { version = "4.6", features = ["derive", "wrap_help", "env"] }

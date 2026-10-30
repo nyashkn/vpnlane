@@ -28,7 +28,7 @@ Pull requests run `dist plan` only; they never publish.
 
 ## Archive contents
 
-`wglane` and `wglane-helper` are both bins of `wglane-cli`, so one archive (and one formula, `wglane-cli.rb`) per target carries both. `wglane-macos` is a library and is excluded from dist.
+`wglane` and `wglane-helper` are both bins of `wglane-cli`, so one archive (and one formula, `wglane-cli.rb`) per target carries both. `vpnlane-macos` is a library and is excluded from dist.
 
 ## Local checks
 

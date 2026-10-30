@@ -7,12 +7,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use color_eyre::eyre::{Result, eyre};
-use wglane_core::{
+use vpnlane_core::{
     ConfNote, Effective, FileConfig, LastRequest, Overrides, PresetUse, STATE_VERSION, State,
     deprecation_line,
 };
-use wglane_macos::{ConfStore, StaticBypass};
-use wglane_nord::{EnvToken, FileToken, TokenChain};
+use vpnlane_macos::{ConfStore, StaticBypass};
+use vpnlane_nord::{EnvToken, FileToken, TokenChain};
 
 use crate::cli::GlobalArgs;
 
@@ -426,7 +426,7 @@ mod tests {
     fn last(location: &str, preset: Option<&str>) -> LastRequest {
         LastRequest {
             location: Some(location.parse().unwrap()),
-            pick: wglane_core::Pick::LeastLoad,
+            pick: vpnlane_core::Pick::LeastLoad,
             bypass_extra: vec!["203.0.113.0/24".parse().unwrap()],
             preset: preset.map(|n| PresetUse {
                 name: n.into(),
