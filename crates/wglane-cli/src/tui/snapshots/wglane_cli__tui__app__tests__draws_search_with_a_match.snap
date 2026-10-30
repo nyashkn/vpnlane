@@ -1,0 +1,14 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: render(&s).backend()
+---
+"┌ search: za_ ──────────┐┌ stats ────────────────────────────────────┐"
+"│ZA  South Africa       ││tunnel   unknown                           │"
+"│                       ││exit ip  unknown                           │"
+"│                       ││tailnet  unknown                           │"
+"│                       ││latency  -                                 │"
+"│                       ││                                           │"
+"│                       ││                                           │"
+"│                       ││                                           │"
+"└───────────────────────┘└───────────────────────────────────────────┘"
+"type to filter  enter keep  esc clear  up/down select                 "

@@ -8,6 +8,10 @@ use wglane_core::{Country, CountryCode, TailnetHealth, TunnelStatus};
 
 /// Latency samples kept for the sparkline.
 const HISTORY: usize = 60;
+/// Height of the latency graph in rows.
+const SPARK_ROWS: u16 = 4;
+/// Smallest scale ceiling in ms: a healthy link draws short bars, not full height.
+const SPARK_FLOOR_MS: u64 = 500;
 
 /// A tunnel change in flight (the UI is blocked on it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,7 +25,11 @@ pub(crate) enum Busy {
 pub(crate) struct State {
     pub(crate) should_quit: bool,
     pub(crate) countries: Vec<Country>,
+    /// Index into [`State::visible`], not into `countries`.
     pub(crate) selected: usize,
+    /// Country filter typed after `/`.
+    pub(crate) query: String,
+    pub(crate) searching: bool,
     pub(crate) status: Option<TunnelStatus>,
     /// Tailnet round trips in ms, oldest first.
     pub(crate) latency: Vec<u64>,
@@ -50,6 +58,38 @@ pub(crate) enum Effect {
     Disconnect,
 }
 
+impl State {
+    /// Countries matching the query: code-prefix hits first, then other
+    /// code/name substring hits, each group alphabetical. An empty query keeps
+    /// the catalog order.
+    pub(crate) fn visible(&self) -> Vec<&Country> {
+        let q = self.query.to_lowercase();
+        if q.is_empty() {
+            return self.countries.iter().collect();
+        }
+        let mut hits: Vec<(bool, String, &Country)> = self
+            .countries
+            .iter()
+            .filter_map(|c| {
+                let code = c.code.to_string().to_lowercase();
+                let name = c.name.to_lowercase();
+                (code.contains(&q) || name.contains(&q)).then(|| (!code.starts_with(&q), name, c))
+            })
+            .collect();
+        hits.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+        hits.into_iter().map(|(_, _, c)| c).collect()
+    }
+
+    fn clamp_selection(&mut self) {
+        self.selected = self.selected.min(self.visible().len().saturating_sub(1));
+    }
+
+    /// The query changed: select the best match.
+    fn refilter(&mut self) {
+        self.selected = 0;
+    }
+}
+
 /// Effects to run at startup.
 pub(crate) fn init() -> Vec<Effect> {
     vec![Effect::LoadCountries, Effect::Refresh]
@@ -59,19 +99,38 @@ pub(crate) fn init() -> Vec<Effect> {
 pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
     let mut effects = Vec::new();
     match event {
+        // Search mode owns the keyboard: `q` and `d` are ordinary characters.
+        Event::Key(KeyCode::Char(c)) if s.searching => {
+            s.query.push(c);
+            s.refilter();
+        }
+        Event::Key(KeyCode::Backspace) if s.searching => {
+            s.query.pop();
+            s.refilter();
+        }
+        Event::Key(KeyCode::Esc) if s.searching || !s.query.is_empty() => {
+            s.query.clear();
+            s.searching = false;
+            s.refilter();
+        }
+        Event::Key(KeyCode::Enter) if s.searching => {
+            s.searching = false;
+            s.refilter();
+        }
         Event::Key(KeyCode::Char('q') | KeyCode::Esc) => s.should_quit = true,
         // Keys that change the tunnel are ignored while a change is in flight.
         Event::Key(_) if s.busy.is_some() => {}
         Event::Key(KeyCode::Up) => s.selected = s.selected.saturating_sub(1),
         Event::Key(KeyCode::Down) => {
-            s.selected = (s.selected + 1).min(s.countries.len().saturating_sub(1));
+            s.selected = (s.selected + 1).min(s.visible().len().saturating_sub(1));
         }
         Event::Key(KeyCode::Enter) => {
-            if let Some(c) = s.countries.get(s.selected) {
-                s.busy = Some(Busy::Connecting(c.code));
-                effects.push(Effect::Connect(c.code));
+            if let Some(code) = s.visible().get(s.selected).map(|c| c.code) {
+                s.busy = Some(Busy::Connecting(code));
+                effects.push(Effect::Connect(code));
             }
         }
+        Event::Key(KeyCode::Char('/')) => s.searching = true,
         Event::Key(KeyCode::Char('d')) => {
             s.busy = Some(Busy::Disconnecting);
             effects.push(Effect::Disconnect);
@@ -84,7 +143,7 @@ pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
         }
         Event::Countries(Ok(list)) => {
             s.countries = list;
-            s.selected = s.selected.min(s.countries.len().saturating_sub(1));
+            s.clamp_selection();
         }
         Event::Countries(Err(e)) => s.message = format!("servers: {e}"),
         Event::Status(st) => {
@@ -115,24 +174,51 @@ pub(crate) fn draw(s: &State, frame: &mut Frame) {
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(main);
 
-    let items = s
-        .countries
+    let visible = s.visible();
+    let title = match (s.searching, s.query.is_empty()) {
+        (true, _) => format!(" search: {}_ ", s.query),
+        (false, false) => format!(" servers (/{}) ", s.query),
+        (false, true) => " servers ".into(),
+    };
+    let mut items: Vec<ListItem> = visible
         .iter()
-        .map(|c| ListItem::new(format!("{}  {}", c.code, c.name)));
+        .map(|c| ListItem::new(format!("{}  {}", c.code, c.name)))
+        .collect();
+    if items.is_empty() && !s.query.is_empty() {
+        items.push(ListItem::new("no match").style(Style::new().add_modifier(Modifier::DIM)));
+    }
     let list = List::new(items)
-        .block(Block::bordered().title(" servers "))
+        .block(Block::bordered().title(title))
         .highlight_style(Style::new().add_modifier(Modifier::REVERSED));
-    let mut list_state = ListState::default().with_selected(Some(s.selected));
+    let mut list_state = ListState::default().with_selected(if visible.is_empty() {
+        None
+    } else {
+        Some(s.selected)
+    });
     frame.render_stateful_widget(list, left, &mut list_state);
 
     let card = Block::bordered().title(" stats ");
     let inner = card.inner(right);
     frame.render_widget(card, right);
-    let [text, spark] = Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).areas(inner);
+    let [text, spark, _] = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Length(SPARK_ROWS),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
     frame.render_widget(Paragraph::new(stats_lines(s)), text);
-    frame.render_widget(Sparkline::default().data(&s.latency), spark);
+    // Sparkline scales to the data max when none is set, so one sample (or a
+    // flat series) filled the whole panel. Floor the scale and keep only the
+    // newest samples that fit the width.
+    let shown = &s.latency[s.latency.len().saturating_sub(usize::from(spark.width))..];
+    let ceiling = shown.iter().copied().max().unwrap_or(0).max(SPARK_FLOOR_MS);
+    frame.render_widget(Sparkline::default().data(shown).max(ceiling), spark);
 
-    let hints = "up/down select  enter connect  d disconnect  q quit";
+    let hints = if s.searching {
+        "type to filter  enter keep  esc clear  up/down select"
+    } else {
+        "/ search  esc clear  enter connect  d disconnect  q quit"
+    };
     let line = if s.message.is_empty() {
         hints.to_owned()
     } else {
@@ -166,8 +252,15 @@ fn stats_lines(s: &State) -> Vec<Line<'static>> {
         Line::from(format!("tunnel   {tunnel}")),
         Line::from(format!("exit ip  {exit}")),
         Line::from(format!("tailnet  {tailnet}")),
-        Line::from("latency"),
+        Line::from(latency_label(&s.latency)),
     ]
+}
+
+fn latency_label(samples: &[u64]) -> String {
+    match (samples.last(), samples.iter().min(), samples.iter().max()) {
+        (Some(now), Some(lo), Some(hi)) => format!("latency  {now} ms  min {lo}  max {hi}"),
+        _ => "latency  -".into(),
+    }
 }
 
 #[cfg(test)]
@@ -301,10 +394,194 @@ mod tests {
         assert_eq!(s.selected, 0);
     }
 
-    fn render(s: &State) -> Terminal<TestBackend> {
-        let mut t = Terminal::new(TestBackend::new(70, 10)).unwrap();
+    fn typed(s: State, text: &str) -> State {
+        text.chars().fold(s, |s, c| key(s, KeyCode::Char(c)).0)
+    }
+
+    fn searching(text: &str) -> State {
+        typed(key(loaded(), KeyCode::Char('/')).0, text)
+    }
+
+    fn codes(s: &State) -> Vec<String> {
+        s.visible().iter().map(|c| c.code.to_string()).collect()
+    }
+
+    #[test]
+    fn slash_enters_search_mode() {
+        let (s, fx) = key(loaded(), KeyCode::Char('/'));
+        assert!(s.searching && fx.is_empty() && !s.should_quit);
+    }
+
+    #[test]
+    fn typing_filters_by_code_or_name_case_insensitively() {
+        assert_eq!(codes(&searching("za")), ["ZA"]);
+        assert_eq!(codes(&searching("SOUTH")), ["ZA"]);
+        assert_eq!(codes(&searching("")), ["DE", "US", "ZA"]);
+    }
+
+    #[test]
+    fn code_prefix_ranks_before_name_matches() {
+        let s = State {
+            countries: vec![country("AT", "Austria"), country("US", "United States")],
+            ..State::default()
+        };
+        let s = typed(key(s, KeyCode::Char('/')).0, "us");
+        assert_eq!(codes(&s), ["US", "AT"]);
+    }
+
+    #[test]
+    fn backspace_edits_the_query() {
+        let (s, _) = key(searching("zax"), KeyCode::Backspace);
+        assert_eq!(s.query, "za");
+        assert_eq!(codes(&s), ["ZA"]);
+        // Backspace on an empty query is harmless.
+        assert_eq!(key(searching(""), KeyCode::Backspace).0.query, "");
+    }
+
+    #[test]
+    fn esc_clears_the_query_and_leaves_search_mode() {
+        let (s, _) = key(searching("za"), KeyCode::Esc);
+        assert!(!s.searching && s.query.is_empty() && !s.should_quit);
+        assert_eq!(codes(&s).len(), 3);
+    }
+
+    #[test]
+    fn esc_clears_a_kept_filter_before_quitting() {
+        let (s, _) = key(searching("za"), KeyCode::Enter);
+        let (s, _) = key(s, KeyCode::Esc);
+        assert!(s.query.is_empty() && !s.should_quit);
+        assert!(key(s, KeyCode::Esc).0.should_quit);
+    }
+
+    #[test]
+    fn enter_while_searching_keeps_filter_and_does_not_connect() {
+        let (s, fx) = key(searching("u"), KeyCode::Down);
+        assert_eq!(fx, Vec::new());
+        let (s, fx) = key(s, KeyCode::Enter);
+        assert!(fx.is_empty() && s.busy.is_none());
+        assert!(!s.searching);
+        assert_eq!((s.query.as_str(), s.selected), ("u", 0));
+        // Outside search mode Enter connects the first match.
+        let (s, fx) = key(s, KeyCode::Enter);
+        assert_eq!(fx, [Effect::Connect(cc("US"))]);
+        assert!(s.busy.is_some());
+    }
+
+    #[test]
+    fn q_and_d_are_characters_while_searching() {
+        let s = searching("qd");
+        assert!(!s.should_quit && s.busy.is_none());
+        assert_eq!(s.query, "qd");
+        // ...and a '/' typed in search mode is a character too.
+        assert_eq!(typed(searching(""), "/").query, "/");
+    }
+
+    #[test]
+    fn selection_follows_the_filtered_list() {
+        let (s, _) = key(loaded(), KeyCode::Down);
+        let (s, _) = key(s, KeyCode::Down);
+        assert_eq!(s.selected, 2);
+        let s = typed(key(s, KeyCode::Char('/')).0, "unit");
+        assert_eq!(codes(&s), ["US"]);
+        assert_eq!(s.selected, 0);
+        let (s, _) = key(s, KeyCode::Down);
+        assert_eq!(s.selected, 0);
+    }
+
+    #[test]
+    fn empty_result_is_safe_and_enter_does_nothing() {
+        let s = searching("zzz");
+        assert!(s.visible().is_empty() && s.selected == 0);
+        let (s, _) = key(s, KeyCode::Down);
+        let (s, _) = key(s, KeyCode::Up);
+        let (s, _) = key(s, KeyCode::Enter);
+        let (s, fx) = key(s, KeyCode::Enter);
+        assert!(fx.is_empty() && s.busy.is_none());
+        let (s, fx) = key(typed(s, "x"), KeyCode::Enter);
+        assert!(fx.is_empty() && s.busy.is_none());
+    }
+
+    #[test]
+    fn selection_stays_in_the_filtered_list_for_any_keys() {
+        const KEYS: [KeyCode; 10] = [
+            KeyCode::Char('/'),
+            KeyCode::Char('z'),
+            KeyCode::Char('u'),
+            KeyCode::Char('x'),
+            KeyCode::Backspace,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Enter,
+            KeyCode::Esc,
+            KeyCode::Char('d'),
+        ];
+        // Deterministic LCG walk; Finished clears `busy` so input keeps flowing.
+        let mut seed = 0x2545_f491_u64;
+        let mut s = loaded();
+        for _ in 0..5_000 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let k = KEYS[(seed >> 33) as usize % KEYS.len()];
+            s = key(s, k).0;
+            s.busy = None;
+            s.should_quit = false;
+            let n = s.visible().len();
+            assert!(
+                s.selected < n.max(1),
+                "selected {} of {n}, query {:?}",
+                s.selected,
+                s.query
+            );
+        }
+    }
+
+    #[test]
+    fn draws_search_with_a_match() {
+        let s = searching("za");
+        insta::assert_snapshot!(render(&s).backend());
+    }
+
+    #[test]
+    fn draws_search_with_no_match() {
+        let s = searching("zzz");
+        insta::assert_snapshot!(render(&s).backend());
+    }
+
+    fn render_sized(s: &State, w: u16, h: u16) -> Terminal<TestBackend> {
+        let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
         t.draw(|f| draw(s, f)).unwrap();
         t
+    }
+
+    fn render(s: &State) -> Terminal<TestBackend> {
+        render_sized(s, 70, 10)
+    }
+
+    fn with_latency(samples: impl IntoIterator<Item = u64>) -> State {
+        samples.into_iter().fold(loaded(), |s, ms| {
+            update(s, Event::Status(status(&["ke"], reachable(ms)))).0
+        })
+    }
+
+    #[test]
+    fn draws_latency_without_samples() {
+        insta::assert_snapshot!(render_sized(&loaded(), 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_with_one_sample() {
+        insta::assert_snapshot!(render_sized(&with_latency([286]), 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_with_variance() {
+        let s = with_latency((0..30).map(|i| 280 + (i * 7) % 23));
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_in_a_narrow_panel() {
+        let s = with_latency((0..30).map(|i| 20 + (i * 13) % 90));
+        insta::assert_snapshot!(render_sized(&s, 40, 12).backend());
     }
 
     #[test]
