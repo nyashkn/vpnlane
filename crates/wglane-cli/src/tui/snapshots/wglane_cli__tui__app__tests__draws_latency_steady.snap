@@ -1,0 +1,16 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: "render_sized(&s, 120, 12).backend()"
+---
+"● up  KE  291 ms ▃█▅▂▇▄▁▆▃█▅▂  exit 203.0.113.7                                                                         "
+"┌ servers ───────────────────────────────┐┌ stats ─────────────────────────────────────────────────────────────────────┐"
+"│> ▸ Africa (1)                          ││tunnel   ● up  KE                                                           │"
+"│  ▸ Europe (1)                          ││exit ip  203.0.113.7                                                        │"
+"│  ▸ North America (1)                   ││tailnet  ok (nas, 291 ms)                                                   │"
+"│                                        ││latency  291 ms  min 282  max 345  (to tailnet peer, last 30)               │"
+"│                                        ││ ▄ █▂ ▆  ▄ █▂ ▆  ▄ █▂ ▆  ▄ █▂                                               │"
+"│                                        ││▂█▆██▄██▂█▆██▄██▂█▆██▄██▂█▆██▄                                              │"
+"│                                        ││                                                                            │"
+"│                                        ││                                                                            │"
+"└────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────┘"
+"? help  enter connect  d disconnect  / search  q quit                                                                   "

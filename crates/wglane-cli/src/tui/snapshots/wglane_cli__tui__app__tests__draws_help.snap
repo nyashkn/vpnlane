@@ -2,11 +2,11 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: "render_sized(&s, 70, 16).backend()"
 ---
+"· checking...                                                         "
 "┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
-"│> ▸ Africa (1)         ││tunnel   · checking...                     │"
-"│  ▸ Europe┌ keys ─────────────────────────────────────────┐         │"
-"│  ▸ North │ enter          connect, or open/close a group │         │"
-"│          │ space          open/close a group             │         │"
+"│> ▸ Africa┌ keys ─────────────────────────────────────────┐         │"
+"│  ▸ Europe│ enter          connect, or open/close a group │         │"
+"│  ▸ North │ space          open/close a group             │         │"
 "│          │ h l            close / open a group           │         │"
 "│          │ d              disconnect                     │         │"
 "│          │ /              search by code or name         │         │"

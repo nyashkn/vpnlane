@@ -2,6 +2,7 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: render(&s).backend()
 ---
+"◐ connecting to ZA...                                                 "
 "┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
 "│  ▾ Africa (1)         ││tunnel   ◐ connecting to ZA...             │"
 "│>     ZA  South Africa ││exit ip  unknown                           │"
@@ -9,6 +10,5 @@ expression: render(&s).backend()
 "│      DE  Germany      ││latency  -                                 │"
 "│  ▾ North America (1)  ││                                           │"
 "│      US  United States││                                           │"
-"│                       ││                                           │"
 "└───────────────────────┘└───────────────────────────────────────────┘"
 "? help  enter connect  d disconnect  / search  q quit                 "

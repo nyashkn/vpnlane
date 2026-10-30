@@ -1,6 +1,6 @@
 # Dashboard (`wglane tui`)
 
-`wglane tui` shows the server list on the left and tunnel status on the right. The status refreshes every 2 s. It needs a terminal of at least 40x8; smaller terminals get a notice until you resize. Build it with the default `tui` feature (`--no-default-features` drops it).
+`wglane tui` shows a one-line header on top, the server list on the left and tunnel status on the right. The status refreshes every 2 s. It needs a terminal of at least 40x8; smaller terminals get a notice until you resize. Build it with the default `tui` feature (`--no-default-features` drops it).
 
 ## Keys
 
@@ -11,6 +11,7 @@ Press `?` in the dashboard to see this list.
 | `enter` | connect to the selected country, or open/close a group |
 | `space` | open/close a group |
 | `h` / `l` | close / open a group (`h` on a country closes its group) |
+| left / right | left closes a group, or jumps from a country to its group header; right opens a closed group, or steps into an open one |
 | `j` `k`, up/down | move |
 | `g` `G`, home/end | first / last row |
 | `/` | search by code or name; `enter` keeps the filter, `esc` clears it |
@@ -21,6 +22,12 @@ Press `?` in the dashboard to see this list.
 | `?` | help; any key closes it |
 
 While you are searching, every key is part of the query, so `q`, `d`, `j` and the rest are typed as letters.
+
+## Header and latency
+
+The top line summarises the tunnel: `● up  US  283 ms ▁▂▃▂▁  exit 203.0.113.7`, `○ down` or `◐ connecting to US...`. On narrow terminals it drops the mini graph first, then the exit ip, then the latency. `NO_COLOR` removes its color too.
+
+In the stats card, the `latency` line is the ping to the tailnet peer through the tunnel (the same value as the `tailnet ok (..)` line), with min and max over the samples shown. The 2-row graph below it is scaled to the min..max of those samples, so a steady link draws a low flat line and the shape of any wobble is visible; it is not an absolute scale. Samples above 1.5x the median are drawn in yellow.
 
 ## Server tree
 

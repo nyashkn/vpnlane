@@ -2,13 +2,13 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: render(&s).backend()
 ---
+"○ down                                                                "
 "┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
 "│  ▾ Africa (1)         ││tunnel   ○ down                            │"
 "│>     ZA  South Africa ││exit ip  203.0.113.7                       │"
 "│  ▾ Europe (1)         ││tailnet  ok (nas, 30 ms)                   │"
 "│      DE  Germany      ││latency  30 ms  min 30  max 30             │"
 "│  ▾ North America (1)  ││                                           │"
-"│      US  United States││                                           │"
-"│                       ││▁                                          │"
+"│      US  United States││▂                                          │"
 "└───────────────────────┘└───────────────────────────────────────────┘"
 "? help  enter connect  d disconnect  / search  q quit                 "

@@ -6,7 +6,7 @@ use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Sparkline,
+    Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Sparkline, SparklineBar,
 };
 use wglane_core::{Country, CountryCode, TailnetHealth, TunnelStatus};
 
@@ -15,9 +15,11 @@ use super::continent::{Continent, continent};
 /// Latency samples kept for the sparkline.
 const HISTORY: usize = 60;
 /// Height of the latency graph in rows.
-const SPARK_ROWS: u16 = 4;
-/// Smallest scale ceiling in ms: a healthy link draws short bars, not full height.
-const SPARK_FLOOR_MS: u64 = 500;
+const SPARK_ROWS: u16 = 2;
+/// Bar levels the graph can draw (8 per row).
+const SPARK_LEVELS: u64 = 8 * SPARK_ROWS as u64;
+/// A sample above this multiple of the window median is drawn as a warning.
+const SPIKE_NUM_DEN: (u64, u64) = (3, 2);
 /// Below this the panels garble, so a size notice is drawn instead.
 const MIN_SIZE: (u16, u16) = (40, 8);
 
@@ -372,6 +374,20 @@ fn on_key(s: &mut State, k: KeyCode, fx: &mut Vec<Effect>) {
                 s.expanded.insert(k);
             }
         }
+        // Right opens a closed header; on an open one it steps into the group.
+        KeyCode::Right => match s.selected_group() {
+            Some(k) if s.expanded.insert(k) => {}
+            Some(_) => s.step(true),
+            None => {}
+        },
+        // Left closes a header; on a country it only jumps to the header.
+        KeyCode::Left if s.query.is_empty() => match s.selected_row() {
+            Some(Row::Group(k, ..)) => {
+                s.expanded.remove(&k);
+            }
+            Some(Row::Country(c)) => s.select_group(continent(c.code)),
+            None => {}
+        },
         // On a country, `h` closes its group and moves to the header.
         KeyCode::Char('h') if s.query.is_empty() => {
             let k = match s.selected_row() {
@@ -421,7 +437,13 @@ pub(crate) fn draw(s: &State, frame: &mut Frame) {
         frame.render_widget(Paragraph::new(text).centered(), box_);
         return;
     }
-    let [main, bottom] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(area);
+    let [top, main, bottom] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .areas(area);
+    frame.render_widget(Paragraph::new(header_line(s, top.width)), top);
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(main);
 
@@ -436,13 +458,26 @@ pub(crate) fn draw(s: &State, frame: &mut Frame) {
         Constraint::Min(0),
     ])
     .areas(inner);
-    frame.render_widget(Paragraph::new(stats_lines(s)), text);
-    // Sparkline scales to the data max when none is set, so one sample (or a
-    // flat series) filled the whole panel. Floor the scale and keep only the
-    // newest samples that fit the width.
-    let shown = &s.latency[s.latency.len().saturating_sub(usize::from(spark.width))..];
-    let ceiling = shown.iter().copied().max().unwrap_or(0).max(SPARK_FLOOR_MS);
-    frame.render_widget(Sparkline::default().data(shown).max(ceiling), spark);
+    let shown = shown_latency(s, spark.width);
+    frame.render_widget(Paragraph::new(stats_lines(s, text.width)), text);
+    // Scale to the visible window (min..max) so steady and wobbling links both
+    // show their shape; a flat series draws a low flat line, not a slab.
+    let lo = shown.iter().copied().min().unwrap_or(0);
+    let span = shown.iter().copied().max().unwrap_or(0) - lo;
+    let limit = median(shown) * SPIKE_NUM_DEN.0 / SPIKE_NUM_DEN.1;
+    let bars: Vec<SparklineBar> = shown
+        .iter()
+        .map(|&v| {
+            let level = 2 + (v - lo) * (SPARK_LEVELS - 2) / span.max(1);
+            let bar = SparklineBar::from(level);
+            if v > limit {
+                bar.style(s.fg(Color::Yellow))
+            } else {
+                bar
+            }
+        })
+        .collect();
+    frame.render_widget(Sparkline::default().data(bars).max(SPARK_LEVELS), spark);
 
     frame.render_widget(Paragraph::new(bottom_line(s)), bottom);
 
@@ -551,9 +586,21 @@ fn bottom_line(s: &State) -> Line<'static> {
     Line::from(vec![msg, Span::styled("  ? help", dim)])
 }
 
-fn stats_lines(s: &State) -> Vec<Line<'static>> {
+/// The newest samples that fit `width` columns.
+fn shown_latency(s: &State, width: u16) -> &[u64] {
+    &s.latency[s.latency.len().saturating_sub(usize::from(width))..]
+}
+
+fn median(samples: &[u64]) -> u64 {
+    let mut v = samples.to_vec();
+    v.sort_unstable();
+    v.get(v.len() / 2).copied().unwrap_or(0)
+}
+
+/// The tunnel state with its symbol; `name` adds the country name when up.
+fn tunnel_span(s: &State, name: bool) -> Span<'static> {
     let bold = Modifier::BOLD;
-    let tunnel = match (s.busy, s.active()) {
+    match (s.busy, s.active()) {
         (Some(Busy::Connecting(cc)), _) => Span::styled(
             format!("◐ connecting to {cc}..."),
             s.fg(Color::Yellow).add_modifier(bold),
@@ -571,7 +618,7 @@ fn stats_lines(s: &State) -> Vec<Line<'static>> {
             let name = s
                 .countries
                 .iter()
-                .find(|c| c.code.as_str() == code)
+                .find(|c| name && c.code.as_str() == code)
                 .map_or_else(String::new, |c| format!("  {}", c.name));
             Span::styled(
                 format!("● up  {code}{name}"),
@@ -579,7 +626,54 @@ fn stats_lines(s: &State) -> Vec<Line<'static>> {
             )
         }
         (None, []) => Span::styled("○ down", Style::new().add_modifier(bold)),
+    }
+}
+
+/// One-line summary above the panels. Drops the sparkline, then the exit ip,
+/// then the latency as the terminal narrows.
+fn header_line(s: &State, width: u16) -> Line<'static> {
+    let up = s.busy.is_none() && !s.active().is_empty();
+    let shown = &s.latency[s.latency.len().saturating_sub(12)..];
+    let (lo, hi) = (
+        shown.iter().copied().min().unwrap_or(0),
+        shown.iter().copied().max().unwrap_or(0),
+    );
+    let limit = median(shown) * SPIKE_NUM_DEN.0 / SPIKE_NUM_DEN.1;
+    let spark: Vec<Span> = shown
+        .iter()
+        .map(|&v| {
+            let i = usize::try_from((v - lo) * 7 / (hi - lo).max(1)).unwrap_or(7);
+            let bar = Span::raw(["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"][i]);
+            if v > limit {
+                bar.style(s.fg(Color::Yellow))
+            } else {
+                bar
+            }
+        })
+        .collect();
+    let ms = shown.last().filter(|_| up).map(|v| format!("  {v} ms"));
+    let exit = s.status.as_ref().and_then(|st| st.exit_ip).filter(|_| up);
+    let build = |with_spark: bool, exit_ip: bool| {
+        let mut spans = vec![tunnel_span(s, false)];
+        spans.extend(ms.clone().map(Span::raw));
+        if with_spark && ms.is_some() {
+            spans.push(Span::raw(" "));
+            spans.extend(spark.clone());
+        }
+        if let (true, Some(ip)) = (exit_ip, exit) {
+            spans.push(Span::raw(format!("  exit {ip}")));
+        }
+        Line::from(spans)
     };
+    [(true, true), (false, true), (false, false)]
+        .into_iter()
+        .map(|(a, b)| build(a, b))
+        .find(|l| l.width() <= usize::from(width))
+        .unwrap_or_else(|| build(false, false))
+}
+
+fn stats_lines(s: &State, width: u16) -> Vec<Line<'static>> {
+    let tunnel = tunnel_span(s, true);
     let exit = s
         .status
         .as_ref()
@@ -599,13 +693,23 @@ fn stats_lines(s: &State) -> Vec<Line<'static>> {
         Line::from(vec![Span::raw("tunnel   "), tunnel]),
         Line::from(format!("exit ip  {exit}")),
         Line::from(vec![Span::raw("tailnet  "), tailnet]),
-        Line::from(latency_label(&s.latency)),
+        Line::from(latency_label(shown_latency(s, width), usize::from(width))),
     ]
 }
 
-fn latency_label(samples: &[u64]) -> String {
+/// `latency  283 ms  min 282  max 353  (to tailnet peer, last N)`; the
+/// parenthetical is dropped first when the panel is too narrow.
+fn latency_label(samples: &[u64], width: usize) -> String {
     match (samples.last(), samples.iter().min(), samples.iter().max()) {
-        (Some(now), Some(lo), Some(hi)) => format!("latency  {now} ms  min {lo}  max {hi}"),
+        (Some(now), Some(lo), Some(hi)) => {
+            let base = format!("latency  {now} ms  min {lo}  max {hi}");
+            let full = format!("{base}  (to tailnet peer, last {})", samples.len());
+            if full.chars().count() <= width {
+                full
+            } else {
+                base
+            }
+        }
         _ => "latency  -".into(),
     }
 }
@@ -1155,6 +1259,103 @@ mod tests {
     fn draws_latency_with_variance() {
         let s = with_latency((0..30).map(|i| 280 + (i * 7) % 23));
         insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    fn collapsed_us() -> State {
+        // Cursor on the closed North America header.
+        keys(up(loaded(), &["us"], 20), &[KeyCode::Char('h')])
+    }
+
+    #[test]
+    fn right_opens_a_closed_header_then_steps_in() {
+        let s = keys(loaded(), &[KeyCode::Right]);
+        assert_eq!(s.expanded, [Continent::Africa].into());
+        assert!(on(&s).is_none());
+        let s = keys(s, &[KeyCode::Right]);
+        assert!(on(&s).is_some());
+        // On a country, Right does nothing.
+        let t = keys(s.clone(), &[KeyCode::Right]);
+        assert_eq!(t.selected, s.selected);
+    }
+
+    #[test]
+    fn left_closes_a_header_or_jumps_from_a_country_to_it() {
+        let s = up(loaded(), &["us"], 20);
+        assert_eq!(on(&s).as_deref(), Some("US"));
+        let s = keys(s, &[KeyCode::Left]);
+        assert!(on(&s).is_none());
+        assert!(
+            s.expanded.contains(&Continent::NorthAmerica),
+            "jump keeps the group open"
+        );
+        let s = keys(s, &[KeyCode::Left]);
+        assert!(s.expanded.is_empty());
+        assert_eq!(collapsed_us().expanded, s.expanded);
+    }
+
+    #[test]
+    fn arrows_draw_the_tree_open_and_closed() {
+        let s = keys(loaded(), &[KeyCode::Right]);
+        insta::assert_snapshot!(render(&s).backend());
+    }
+
+    #[test]
+    fn draws_header_up() {
+        let s = with_latency((0..8).map(|i| 280 + i * 5 % 17));
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_header_down() {
+        insta::assert_snapshot!(render_sized(&up(loaded(), &[], 20), 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_header_connecting() {
+        let s = keys(open(), &[KeyCode::Char('G'), KeyCode::Enter]);
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    #[test]
+    fn header_degrades_on_narrow_widths() {
+        let s = with_latency((0..8).map(|i| 280 + i * 5 % 17));
+        for w in [44, 40, 30, 18] {
+            let line = header_line(&s, w);
+            assert!(line.width() <= usize::from(w), "{w}: {line}");
+        }
+        assert!(header_line(&s, 44).to_string().contains("203.0.113.7"));
+        assert!(!header_line(&s, 30).to_string().contains("exit"));
+        assert!(!header_line(&s, 40).to_string().contains('▁'));
+        insta::assert_snapshot!(render_sized(&s, 40, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_steady() {
+        let s = with_latency((0..30).map(|i| 282 + (i * 5) % 8 * 9));
+        insta::assert_snapshot!(render_sized(&s, 120, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_with_one_spike() {
+        let s = with_latency((0..30).map(|i| if i == 20 { 900 } else { 300 + i % 4 }));
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    #[test]
+    fn spike_is_drawn_in_the_warning_color_unless_no_color() {
+        let mut s = with_latency((0..30).map(|i| if i == 20 { 900 } else { 300 }));
+        let yellow = |s: &State| {
+            render_sized(s, 70, 12)
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .filter(|c| c.fg == Color::Yellow)
+                .count()
+        };
+        assert!(yellow(&s) > 0);
+        s.no_color = true;
+        assert_eq!(yellow(&s), 0);
     }
 
     #[test]
