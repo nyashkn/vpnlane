@@ -8,8 +8,10 @@ terminal for that). Rust CLI and TUI.
 > **Status: pre-alpha.** Unit tested against fakes and smoke-tested by hand on
 > one Mac across several networks (home Wi-Fi and two phone hotspots). Not
 > audited, no long soak: expect rough edges and run `wglane doctor` first.
-> macOS only. No release is published yet, so build from source (once
-> released: `brew install nyashkn/tap/wglane-cli`). **Known gap:** IPv6 is not tunnelled; it
+> macOS only. Prebuilt archives for Apple silicon and Intel are on the
+> [releases page](https://github.com/nyashkn/wglane/releases) (unsigned: see
+> [Install and set up](#install-and-set-up)); Homebrew comes later.
+> **Known gap:** IPv6 is not tunnelled; it
 > is rejected (best effort) while the tunnel is up (see
 > [Security model and known limits](#security-model-and-known-limits)).
 
@@ -60,6 +62,20 @@ tailnet dies. That is the whole trick: host routes via the physical gateway,
 no `DNS =` line, and a watcher that keeps them correct as networks change.
 
 ## Install and set up
+
+**Prebuilt (no Rust needed):** do the prerequisites in step 2 below, then
+download the archive for your Mac from the
+[releases page](https://github.com/nyashkn/wglane/releases), and in the folder
+you extract it to run:
+
+```sh
+xattr -dr com.apple.quarantine .    # the binaries are not signed or notarized
+sudo "$PWD/wglane" install-helper   # reads wglane-helper from the same folder
+./wglane doctor
+```
+
+Then continue at step 4 (token). Check the download against the `.sha256` file
+next to it. Or build from source:
 
 Do these in order.
 

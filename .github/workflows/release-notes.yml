@@ -89,18 +89,23 @@ jobs:
             ${{ steps.load.outputs.text }}
             </text>
 
-      - name: Commit if only CHANGELOG.md changed
+      # release-please does not update the workspace crates' Cargo.lock entries; cargo does.
+      - name: Sync Cargo.lock
+        if: env.HAS_CLAUDE_TOKEN == 'true'
+        run: cargo update --workspace
+
+      - name: Commit if only CHANGELOG.md and Cargo.lock changed
         if: env.HAS_CLAUDE_TOKEN == 'true'
         env:
           BRANCH: ${{ inputs.branch }}
         run: |
           changed=$(git status --porcelain | sed 's/^...//')
           if [ -z "$changed" ]; then echo "no changes"; exit 0; fi
-          if [ "$changed" != "CHANGELOG.md" ]; then
+          if [ -n "$(printf '%s\n' "$changed" | grep -vxE 'CHANGELOG.md|Cargo.lock')" ]; then
             echo "::error::unexpected changed files: $changed"
             exit 1
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -am "docs(changelog): release notes in the house layout"
+          git commit -am "docs(changelog): release notes in the house layout, sync Cargo.lock"
           git push origin "HEAD:$BRANCH"
