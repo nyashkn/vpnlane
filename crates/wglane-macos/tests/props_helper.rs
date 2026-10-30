@@ -381,7 +381,6 @@ proptest! {
 
     // (3, strict) Also nothing truncates to an unspecified-address network.
     #[test]
-    #[ignore = "bead wgl-kxv"]
     fn route_argv_never_unspecified_after_trunc(
         nets in prop::collection::vec(any_net(), 0..8), gw in gateway(),
     ) {

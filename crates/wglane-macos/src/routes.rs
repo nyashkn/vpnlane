@@ -47,14 +47,29 @@ fn check_dest(net: &IpNet, gw: IpAddr) -> Result<()> {
     Ok(())
 }
 
-fn check_dest_family(net: &IpNet) -> Result<()> {
-    let ip = net.addr();
-    if net.prefix_len() == 0
+/// Shortest bypass prefixes accepted; `/0` or `/1` would swallow the VPN.
+pub(crate) const MIN_PREFIX_V4: u8 = 8;
+pub(crate) const MIN_PREFIX_V6: u8 = 16;
+
+/// True for a destination too broad, or not unicast, to route as root. Judged
+/// on the truncated network, because that is what `route` is given: `0.0.0.1/1`
+/// becomes `0.0.0.0/1`.
+pub(crate) fn is_bad_bypass(net: &IpNet) -> bool {
+    let min = if net.addr().is_ipv4() {
+        MIN_PREFIX_V4
+    } else {
+        MIN_PREFIX_V6
+    };
+    let ip = net.trunc().addr();
+    net.prefix_len() < min
         || ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
         || ip == IpAddr::V4(Ipv4Addr::BROADCAST)
-    {
+}
+
+fn check_dest_family(net: &IpNet) -> Result<()> {
+    if is_bad_bypass(net) {
         return Err(invalid(&format!("bad destination {net}")));
     }
     Ok(())
@@ -253,6 +268,12 @@ default            link#14            UCSIg                 en0
         for (bad, g) in [
             ("0.0.0.0/0", gw()),
             ("0.0.0.0/32", gw()),
+            ("0.0.0.1/8", gw()),
+            ("0.0.0.1/1", gw()),
+            ("128.0.0.0/1", gw()),
+            ("10.0.0.0/7", gw()),
+            ("2001:db8::/15", "2001:db8::1".parse().unwrap()),
+            ("::2/16", "2001:db8::1".parse().unwrap()),
             ("127.0.0.1/32", gw()),
             ("224.0.0.1/32", gw()),
             ("255.255.255.255/32", gw()),
