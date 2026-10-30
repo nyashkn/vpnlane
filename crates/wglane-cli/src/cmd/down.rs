@@ -45,7 +45,12 @@ impl Disconnected {
 
 /// `down` against the real adapters. Prints nothing, so the TUI can call it.
 pub(crate) fn disconnect_real(ctx: &Context) -> Result<Disconnected> {
-    let done = disconnect(&HelperClient::new(SystemRunner), ctx.conf_store().dir())?;
+    disconnect_recorded(ctx, &HelperClient::new(SystemRunner))
+}
+
+/// `disconnect` plus clearing the route-count record `status` reads.
+pub(crate) fn disconnect_recorded<T: Tunnel>(ctx: &Context, tunnel: &T) -> Result<Disconnected> {
+    let done = disconnect(tunnel, ctx.conf_store().dir())?;
     ctx.clear_routes_record()?;
     Ok(done)
 }

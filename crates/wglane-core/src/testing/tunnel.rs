@@ -5,10 +5,20 @@ use crate::Result;
 use crate::ports::Tunnel;
 
 /// [`Tunnel`] that tracks which tunnels are "up".
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct FakeTunnel {
     /// Names currently up, in order brought up.
     pub up: RefCell<Vec<String>>,
+    /// Run after each successful `up`, e.g. to move the physical gateway.
+    pub on_up: RefCell<Vec<Box<dyn Fn()>>>,
+}
+
+impl std::fmt::Debug for FakeTunnel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FakeTunnel")
+            .field("up", &self.up)
+            .finish_non_exhaustive()
+    }
 }
 
 fn name(conf: &Path) -> String {
@@ -20,6 +30,7 @@ fn name(conf: &Path) -> String {
 impl Tunnel for FakeTunnel {
     fn up(&self, conf: &Path) -> Result<()> {
         self.up.borrow_mut().push(name(conf));
+        self.on_up.borrow().iter().for_each(|f| f());
         Ok(())
     }
 
