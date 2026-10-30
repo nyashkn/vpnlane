@@ -43,6 +43,13 @@ assets:
     cargo xtask completions
     cargo xtask man
 
+# Build, install both binaries into cargo's bin dir, install the root helper, check.
+# sudo's PATH excludes ~/.cargo/bin, so the full path is used.
+install:
+    cargo install --path crates/wglane-cli --locked
+    sudo "${CARGO_HOME:-$HOME/.cargo}/bin/wglane" install-helper
+    "${CARGO_HOME:-$HOME/.cargo}/bin/wglane" doctor
+
 # Real-Mac smoke test. Needs sudo, a token and a live network, so it is NOT in `ci`.
 # `just mac-test US`. Test `wglane watch` by hand afterwards (switch Wi-Fi).
 mac-test cc="US":

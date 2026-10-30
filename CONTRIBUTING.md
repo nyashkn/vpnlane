@@ -20,10 +20,6 @@ Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): crate graph, port/adapter
 table, file ownership map, and "where does X go". Style rules are in
 [docs/STYLE.md](docs/STYLE.md).
 
-Work items are `// TODO(bead): <id>: <what>` comments in stubs. Find them with
-`grep -rn "TODO(bead)" crates xtask`. Remove the marker in the same change that
-does the work.
-
 ## Snapshots
 
 `insta` snapshots live in `snapshots/` next to the code. After an intended
@@ -51,8 +47,8 @@ git diff -- '*.snap'      # review every changed line
    comments, plus a fake in `src/testing/<port>.rs`.
 2. Implement it in the adapter crate, one file per adapter. Run external
    programs through `CommandRunner`; HTTP through `NordApi`'s agent.
-3. Test with `FakeRunner` / fixtures. Copy the style of `nord/src/token.rs`
-   (reference slice).
+3. Test with `FakeRunner` / fixtures. Copy the style of
+   `crates/wglane-nord/src/token.rs`.
 4. Wire it in the subcommand that needs it.
 
 ## Commits

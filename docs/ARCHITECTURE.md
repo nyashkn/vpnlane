@@ -1,9 +1,9 @@
 # Architecture
 
 Read this before changing code. It says what lives where and which way
-dependencies point; the code says how. (Shape borrowed from rust-analyzer's
-`architecture.md`: a bird's-eye view, then a map of the code, then the
-invariants that are easy to break by accident.)
+dependencies point; the code says how. It is
+shaped as a bird's-eye view, a map of the code, then the invariants that are
+easy to break by accident.
 
 ## Bird's-eye view
 
@@ -20,13 +20,16 @@ layers beyond that.
 ## Crate graph
 
 ```
-            wglane-cli (bin `wglane`, lib for xtask)     xtask
-              │        │         │                         │
-              ▼        ▼         ▼                         ▼
-      wglane-nord  wglane-macos   wglane-cli
-              │        │
-              ▼        ▼
+   xtask ──▶ wglane-cli (bin `wglane`, bin `wglane-helper`, lib for xtask)
+                  │        │
+                  ▼        ▼
+            wglane-nord  wglane-macos
+                  │        │
+                  ▼        ▼
             wglane-core  (no I/O, no async, no network, no process spawning)
+
+   `wglane-helper` is a second binary of the `wglane-cli` package; its logic
+   lives in `wglane-macos` (`helper_main`).
 ```
 
 Dependency rules (the compiler enforces direction; review enforces the rest):
@@ -54,8 +57,12 @@ Dependency rules (the compiler enforces direction; review enforces the rest):
 | `NetworkWatcher` | `wglane_macos::RouteMonitor` | `FakeWatcher` |
 | `TailnetProbe` | `wglane_macos::TailscalePing` | `FakeTailnet` |
 
-Every external program in `wglane-macos` runs through `CommandRunner`
-(`SystemRunner` in production, `wglane_macos::testing::FakeRunner` in tests).
+External programs in `wglane-macos` run through `CommandRunner`
+(`SystemRunner` in production, `wglane_macos::testing::FakeRunner` in tests),
+with these exceptions, which spawn directly: the streaming `route -n monitor`
+in `watcher.rs`, the `ls -lde` ACL check in `privilege.rs`, the `sysctl -n
+kern.boottime` read in `tunnel.rs`, and the helper's own `RootRunner`
+(`helper.rs`).
 
 ### Command layer
 
@@ -74,12 +81,15 @@ CLI cannot read it). The count is 0 when no tunnel is active.
 
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
 by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
-(`crates/wglane-cli/src/bin/wglane-helper.rs`) runs as root and uses `WgGo` +
+(`wglane_macos::helper_main`, started by the thin
+`crates/wglane-cli/src/bin/wglane-helper.rs`) runs as root and uses `WgGo` +
 `RouteTable` with a `RootRunner`.
 
 **Verbs** (fixed; this set is the future daemon socket protocol): `up <cc>`,
-`down`, `active`, `bypass <gw> <cidr>...`. The helper takes no paths from the
-caller and validates every argument with the core parsers. The sudoers rule
+`down`, `active`, `bypass <gw> [<cidr>...]` (0 to 1024 CIDRs). The helper takes
+no paths from the caller and validates every argument with the core parsers.
+Every verb runs under one `flock` on the state directory, so calls never
+interleave. The sudoers rule
 names only the helper and has no argument list.
 
 **What root runs.** Never a shell or script, and never a library outside
@@ -112,14 +122,15 @@ canonical file and every ancestor on every exec; `ifconfig`, `route` and
 Upgrading wireguard-tools or wireguard-go requires re-running `install-helper`.
 
 **Limits.** IPv4 endpoints and the IPv4 tunnel only (IPv6 is not tunnelled, see
-the README); two simultaneous `up` calls share one name file, so run one at a
-time.
+the README).
 
 ### Network change
 
 `wglane watch` listens to `route -n monitor` through `NetworkWatcher`. On each
 change it reads the new physical gateway and calls the helper's `bypass` verb.
-The helper first re-points every tunnel endpoint host route at the new gateway
+The client always makes this call, even when the bypass set is empty (for
+example, no `tailscale` CLI): an empty `bypass <gw>` clears the routes recorded
+earlier and only re-points the endpoint. The helper first re-points every tunnel endpoint host route at the new gateway
 (`Tunnel::refresh_endpoint`), then replaces the Tailscale bypass routes it
 recorded earlier (never routes it did not add). Skipping the endpoint step
 leaves the tunnel's own packets going to the old gateway: IPv4 stalls while
@@ -142,14 +153,14 @@ One concern per file, so changes stay local.
 | nord | `src/api.rs` | HTTP calls |
 | macos | `src/command.rs`, `src/testing.rs` | `CommandRunner`, `FakeRunner` |
 | macos | `src/conf_store.rs` | config files on disk |
-| macos | `src/tunnel.rs` | `WgGo` |
-| macos | `src/routes.rs` | `RouteTable` |
+| macos | `src/tunnel.rs` | `WgGo` (runs as root) |
+| macos | `src/routes.rs` | `RouteTable` (runs as root) |
 | macos | `src/bypass.rs` | Tailscale + static bypass |
 | macos | `src/watcher.rs` | `RouteMonitor` |
 | macos | `src/probe.rs` | `TailscalePing` |
-| macos | `src/helper.rs` | `HelperClient`, `HelperVerb` |
-| macos | `src/privilege.rs` | sudoers + install |
-| cli | `src/bin/wglane-helper.rs` | root-side verb dispatch |
+| macos | `src/helper.rs` | `HelperClient`, `HelperVerb`, root-side `Helper` + `RootRunner` + `helper_main` |
+| macos | `src/privilege.rs` | sudoers, install, trusted-path checks (runs as root) |
+| cli | `src/bin/wglane-helper.rs` | entry shim: calls `helper_main` |
 | cli | `src/cmd/<name>.rs` | one subcommand: args, help, run |
 | cli | `src/cmd/completions.rs` | completions |
 | cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop, state + drawing |
@@ -169,7 +180,7 @@ that `.snap` diff.
 | New port | `wglane-core/src/ports/<port>.rs` + fake in `src/testing/<port>.rs` |
 | Anything that talks to Nord | `wglane-nord` (`api.rs` transport, `wire.rs` parsing) |
 | Anything that runs a macOS program or touches the filesystem | `wglane-macos`, via `CommandRunner` |
-| Something that needs root | the helper's verb set (`helper.rs` + `bin/wglane-helper.rs`), nowhere else |
+| Something that needs root | a helper verb in `helper.rs`, implemented by `tunnel.rs`, `routes.rs` or `privilege.rs`; nowhere else |
 | Subcommand behaviour, flags, help text | `wglane-cli/src/cmd/<name>.rs` |
 | Output formatting (text / `--json`) | the subcommand's own file |
 | Build/release automation | `xtask` |
@@ -182,16 +193,10 @@ that `.snap` diff.
   sudoers rule. Accept new snapshots with `INSTA_UPDATE=always just test` and
   review the `.snap` diff.
 - Nord responses come from `crates/wglane-nord/fixtures/` (synthetic).
-- No network, no root, no real `wireguard-go`/`route` in tests. Only
-  `SystemRunner`'s own tests spawn a process (`/bin/sh`).
+- No network, no root, no real `wireguard-go`/`route` in tests. A few tests do
+  spawn harmless processes: `SystemRunner`'s own (`/bin/sh`), the privilege
+  tests (`/bin/chmod`), and `doctor_exit` (runs the built `wglane` binary).
 - `cargo test` (nextest is not assumed).
-
-## What was borrowed
-
-- levish0/AxumKit: `justfile` with a `default: just --list` entry and the
-  `.cargo/config.toml` `xtask` alias. Not borrowed: its compose/infra recipes.
-- rust-analyzer: the structure of this document.
-- Google Rust style guide: see `docs/STYLE.md`.
 
 ## Decisions taken
 
@@ -199,4 +204,13 @@ that `.snap` diff.
 - `up <cc>` takes the three config fields on stdin and renders the config
   inside the root-owned dir; the helper never reads a user-supplied path.
 - Bypass cleanup is folded into the `down` verb.
-- Token file mode is checked; the owner check is not (would need `unsafe`).
+- Token file mode is checked; the owner check is not yet done. It would not need
+  `unsafe` (`MetadataExt::uid` and `rustix::process::geteuid` are safe), but
+  `wglane-nord` does not depend on `rustix` today.
+
+## Credits
+
+- The `justfile` default entry and the `xtask` alias follow common Rust project
+  layouts; the structure of this document follows rust-analyzer's
+  `architecture.md`; style rules follow the Google Rust style guide
+  (see `docs/STYLE.md`).

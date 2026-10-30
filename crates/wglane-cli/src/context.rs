@@ -12,17 +12,19 @@ use crate::cli::GlobalArgs;
 
 /// Resolved global flags plus constructors for the adapters most commands need.
 #[derive(Debug)]
-#[allow(dead_code, reason = "fields and helpers are read by the cmd beads")]
 pub(crate) struct Context {
     /// `--json` was passed.
     pub(crate) json: bool,
     /// `-v` count.
+    #[allow(
+        dead_code,
+        reason = "logging is set up from the flag in lib.rs, not read from Context"
+    )]
     pub(crate) verbose: u8,
     /// Config directory (token, generated configs).
     pub(crate) config_dir: PathBuf,
 }
 
-#[allow(dead_code, reason = "helpers are called by the cmd beads")]
 impl Context {
     pub(crate) fn from_global(g: &GlobalArgs) -> Result<Self> {
         let config_dir = if let Some(d) = &g.config_dir {
