@@ -237,6 +237,7 @@ mod tests {
             &FakeExitIp(None),
             &FakeTailnet(TailnetHealth::NotInstalled),
             0,
+            true,
         );
         assert_eq!((s.exit_ip, s.protected), (None, None));
         assert!(
@@ -292,7 +293,7 @@ mod tests {
         let [on, off] = [true, false].map(|check| {
             gather(
                 &tunnel,
-                &FakeExitIp("192.0.2.7".parse().unwrap()),
+                &FakeExitIp::at("192.0.2.7".parse().unwrap()),
                 &FakeTailnet(TailnetHealth::NotInstalled),
                 0,
                 check,

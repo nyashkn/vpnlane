@@ -159,6 +159,14 @@ pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
     conf_age: Option<Duration>,
     regen: impl FnOnce() -> Result<PathBuf>,
 ) -> Result<Connected> {
+    // Validate the bypass set first: an oversized one must fail before any
+    // tunnel is touched, regenerated config written or other tunnel taken down.
+    let mut set = BypassSet::new();
+    for p in providers {
+        set.merge(p.collect()?);
+    }
+    check_limit(&set)?;
+
     let regenerated = is_stale(conf_age);
     let conf = if regenerated {
         regen()?
@@ -186,15 +194,7 @@ pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
     if !already_up {
         tunnel.up(&conf)?;
     }
-    let applied = (|| {
-        let mut set = BypassSet::new();
-        for p in providers {
-            set.merge(p.collect()?);
-        }
-        check_limit(&set)?;
-        routes.apply(&set, gateway)
-    })();
-    let routes = match applied {
+    let routes = match routes.apply(&set, gateway) {
         Ok(n) => n,
         Err(e) => {
             // A full tunnel without its bypass routes kills the tailnet.
@@ -393,5 +393,33 @@ mod tests {
         let err = rig.up("ZA", FRESH, None).unwrap_err().to_string();
         assert!(err.contains("tunnel za was removed because bypass routes failed"));
         assert!(rig.tunnel.up.borrow().is_empty());
+    }
+
+    #[test]
+    fn oversized_bypass_set_fails_before_the_tunnel_is_touched() {
+        let rig = Rig::new(&["us"]);
+        let big = FakeBypassProvider(
+            (0..=MAX_BYPASS)
+                .map(|i| format!("10.{}.{}.1/32", i / 256, i % 256).parse().unwrap())
+                .collect(),
+        );
+        let err = connect(
+            &rig.tunnel,
+            &rig.routes,
+            &[&big],
+            cc("ZA"),
+            Path::new(DIR),
+            None,
+            || panic!("no config may be written"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("bypass_extra"), "{err}");
+        assert_eq!(
+            *rig.tunnel.up.borrow(),
+            ["us"],
+            "existing tunnel untouched, none brought up"
+        );
+        assert_eq!(rig.routes.apply_calls.get(), 0);
     }
 }

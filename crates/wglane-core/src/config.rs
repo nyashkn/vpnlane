@@ -77,12 +77,19 @@ impl FileConfig {
     /// Parses and validates `text`. A parse error names the offending key and line.
     pub fn parse(text: &str) -> Result<Self> {
         let cfg: Self = toml::from_str(text).map_err(|e| Error::Config(e.to_string()))?;
-        cfg.validate()?;
+        cfg.validate().map_err(|(key, msg)| {
+            // shortcut: first line starting with the key, not a TOML span; right unless a table repeats the name.
+            let line = text
+                .lines()
+                .position(|l| l.trim_start().starts_with(key))
+                .map_or(String::new(), |i| format!("line {}: ", i + 1));
+            Error::Config(format!("{line}{msg}"))
+        })?;
         Ok(cfg)
     }
 
-    fn validate(&self) -> Result<()> {
-        let bad = |m: String| Err(Error::Config(m));
+    /// On failure: the key to locate in the file, and the message.
+    fn validate(&self) -> Result<(), (&'static str, String)> {
         if let Some(city) = &self.default_city {
             let ok = !city.is_empty()
                 && city.chars().count() <= 64
@@ -90,8 +97,11 @@ impl FileConfig {
                     .chars()
                     .all(|c| c.is_alphanumeric() || " -'.".contains(c));
             if !ok {
-                return bad(format!(
-                    "default_city {city:?}: use 1 to 64 letters, digits, spaces, '-', ''' or '.'"
+                return Err((
+                    "default_city",
+                    format!(
+                        "default_city {city:?}: use 1 to 64 letters, digits, spaces, '-', ''' or '.'"
+                    ),
                 ));
             }
         }
@@ -102,30 +112,38 @@ impl FileConfig {
                 MIN_PREFIX_V6
             };
             if net.prefix_len() < min || net.addr().is_unspecified() {
-                return bad(format!(
-                    "bypass_extra {net}: too broad, the prefix must be /{min} or longer"
+                return Err((
+                    "bypass_extra",
+                    format!("bypass_extra {net}: too broad, the prefix must be /{min} or longer"),
                 ));
             }
         }
         let n = self.bypass_extra.as_ref().map_or(0, Vec::len);
         if n > MAX_BYPASS {
-            return bad(format!(
-                "bypass_extra has {n} entries; the limit is {MAX_BYPASS}"
+            return Err((
+                "bypass_extra",
+                format!("bypass_extra has {n} entries; the limit is {MAX_BYPASS}"),
             ));
         }
         if let Some(t) = &self.tui {
             if let Some(n) = t.graph_samples.filter(|n| !GRAPH_SAMPLES.contains(n)) {
-                return bad(format!(
-                    "tui.graph_samples {n}: use {} to {}",
-                    GRAPH_SAMPLES.start(),
-                    GRAPH_SAMPLES.end()
+                return Err((
+                    "graph_samples",
+                    format!(
+                        "tui.graph_samples {n}: use {} to {}",
+                        GRAPH_SAMPLES.start(),
+                        GRAPH_SAMPLES.end()
+                    ),
                 ));
             }
             if let Some(r) = t.warn_ratio.filter(|r| !WARN_RATIO.contains(r)) {
-                return bad(format!(
-                    "tui.warn_ratio {r}: use {} to {}",
-                    WARN_RATIO.start(),
-                    WARN_RATIO.end()
+                return Err((
+                    "warn_ratio",
+                    format!(
+                        "tui.warn_ratio {r}: use {} to {}",
+                        WARN_RATIO.start(),
+                        WARN_RATIO.end()
+                    ),
                 ));
             }
         }
@@ -394,6 +412,13 @@ mod tests {
         ] {
             assert!(FileConfig::parse(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn value_errors_name_the_line() {
+        let e = err("exit_ip_check = true\n\n[tui]\nstart_expanded = true\ngraph_samples = 5\n");
+        assert!(e.starts_with("line 5: tui.graph_samples 5"), "{e}");
+        assert!(err("bypass_extra = [\"10.0.0.0/4\"]").starts_with("line 1: "));
     }
 
     #[test]

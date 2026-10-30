@@ -11,8 +11,7 @@ wglane config show     # effective values and the source of each (--json too)
 ```
 
 A missing file means the built-in defaults. An unknown key, or a wrong type or
-value, is an error that names the key and, for unknown keys and type errors,
-the line. The Nord token is **not** a config key: it stays in the mode-600
+value, is an error that names the key and the line. The Nord token is **not** a config key: it stays in the mode-600
 `token` file or `WGLANE_TOKEN`.
 
 ## Keys
@@ -25,15 +24,15 @@ All keys are optional.
 | `default_city` | string, 1 to 64 letters, digits, space, `-`, `'`, `.` | unset | reserved: validated, not used yet |
 | `pick` | `"least-load"` or `"fastest"` | `"least-load"` | reserved: validated, not used yet (servers are always picked by least load) |
 | `bypass_extra` | list of CIDRs | `[]` | `up` and `watch`: routes that skip the tunnel, added to the automatic Tailscale ones |
-| `exit_ip_check` | bool | `true` | `status` and the TUI; `false` skips the exit IP lookup |
+| `exit_ip_check` | bool | `true` | `status` and the TUI; `false` skips the exit IP lookup (so `protected` and the exit-country warning read as unknown) |
 | `tui.start_expanded` | bool | `false` | TUI opens every continent group |
 | `tui.graph_samples` | integer, 10 to 600 | `60` | TUI latency samples kept |
 | `tui.warn_ratio` | float, 1.0 to 10.0 | `1.5` | TUI draws a sample above this multiple of the window median as a spike |
 
 `bypass_extra` entries must be IPv4 `/8` or longer (IPv6 `/16` or longer), the
 same floor the root helper enforces. The automatic and extra routes together
-may not exceed 1024; `up` and `watch` fail with a message naming
-`bypass_extra` if they do.
+may not exceed 1024; `up` checks this before touching the tunnel and `watch`
+before changing routes, and both fail with a message naming `bypass_extra`.
 
 ## Precedence
 
