@@ -93,10 +93,18 @@ fn show(e: &Effective, json: bool) -> Result<String> {
         opt(e.default_country.value.map(|c| c.to_string())),
         &e.default_country.source,
     );
+    let city_source = match (&e.default_city.value, e.default_country.value) {
+        (Some(_), cc) if e.default_city_for(cc).is_none() => format!(
+            "{} (inactive: belongs to default_country {})",
+            e.default_city.source,
+            opt(e.file_default_country.map(|c| c.to_string()))
+        ),
+        _ => e.default_city.source.to_string(),
+    };
     row(
         "default_city",
         opt(e.default_city.value.clone()),
-        &e.default_city.source,
+        &city_source,
     );
     row("pick", e.pick.value.to_string(), &e.pick.source);
     let extra = &e.bypass_extra.value;
@@ -182,6 +190,25 @@ mod tests {
                     bypass_extra = [\"203.0.113.0/24\"]\n[tui]\nwarn_ratio = 2.0\n\
                     [presets.work]\ncountry = \"DE\"\ncity = \"Berlin\"\n[presets.home]\npick = \"fastest\"\n";
         insta::assert_snapshot!("file_and_env", show(&eff(file, env), false).unwrap());
+    }
+
+    #[test]
+    fn default_city_is_inactive_for_another_country() {
+        let file = "default_country = \"US\"\ndefault_city = \"Chicago\"\n";
+        let env = Overrides {
+            country: Some("de".parse().unwrap()),
+            exit_ip_check: None,
+        };
+        let line = |e| {
+            show(&e, false)
+                .unwrap()
+                .lines()
+                .find(|l| l.starts_with("default_city"))
+                .unwrap()
+                .to_owned()
+        };
+        assert!(line(eff(file, env)).contains("inactive: belongs to default_country US"));
+        assert!(!line(eff(file, Overrides::default())).contains("inactive"));
     }
 
     #[test]

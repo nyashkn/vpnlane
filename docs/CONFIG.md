@@ -21,9 +21,9 @@ All keys are optional.
 | Key | Type | Default | Used by |
 |---|---|---|---|
 | `default_country` | two-letter code, e.g. `"US"` | unset | `wglane up` with no argument |
-| `default_city` | string, 1 to 64 letters, digits, space, `-`, `'`, `.` | unset | `wglane up` with no `--city`, when the country also came from the default (no argument): the city must exist in that country, else `up` stops and lists the valid ones |
+| `default_city` | string, 1 to 64 letters, digits, space, `-`, `'`, `.` | unset | `wglane up` with no `--city`, only when the country is `default_country` as written in the file (not `WGLANE_COUNTRY`, a COUNTRY argument, or a preset with another country; those ignore it silently, and `config show` marks it inactive): the city must exist in that country, else `up` stops and lists the valid ones |
 | `pick` | `"least-load"` or `"fastest"` | `"least-load"` | `wglane up`: how the server is chosen. `fastest` pings the 10 least-loaded candidates and takes the lowest round trip |
-| `bypass_extra` | list of CIDRs | `[]` | `up` and `watch`: routes that skip the tunnel, added to the automatic Tailscale ones |
+| `bypass_extra` | list of CIDRs | `[]` | `up` and `watch`: routes that skip the tunnel, added to the automatic Tailscale ones. `watch` and TUI connects re-apply the active preset's routes too |
 | `exit_ip_check` | bool | `true` | `status` and the TUI; `false` skips the exit IP lookup (so `protected` and the exit-country warning read as unknown) |
 | `tui.start_expanded` | bool | `false` | TUI opens every continent group |
 | `tui.graph_samples` | integer, 10 to 600 | `60` | TUI latency samples kept |
@@ -56,7 +56,8 @@ optional; a key a preset leaves out comes from the top-level settings.
   and line, like everywhere else in the file.
 - A preset that names a `country` owns the city: no `city` means the whole
   country, and `default_city` is not inherited. A preset with no `country`
-  inherits `default_country` and `default_city`.
+  inherits `default_country`, and `default_city` only while that country is
+  the file's `default_country`.
 - The shape of a city is checked when the file is read; that it exists in the
   country is checked at apply time (it needs Nord's list). A bad one stops
   `apply` before the tunnel is touched and lists the valid cities.
@@ -70,8 +71,10 @@ optional; a key a preset leaves out comes from the top-level settings.
   `status --json` has a `preset` key while one is active.
 - `wglane preset show NAME` prints the effective request and a preview of what
   applying it would change against the current connection, e.g.
-  `country  US -> DE`, `city  - -> Berlin`, `bypass_extra  +2 routes`, or
-  `already active`.
+  `country  US -> DE`, `city  - -> Berlin`, `bypass_extra  +2 routes`, `bypass_extra  -2 routes` (routes applying
+  would remove), or `already active`. The preview compares what the preset
+  resolves to (country from `default_country` when it has none, plus the
+  top-level `bypass_extra`), not the table as written.
 
 ## Precedence
 
@@ -94,8 +97,9 @@ appears only for values a command takes on its own command line.
 `WGLANE_COUNTRY`, else `default_country`, else it stops and says so. Within the
 country the server is the least loaded one. `--city` picks the least loaded
 server in that city; with no `--city` and no country argument, `default_city`
-does the same. A country given on the command line ignores `default_city`
-(so `wglane up DE` never trips over a US city). A cached config is reused only
+does the same. `default_city` belongs to the file's `default_country`: any
+other country, whether from the command line, `WGLANE_COUNTRY` or a preset,
+ignores it (so `wglane up DE` never trips over a US city). A cached config is reused only
 for the same request: switching between a city and the whole country, or to
 another city, regenerates it. The TUI does not apply `default_city` or `pick`.
 

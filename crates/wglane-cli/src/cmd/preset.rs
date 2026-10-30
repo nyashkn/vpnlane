@@ -236,7 +236,7 @@ fn show(
     };
     let preset = &settings.presets.value[index].preset;
     let req = preset.resolve(settings);
-    let changes: Vec<String> = describe_change(current, preset)
+    let changes: Vec<String> = describe_change(current, preset, settings)
         .iter()
         .map(ToString::to_string)
         .collect();

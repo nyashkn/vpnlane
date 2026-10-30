@@ -25,7 +25,7 @@ const WARN_RATIO: std::ops::RangeInclusive<f64> = 1.0..=10.0;
 const MIN_PREFIX_V4: u8 = 8;
 const MIN_PREFIX_V6: u8 = 16;
 
-/// How to choose a server within a country. Reserved: parsed, not used yet.
+/// How to choose a server within a country.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Pick {
@@ -51,9 +51,9 @@ impl fmt::Display for Pick {
 pub struct FileConfig {
     /// Country for `wglane up` with no argument.
     pub default_country: Option<CountryCode>,
-    /// Reserved: city preference.
+    /// City preference; belongs to `default_country` and applies only to it.
     pub default_city: Option<String>,
-    /// Reserved: server selection rule.
+    /// Server selection rule.
     pub pick: Option<Pick>,
     /// Extra CIDRs that skip the tunnel.
     pub bypass_extra: Option<Vec<IpNet>>,
@@ -169,6 +169,7 @@ impl FileConfig {
                 self.default_country.map(Some),
                 None,
             ),
+            file_default_country: self.default_country,
             default_city: layer(None, None, self.default_city.clone().map(Some), None),
             pick: layer(None, None, self.pick, Pick::default()),
             bypass_extra: layer(None, None, self.bypass_extra.clone(), Vec::new()),
@@ -339,9 +340,13 @@ impl Overrides {
 pub struct Effective {
     /// Country for `up` with no argument; `None` when unset.
     pub default_country: Setting<Option<CountryCode>>,
-    /// Reserved.
+    /// `default_country` as the file wrote it, before flag and environment.
+    #[serde(skip)]
+    pub file_default_country: Option<CountryCode>,
+    /// City for `default_country` as written in the file; inactive when the
+    /// country comes from elsewhere (see [`Effective::default_city_for`]).
     pub default_city: Setting<Option<String>>,
-    /// Reserved.
+    /// Server selection rule.
     pub pick: Setting<Pick>,
     /// Extra bypass CIDRs (not the auto ones).
     pub bypass_extra: Setting<Vec<IpNet>>,
@@ -354,6 +359,15 @@ pub struct Effective {
 }
 
 impl Effective {
+    /// `default_city` if it applies to `country`: it belongs to the file's
+    /// `default_country`, so any other country (env, flag, preset) ignores it.
+    pub fn default_city_for(&self, country: Option<CountryCode>) -> Option<String> {
+        self.default_city
+            .value
+            .clone()
+            .filter(|_| country.is_some() && country == self.file_default_country)
+    }
+
     /// The preset called `name`.
     pub fn preset(&self, name: &str) -> Option<&Preset> {
         self.presets
@@ -386,10 +400,10 @@ pub const SAMPLE_CONFIG: &str = r#"# wglane settings. Every key is optional; unc
 # Env: WGLANE_COUNTRY.
 # default_country = "US"
 
-# Reserved (parsed, not used yet): preferred city.
+# Preferred city for default_country; ignored when another country is used.
 # default_city = "Chicago"
 
-# Reserved (parsed, not used yet): "least-load" or "fastest".
+# Server choice: "least-load" or "fastest" (`up --fastest` for one run).
 # pick = "least-load"
 
 # Extra CIDRs that skip the tunnel, added to the automatic Tailscale ones.

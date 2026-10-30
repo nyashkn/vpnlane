@@ -23,7 +23,7 @@ Examples:
 pub(crate) struct Args {}
 
 pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
-    let static_routes = ctx.static_bypass()?;
+    let static_routes = ActiveBypass(ctx);
     watch_loop(
         &mut RouteMonitor::new(),
         &HelperClient::new(SystemRunner),
@@ -31,6 +31,23 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
         &[&TailscaleBypass::new(SystemRunner), &static_routes],
         |n| ctx.record_routes(n),
     )
+}
+
+/// `bypass_extra` of the active preset, read afresh on every change so a
+/// preset applied after `watch` started is honored.
+struct ActiveBypass<'a>(&'a Context);
+
+impl BypassProvider for ActiveBypass<'_> {
+    fn collect(&self) -> wglane_core::Result<BypassSet> {
+        let (set, warning) = self
+            .0
+            .effective_bypass()
+            .map_err(|e| wglane_core::Error::Config(e.to_string()))?;
+        if let Some(w) = warning {
+            eprintln!("warning: {w}");
+        }
+        Ok(set.0)
+    }
 }
 
 /// Re-applies the bypass routes after each network change while a tunnel is
@@ -122,6 +139,33 @@ mod tests {
         assert_eq!(routes.apply_calls.get(), 2, "one apply per change");
         assert_eq!(routes.installed.borrow().len(), 1);
         assert_eq!(routes.installed.borrow()[0].1.to_string(), "192.168.1.1");
+    }
+
+    #[test]
+    fn preset_routes_survive_a_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.toml"),
+            "bypass_extra = [\"203.0.113.0/24\"]\n[presets.work]\nbypass_extra = [\"198.51.100.0/24\"]\n",
+        )
+        .unwrap();
+        let ctx = Context {
+            json: false,
+            verbose: 0,
+            config_dir: dir.path().to_owned(),
+        };
+        ctx.record_preset(Some("work")).unwrap();
+        let tunnel = FakeTunnel::default();
+        tunnel.up(Path::new("us.conf")).unwrap();
+        let routes = FakeRoutes::new("192.168.1.1".parse().unwrap());
+
+        let n = reapply(&tunnel, &routes, &[&ActiveBypass(&ctx)]).unwrap();
+        assert_eq!(n, Some(2), "top-level and preset route both re-applied");
+
+        // A preset that vanished from config falls back to the top-level set.
+        ctx.record_preset(Some("gone")).unwrap();
+        let n = reapply(&tunnel, &routes, &[&ActiveBypass(&ctx)]).unwrap();
+        assert_eq!(n, Some(1));
     }
 
     #[test]

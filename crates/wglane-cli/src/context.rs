@@ -72,10 +72,35 @@ impl Context {
         Ok(self.file_config()?.resolve(flags, env))
     }
 
-    /// `bypass_extra` from the config file, as a bypass provider.
+    /// The bypass set to re-apply to a live tunnel: the active preset's
+    /// effective set (top-level `bypass_extra` plus the preset's), because the
+    /// helper replaces the whole set. If the recorded preset no longer exists
+    /// in config, the top-level set and a warning.
+    pub(crate) fn effective_bypass(&self) -> Result<(StaticBypass, Option<String>)> {
+        let settings = self.settings(Overrides::default())?;
+        let mut warning = None;
+        let active = self.recorded_preset();
+        let preset = active.as_deref().and_then(|n| settings.preset(n));
+        if let (Some(n), None) = (&active, preset) {
+            warning = Some(format!(
+                "active preset {n:?} is not in config.toml any more: keeping only the top-level bypass_extra"
+            ));
+        }
+        let extra = preset.map_or_else(
+            || settings.bypass_extra.value.clone(),
+            |p| p.resolve(&settings).bypass_extra,
+        );
+        Ok((StaticBypass(extra.into_iter().collect()), warning))
+    }
+
+    /// [`Self::effective_bypass`] for callers with no place to print the warning.
+    #[cfg(feature = "tui")]
     pub(crate) fn static_bypass(&self) -> Result<StaticBypass> {
-        let extra = self.settings(Overrides::default())?.bypass_extra.value;
-        Ok(StaticBypass(extra.into_iter().collect()))
+        let (set, warning) = self.effective_bypass()?;
+        if let Some(w) = warning {
+            tracing::warn!("{w}");
+        }
+        Ok(set)
     }
 
     fn routes_record(&self) -> PathBuf {
