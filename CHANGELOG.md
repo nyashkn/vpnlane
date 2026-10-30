@@ -4,17 +4,27 @@ All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog
 
 ## [0.2.0](https://github.com/nyashkn/wglane/compare/v0.1.1...v0.2.0) (2026-10-30)
 
+This release improves the `wglane tui` dashboard and fixes IPv6 block routes on macOS.
 
 ### What's New
 
-* **tui:** continent tree, state banner, help overlay, NO_COLOR ([#20](https://github.com/nyashkn/wglane/issues/20)) ([1759cc5](https://github.com/nyashkn/wglane/commit/1759cc5d08e2ccf8d9d9e50e5b3e1c8e4534b60c))
-* **tui:** country search + fix latency graph ([#18](https://github.com/nyashkn/wglane/issues/18)) ([8cdafbe](https://github.com/nyashkn/wglane/commit/8cdafbe3e489fd80a99c1598bf753ae1b6620e71))
+#### Search countries in the dashboard ([#18](https://github.com/nyashkn/wglane/issues/18))
 
+The `wglane tui` dashboard now has country search, so you can find a country without scrolling the list.
+
+#### A clearer dashboard ([#20](https://github.com/nyashkn/wglane/issues/20))
+
+The server list is now a continent tree. A state banner shows the current state, and a help overlay lists the keys. The dashboard also respects `NO_COLOR`.
 
 ### Fixes
 
-* **macos:** verify IPv6 block routes with netstat, recover stranded ones ([#16](https://github.com/nyashkn/wglane/issues/16)) ([156e7bc](https://github.com/nyashkn/wglane/commit/156e7bc8c9065210dc2c4c20ffdbe9da599b64a2))
-* **tui:** auto-scale latency graph to the visible window ([#21](https://github.com/nyashkn/wglane/issues/21)) ([adbb5ce](https://github.com/nyashkn/wglane/commit/adbb5ce95dee35151df35afdbc92f3a06e567d4d))
+* The latency graph in `wglane tui` is fixed ([#18](https://github.com/nyashkn/wglane/issues/18)).
+* The latency graph now scales to the window you can see ([#21](https://github.com/nyashkn/wglane/issues/21)).
+* On macOS, IPv6 block routes are now checked with `netstat`, and routes left stranded are recovered ([#16](https://github.com/nyashkn/wglane/issues/16)).
+
+### Smaller changes
+
+* The docs now include CLI and TUI demo recordings ([#19](https://github.com/nyashkn/wglane/issues/19)).
 
 ## [0.1.1](https://github.com/nyashkn/wglane/compare/v0.1.0...v0.1.1) (2026-10-30)
 
