@@ -162,6 +162,17 @@ fn check_udp<U: UdpProbe>(udp: &U, endpoint: Option<std::net::SocketAddr>) -> Ch
     }
 }
 
+/// The UDP 51820 check for the TUI: `None` with no generated config to take
+/// an endpoint from, `Some(true)` when the datagram could not leave.
+#[cfg(feature = "tui")]
+pub(crate) fn udp_blocked(ctx: &Context) -> Option<bool> {
+    let endpoint = ctx.conf_store().any_endpoint()?;
+    Some(matches!(
+        check_udp(&UdpSend, Some(endpoint)),
+        Check::Fail { .. }
+    ))
+}
+
 /// Holds the token and generated configs, so group/world access is a leak.
 /// The exit IP lookup (`exit_ip_check`) is on. Off is allowed, so only a warning.
 fn check_leak(ctx: &Context) -> Check {
