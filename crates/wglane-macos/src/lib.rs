@@ -17,6 +17,7 @@ mod routes;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod tunnel;
+mod udp_probe;
 mod watcher;
 
 pub use bypass::{StaticBypass, TailscaleBypass};
@@ -29,4 +30,5 @@ pub use privilege::{
 pub use probe::TailscalePing;
 pub use routes::RouteTable;
 pub use tunnel::WgGo;
+pub use udp_probe::UdpSend;
 pub use watcher::RouteMonitor;

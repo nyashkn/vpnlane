@@ -276,7 +276,7 @@ mod tests {
 
     #[test]
     fn exit_ip_over_http() {
-        let (base, _rx) = serve(vec![(
+        let (base, rx) = serve(vec![(
             "/helpers/ips/insights",
             200,
             include_str!("../fixtures/insights.json"),
@@ -284,7 +284,7 @@ mod tests {
         let i = NordApi::with_base(base).exit().unwrap();
         assert_eq!(i.ip.to_string(), "198.51.100.7");
         assert_eq!(i.protected, Some(true));
-        let req = _rx.recv().unwrap().to_ascii_lowercase();
+        let req = rx.recv().unwrap().to_ascii_lowercase();
         assert!(!req.contains("authorization"), "{req}");
     }
 }

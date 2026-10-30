@@ -28,6 +28,29 @@ impl ConfStore {
         &self.dir
     }
 
+    /// Endpoint from any generated config, for probing the network before a
+    /// tunnel is up. `None` when no config has an `Endpoint = ` line.
+    pub fn any_endpoint(&self) -> Option<std::net::SocketAddr> {
+        let mut paths: Vec<_> = fs::read_dir(&self.dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "conf"))
+            .collect();
+        paths.sort();
+        paths.iter().find_map(|p| {
+            fs::read_to_string(p).ok()?.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix("Endpoint")?
+                    .trim_start()
+                    .strip_prefix('=')?
+                    .trim()
+                    .parse()
+                    .ok()
+            })
+        })
+    }
+
     /// Age of the config for `cc`; `None` if missing. Feed to `wglane_core::is_stale`.
     pub fn age(&self, cc: CountryCode) -> Result<Option<Duration>> {
         let path = self.path(cc);
@@ -96,6 +119,20 @@ mod tests {
         assert_eq!(mode(&path), 0o600);
         store.write(us(), "two").expect("rewrite");
         assert_eq!(fs::read_to_string(&path).expect("read"), "two");
+    }
+
+    #[test]
+    fn any_endpoint_reads_the_first_conf_that_has_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = ConfStore::new(tmp.path());
+        assert_eq!(store.any_endpoint(), None);
+        store.write(us(), "[Peer]\nPublicKey = x\n").expect("write");
+        assert_eq!(store.any_endpoint(), None);
+        let za = "ZA".parse().expect("code");
+        store
+            .write(za, "[Peer]\nEndpoint = 203.0.113.9:51820\n")
+            .expect("write");
+        assert_eq!(store.any_endpoint(), "203.0.113.9:51820".parse().ok());
     }
 
     #[test]

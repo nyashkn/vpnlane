@@ -16,5 +16,10 @@ expression: "render(&rows, true).unwrap()"
     "check": "config dir",
     "fix": "chmod 700 /home/u/.config/wglane",
     "status": "fail"
+  },
+  {
+    "check": "udp 51820",
+    "note": "packet left this machine; delivery cannot be tested without a tunnel. If `wglane up` never handshakes, this network may block UDP 51820",
+    "status": "unknown"
   }
 ]

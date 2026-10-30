@@ -56,6 +56,7 @@ Dependency rules (the compiler enforces direction; review enforces the rest):
 | `BypassProvider` | `wglane_macos::{TailscaleBypass, StaticBypass}` | `FakeBypassProvider` |
 | `NetworkWatcher` | `wglane_macos::RouteMonitor` | `FakeWatcher` |
 | `TailnetProbe` | `wglane_macos::TailscalePing` | `FakeTailnet` |
+| `UdpProbe` | `wglane_macos::UdpSend` | `FakeUdp` |
 
 External programs in `wglane-macos` run through `CommandRunner`
 (`SystemRunner` in production, `wglane_macos::testing::FakeRunner` in tests),
@@ -168,6 +169,7 @@ One concern per file, so changes stay local.
 | macos | `src/bypass.rs` | Tailscale + static bypass |
 | macos | `src/watcher.rs` | `RouteMonitor` |
 | macos | `src/probe.rs` | `TailscalePing` |
+| macos | `src/udp_probe.rs` | `UdpSend` |
 | macos | `src/helper.rs` | `HelperClient`, `HelperVerb`, root-side `Helper` + `RootRunner` + `helper_main` |
 | macos | `src/privilege.rs` | sudoers, install, trusted-path checks (runs as root) |
 | cli | `src/bin/wglane-helper.rs` | entry shim: calls `helper_main` |

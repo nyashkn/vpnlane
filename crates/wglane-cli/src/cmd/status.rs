@@ -204,16 +204,16 @@ mod tests {
     #[test]
     fn mismatches_warn_and_unknown_does_not() {
         let mut s = status();
-        assert!(warnings(&s).is_empty());
+        assert_eq!(warnings(&s).len(), 0);
         s.protected = Some(false);
         s.exit_country = Some("DE".parse().unwrap());
         insta::assert_snapshot!(render(&s, true, false).unwrap());
         s.protected = None;
         s.exit_country = None;
-        assert!(warnings(&s).is_empty());
+        assert_eq!(warnings(&s).len(), 0);
         s.active.clear();
         s.protected = Some(false);
-        assert!(warnings(&s).is_empty(), "no tunnel, nothing to leak from");
+        assert_eq!(warnings(&s).len(), 0, "no tunnel, nothing to leak from");
     }
 
     #[test]
