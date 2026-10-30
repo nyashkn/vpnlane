@@ -1,3 +1,4 @@
+use std::io;
 use std::net::{IpAddr, Ipv4Addr, ToSocketAddrs};
 
 use ipnet::{IpNet, Ipv4Net};
@@ -5,7 +6,7 @@ use serde_json::Value;
 use wglane_core::ports::BypassProvider;
 use wglane_core::{BypassSet, Result};
 
-use crate::CommandRunner;
+use crate::{CommandOutput, CommandRunner};
 
 /// Tailscale/Headscale underlay: the control server and every DERP relay.
 ///
@@ -14,19 +15,39 @@ use crate::CommandRunner;
 #[derive(Debug)]
 pub struct TailscaleBypass<R> {
     runner: R,
+    resolve: Resolver,
+}
+
+/// Host and port to addresses; a fn pointer so tests need no DNS.
+type Resolver = fn(&str, u16) -> io::Result<Vec<IpAddr>>;
+
+fn system_resolver(host: &str, port: u16) -> io::Result<Vec<IpAddr>> {
+    Ok((host, port).to_socket_addrs()?.map(|a| a.ip()).collect())
 }
 
 impl<R: CommandRunner> TailscaleBypass<R> {
     /// Uses `runner` to call the `tailscale` CLI.
     pub fn new(runner: R) -> Self {
-        Self { runner }
+        Self::with_resolver(runner, system_resolver)
     }
 
-    /// Stdout of `tailscale debug <what>` as JSON; `None` on any failure.
+    /// Like [`new`](Self::new) but resolves the control host with `resolve` (tests).
+    pub fn with_resolver(runner: R, resolve: Resolver) -> Self {
+        Self { runner, resolve }
+    }
+
+    /// Stdout of `tailscale debug <what>` as JSON; `None` (with a warning) on any failure.
     fn debug_json(&self, what: &str) -> Option<Value> {
-        let out = self.runner.run("tailscale", &["debug", what]).ok()?;
-        out.success()
-            .then(|| serde_json::from_str(&out.stdout).ok())?
+        let json = self
+            .runner
+            .run("tailscale", &["debug", what])
+            .ok()
+            .filter(CommandOutput::success)
+            .and_then(|out| serde_json::from_str(&out.stdout).ok());
+        if json.is_none() {
+            tracing::warn!("bypass list partial: `tailscale debug {what}` failed");
+        }
+        json
     }
 }
 
@@ -37,11 +58,19 @@ impl<R: CommandRunner> BypassProvider for TailscaleBypass<R> {
         let mut set = BypassSet::new();
         if let Some(prefs) = self.debug_json("prefs") {
             let control = prefs["ControlURL"].as_str().and_then(url_host);
-            let resolved = control.and_then(|h| (h, 443).to_socket_addrs().ok());
-            for addr in resolved.into_iter().flatten() {
-                if let IpAddr::V4(ip) = addr.ip() {
-                    set.insert(host_route(ip));
+            let resolved = control.map(|host| (host, (self.resolve)(host, 443)));
+            match resolved {
+                Some((_, Ok(ips))) => {
+                    for ip in ips {
+                        if let IpAddr::V4(ip) = ip {
+                            set.insert(host_route(ip));
+                        }
+                    }
                 }
+                Some((host, Err(e))) => {
+                    tracing::warn!("bypass list partial: resolving {host}: {e}");
+                }
+                None => tracing::warn!("bypass list partial: no ControlURL host in prefs"),
             }
         }
         if let Some(map) = self.debug_json("derp-map") {
@@ -82,7 +111,6 @@ impl BypassProvider for StaticBypass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CommandOutput;
     use crate::testing::FakeRunner;
 
     // Synthetic; shape follows `tailscale debug prefs` / `debug derp-map`.
@@ -113,6 +141,40 @@ mod tests {
                 ["tailscale", "debug", "prefs"],
                 ["tailscale", "debug", "derp-map"]
             ]
+        );
+    }
+
+    // Real control URLs are hostnames: the resolver must be asked for them.
+    #[test]
+    fn hostname_control_url_goes_through_the_resolver() {
+        let fake: Resolver = |host, port| {
+            assert_eq!((host, port), ("ctl.example.invalid", 443));
+            Ok(vec![
+                "203.0.113.7".parse().expect("ip"),
+                "2001:db8::7".parse().expect("ip"),
+            ])
+        };
+        let fake_runner = FakeRunner::new();
+        fake_runner
+            .push_stdout(r#"{"ControlURL":"https://ctl.example.invalid"}"#)
+            .push_stdout(r#"{"Regions":null}"#);
+        let set = TailscaleBypass::with_resolver(fake_runner, fake)
+            .collect()
+            .expect("collect");
+        assert_eq!(nets(&set), ["203.0.113.7/32"]);
+    }
+
+    #[test]
+    fn resolver_failure_keeps_derp_routes() {
+        let fake_runner = FakeRunner::new();
+        fake_runner
+            .push_stdout(r#"{"ControlURL":"https://ctl.example.invalid"}"#)
+            .push_stdout(DERP_MAP);
+        let bypass =
+            TailscaleBypass::with_resolver(fake_runner, |_, _| Err(io::Error::other("nxdomain")));
+        assert_eq!(
+            nets(&bypass.collect().expect("collect")),
+            ["198.51.100.1/32", "198.51.100.2/32"]
         );
     }
 
