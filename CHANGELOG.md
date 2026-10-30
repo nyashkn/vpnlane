@@ -2,6 +2,42 @@
 
 All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.3.0](https://github.com/nyashkn/wglane/compare/v0.2.0...v0.3.0) (2026-10-30)
+
+This release adds saved settings and presets, city-level server choice, a leak check in `wglane status`, and a faster way to pick a server.
+
+### What's New
+
+#### Saved settings in `config.toml` ([#24](https://github.com/nyashkn/wglane/issues/24))
+
+Settings can now be saved in `config.toml` instead of being typed each time. In [#31](https://github.com/nyashkn/wglane/issues/31) the config moved to a v2 format with one location value, and wglane now keeps a state file.
+
+#### Presets ([#27](https://github.com/nyashkn/wglane/issues/27))
+
+A preset is a named bundle of settings. You can preview a preset before using it, and wglane tracks which preset is active. Presets can also be applied as overlays on your config ([#31](https://github.com/nyashkn/wglane/issues/31)).
+
+#### Pick a city ([#26](https://github.com/nyashkn/wglane/issues/26))
+
+`wglane servers`, `wglane ls`, `wglane up` and the TUI now work at the city level, not only by country.
+
+#### Faster server choice ([#28](https://github.com/nyashkn/wglane/issues/28))
+
+`wglane up --fastest` connects to the fastest server. `wglane servers --probe` probes servers. The dashboard now does its work in a non-blocking worker.
+
+#### Leak check and a stable `status --json` ([#23](https://github.com/nyashkn/wglane/issues/23))
+
+`wglane status` now includes a leak check, and the `status --json` output is stable. `wglane doctor` also checks UDP port 51820.
+
+### Fixes
+
+* Previewing a preset now resolves the preset first ([#29](https://github.com/nyashkn/wglane/issues/29)).
+* Preset routes are kept when the routes refresh ([#29](https://github.com/nyashkn/wglane/issues/29)).
+* `default_city` is now scoped correctly ([#29](https://github.com/nyashkn/wglane/issues/29)).
+
+### Smaller changes
+
+* The docs now have terminal-only demo recordings made with VHS ([#30](https://github.com/nyashkn/wglane/issues/30)).
+
 ## [0.2.0](https://github.com/nyashkn/wglane/compare/v0.1.1...v0.2.0) (2026-10-30)
 
 This release improves the `wglane tui` dashboard and fixes IPv6 block routes on macOS.
