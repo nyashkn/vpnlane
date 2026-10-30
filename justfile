@@ -23,6 +23,14 @@ test:
 deny:
     cargo deny check
 
+# Unused dependencies (cargo install cargo-machete). Not in `ci` until clean.
+machete:
+    cargo machete
+
+# Verify the MSRV declared in Cargo.toml. Update the default when it changes.
+msrv version="1.99":
+    cargo +{{version}} check --workspace --all-features
+
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 
