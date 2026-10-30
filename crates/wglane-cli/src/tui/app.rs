@@ -642,7 +642,7 @@ fn header_line(s: &State, width: u16) -> Line<'static> {
     let spark: Vec<Span> = shown
         .iter()
         .map(|&v| {
-            let i = ((v - lo) * 7 / (hi - lo).max(1)) as usize;
+            let i = usize::try_from((v - lo) * 7 / (hi - lo).max(1)).unwrap_or(7);
             let bar = Span::raw(["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"][i]);
             if v > limit {
                 bar.style(s.fg(Color::Yellow))
