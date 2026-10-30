@@ -10,8 +10,8 @@ rust-version = "1.99"
 license = "MIT"
 authors = ["KN"]
 description = "NordLynx/WireGuard tunnels on macOS that leave Tailscale/Headscale working"
-repository = "https://github.com/nyashkn/wglane"
-homepage = "https://github.com/nyashkn/wglane"
+repository = "https://github.com/nyashkn/vpnlane"
+homepage = "https://github.com/nyashkn/vpnlane"
 publish = false
 
 [workspace.dependencies]

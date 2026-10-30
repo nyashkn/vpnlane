@@ -36,15 +36,12 @@ no compatibility layer. `vpnlane` does not read `~/.config/wglane` or any
 
 ## Optional `vl` alias
 
-`vl` is a shell alias only; no second binary ships.
+`vl` is a shell alias only; no second binary ships. `vpnlane alias` prints the
+snippet and never writes a file:
 
 ```sh
-# ~/.zshrc
-alias vl=vpnlane
-compdef vl=vpnlane
-# ~/.bashrc
-alias vl=vpnlane
-complete -F _vpnlane vl   # after sourcing `vpnlane completions bash`
+eval "$(vpnlane alias)"                    # this shell only
+echo "$(vpnlane alias)" >> ~/.zshrc        # keep it (--shell bash|fish; `vpnlane alias NAME` for another name)
 ```
 
 ## What `sudo vpnlane install-helper` does to the root side

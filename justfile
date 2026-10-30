@@ -51,7 +51,6 @@ assets:
 # Build, install both binaries into cargo's bin dir, install the root helper, check.
 # sudo's PATH excludes ~/.cargo/bin, so the full path is used.
 install:
-    cargo uninstall wglane-cli 2>/dev/null || true
     cargo install --path crates/vpnlane-cli --locked
     sudo "${CARGO_HOME:-$HOME/.cargo}/bin/vpnlane" install-helper
     "${CARGO_HOME:-$HOME/.cargo}/bin/vpnlane" doctor
