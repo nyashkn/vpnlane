@@ -15,7 +15,7 @@ env:
 
 jobs:
   drift:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
       - run: rustup show active-toolchain
