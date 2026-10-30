@@ -44,6 +44,7 @@ fn server(station: IpAddr, public_key: String, load: u8, name: String) -> Server
         load,
         public_key: PublicKey(public_key),
         country: "DE".parse().expect("valid country code"),
+        city: None,
     }
 }
 

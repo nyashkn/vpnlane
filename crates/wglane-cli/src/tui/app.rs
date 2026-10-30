@@ -9,7 +9,8 @@ use ratatui::widgets::{
     Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Sparkline, SparklineBar,
 };
 use wglane_core::{
-    Country, CountryCode, DEFAULT_GRAPH_SAMPLES, TailnetHealth, TuiSettings, TunnelStatus,
+    City, Country, CountryCode, DEFAULT_GRAPH_SAMPLES, TailnetHealth, TuiSettings, TunnelStatus,
+    fold,
 };
 
 use super::continent::{Continent, continent};
@@ -23,11 +24,11 @@ const MIN_SIZE: (u16, u16) = (40, 8);
 
 /// Rows of the `?` overlay: key, what it does.
 const HELP: [(&str, &str); 11] = [
-    ("enter", "connect, or open/close a group"),
-    ("space", "open/close a group"),
-    ("h l", "close / open a group"),
+    ("enter", "connect to a country or city; open/close a group"),
+    ("space", "open/close a group or country"),
+    ("h l", "close / open a group or country"),
     ("d", "disconnect"),
-    ("/", "search by code or name"),
+    ("/", "search by code, country or city"),
     ("esc", "clear search, then quit"),
     ("j k  up down", "move"),
     ("g G  home end", "first / last"),
@@ -41,13 +42,28 @@ const HELP: [(&str, &str); 11] = [
 pub(crate) enum Row<'a> {
     /// Continent header: country count, whether it is open.
     Group(Continent, usize, bool),
-    Country(&'a Country),
+    /// A country: whether its cities are listed below it, and whether it
+    /// matches the filter itself (a country shown only for its matching
+    /// cities is not selectable).
+    Country(&'a Country, bool, bool),
+    /// A city row under its country.
+    City(&'a Country, &'a City),
+}
+
+/// What the cursor is on, owned so keys can then change the state.
+enum Cursor {
+    Nothing,
+    Group(Continent),
+    /// Country code, its continent, whether it has a city level, whether that is open.
+    Country(CountryCode, Continent, bool, bool),
+    City(CountryCode),
 }
 
 /// A tunnel change in flight (the UI is blocked on it).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Busy {
-    Connecting(CountryCode),
+    /// Country, and the city when one was picked.
+    Connecting(CountryCode, Option<String>),
     Disconnecting,
 }
 
@@ -107,6 +123,10 @@ pub(crate) struct State {
     pub(crate) selected: usize,
     /// Open continent groups (all closed by default).
     pub(crate) expanded: BTreeSet<Continent>,
+    /// Open countries (those with a city level; all closed by default).
+    pub(crate) expanded_countries: BTreeSet<CountryCode>,
+    /// City of the connected server, when known (recorded by `up`).
+    pub(crate) city: Option<String>,
     /// The tree was opened on the connected country (done once, at start).
     pub(crate) placed: bool,
     /// Country filter typed after `/`.
@@ -136,17 +156,19 @@ pub(crate) enum Event {
     Tick,
     Countries(Result<Vec<Country>, String>),
     /// A probe result; the flag is false when the helper could not answer.
-    Status(TunnelStatus, bool),
+    /// The string is the connected server's city, when recorded.
+    Status(TunnelStatus, bool, Option<String>),
     /// Connect/disconnect finished.
     Finished(Result<(), String>),
 }
 
 /// I/O the reducer asks the event loop to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
     LoadCountries,
     Refresh,
-    Connect(CountryCode),
+    /// Connect to the least-loaded server in the country, or in the city.
+    Connect(CountryCode, Option<City>),
     Disconnect,
 }
 
@@ -164,30 +186,51 @@ impl State {
         }
     }
 
-    /// Countries matching the query: code-prefix hits first, then other
-    /// code/name substring hits, each group alphabetical. An empty query keeps
-    /// the catalog order.
+    /// A country with at most one city has no city level: its row connects.
+    fn is_leaf(c: &Country) -> bool {
+        c.cities.len() <= 1
+    }
+
+    /// Cities of `c` matching the filter (all of them without one).
+    fn city_hits<'a>(&self, c: &'a Country) -> Vec<&'a City> {
+        let q = fold(&self.query);
+        c.cities
+            .iter()
+            .filter(|ci| fold(&ci.name).contains(&q))
+            .collect()
+    }
+
+    /// The country row itself matches: code or name, or (for a country with
+    /// no city level) its only city.
+    fn country_hit(&self, c: &Country) -> bool {
+        let q = fold(&self.query);
+        fold(c.code.as_str()).contains(&q)
+            || fold(&c.name).contains(&q)
+            || (Self::is_leaf(c) && !self.city_hits(c).is_empty())
+    }
+
+    /// Countries matching the query by code, name or city: code-prefix hits
+    /// first, then the rest, each group alphabetical. An empty query keeps the
+    /// catalog order.
     pub(crate) fn visible(&self) -> Vec<&Country> {
-        let q = self.query.to_lowercase();
+        let q = fold(&self.query);
         if q.is_empty() {
             return self.countries.iter().collect();
         }
         let mut hits: Vec<(bool, String, &Country)> = self
             .countries
             .iter()
-            .filter_map(|c| {
-                let code = c.code.to_string().to_lowercase();
-                let name = c.name.to_lowercase();
-                (code.contains(&q) || name.contains(&q)).then(|| (!code.starts_with(&q), name, c))
-            })
+            .filter(|c| self.country_hit(c) || !self.city_hits(c).is_empty())
+            .map(|c| (!fold(c.code.as_str()).starts_with(&q), fold(&c.name), c))
             .collect();
         hits.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
         hits.into_iter().map(|(_, _, c)| c).collect()
     }
 
-    /// The tree: continent headers, each followed by its countries when open.
-    /// A filter opens every group that has a match and orders groups by their
-    /// best match, so the first country row is the best match.
+    /// The tree: continent headers, each followed by its countries when open,
+    /// and a country's cities when it is open. A filter opens every group and
+    /// country that has a match, shows only matching cities, and orders groups
+    /// by their best match, so the first selectable row is the best match.
     pub(crate) fn rows(&self) -> Vec<Row<'_>> {
         let filtering = !self.query.is_empty();
         let mut groups: Vec<(Continent, Vec<&Country>)> = Vec::new();
@@ -205,8 +248,21 @@ impl State {
         for (k, list) in groups {
             let open = filtering || self.expanded.contains(&k);
             rows.push(Row::Group(k, list.len(), open));
-            if open {
-                rows.extend(list.into_iter().map(Row::Country));
+            if !open {
+                continue;
+            }
+            for c in list {
+                let cities = self.city_hits(c);
+                let show = !Self::is_leaf(c)
+                    && if filtering {
+                        !cities.is_empty()
+                    } else {
+                        self.expanded_countries.contains(&c.code)
+                    };
+                rows.push(Row::Country(c, show, !filtering || self.country_hit(c)));
+                if show {
+                    rows.extend(cities.into_iter().map(|ci| Row::City(c, ci)));
+                }
             }
         }
         rows
@@ -214,7 +270,7 @@ impl State {
 
     /// Headers are skipped while a filter is active: only matches are picked.
     fn selectable(&self, row: &Row<'_>) -> bool {
-        self.query.is_empty() || matches!(row, Row::Country(_))
+        self.query.is_empty() || matches!(row, Row::City(..) | Row::Country(_, _, true))
     }
 
     /// Nearest selectable row from `from` (inclusive) in one direction.
@@ -276,6 +332,40 @@ impl State {
         }
     }
 
+    fn cursor(&self) -> Cursor {
+        let filtering = !self.query.is_empty();
+        match self.selected_row() {
+            None => Cursor::Nothing,
+            Some(Row::Group(k, ..)) => Cursor::Group(k),
+            Some(Row::Country(c, open, _)) => Cursor::Country(
+                c.code,
+                continent(c.code),
+                !Self::is_leaf(c) && !filtering,
+                open,
+            ),
+            Some(Row::City(c, _)) => Cursor::City(c.code),
+        }
+    }
+
+    /// Opens or closes a country's city level (not while filtering).
+    fn set_open(&mut self, cc: CountryCode, open: bool) {
+        if open {
+            self.expanded_countries.insert(cc);
+        } else {
+            self.expanded_countries.remove(&cc);
+        }
+    }
+
+    fn select_country(&mut self, cc: CountryCode) {
+        if let Some(i) = self
+            .rows()
+            .iter()
+            .position(|r| matches!(r, Row::Country(c, ..) if c.code == cc))
+        {
+            self.selected = i;
+        }
+    }
+
     fn select_group(&mut self, k: Continent) {
         if let Some(i) = self
             .rows()
@@ -305,11 +395,20 @@ impl State {
             return;
         };
         self.expanded.insert(continent(cc));
-        if let Some(i) = self
-            .rows()
-            .iter()
-            .position(|r| matches!(r, Row::Country(c) if c.code == cc))
-        {
+        // With the city known, open the country and put the cursor on it.
+        let city = self.city.clone().filter(|name| {
+            self.countries.iter().any(|c| {
+                c.code == cc && !Self::is_leaf(c) && c.cities.iter().any(|ci| ci.name == *name)
+            })
+        });
+        if city.is_some() {
+            self.expanded_countries.insert(cc);
+        }
+        if let Some(i) = self.rows().iter().position(|r| match (r, &city) {
+            (Row::City(c, ci), Some(name)) => c.code == cc && ci.name == *name,
+            (Row::Country(c, ..), None) => c.code == cc,
+            _ => false,
+        }) {
             self.selected = i;
         }
     }
@@ -361,7 +460,8 @@ pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
             s.message = format!("servers: {e}");
             s.failed = true;
         }
-        Event::Status(st, known) => {
+        Event::Status(st, known, city) => {
+            s.city = city;
             if let TailnetHealth::Reachable { latency_ms, .. } = &st.tailnet {
                 s.latency.push(*latency_ms);
                 if s.latency.len() > s.ui.graph_samples {
@@ -376,7 +476,10 @@ pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
             s.failed = result.is_err();
             s.message = match (s.busy.take(), result) {
                 (_, Err(e)) => e,
-                (Some(Busy::Connecting(cc)), Ok(())) => format!("connected to {cc}"),
+                (Some(Busy::Connecting(cc, None)), Ok(())) => format!("connected to {cc}"),
+                (Some(Busy::Connecting(cc, Some(city))), Ok(())) => {
+                    format!("connected to {cc}, {city}")
+                }
                 (_, Ok(())) => "disconnected".into(),
             };
             effects.push(Effect::Refresh);
@@ -414,7 +517,7 @@ fn on_key(s: &mut State, k: KeyCode, fx: &mut Vec<Effect>) {
         KeyCode::Home | KeyCode::Char('g') => s.selected = s.first(),
         KeyCode::End | KeyCode::Char('G') => s.selected = s.last(),
         KeyCode::Char('/') => s.searching = true,
-        // Group toggles are UI-only, so they work while a change is in flight.
+        // Toggles are UI-only, so they work while a change is in flight.
         KeyCode::Enter | KeyCode::Char(' ') if s.selected_group().is_some() => {
             if let Some(k) = s.selected_group()
                 && !s.expanded.remove(&k)
@@ -422,44 +525,26 @@ fn on_key(s: &mut State, k: KeyCode, fx: &mut Vec<Effect>) {
                 s.expanded.insert(k);
             }
         }
-        KeyCode::Char('l') => {
-            if let Some(k) = s.selected_group() {
-                s.expanded.insert(k);
+        KeyCode::Char(' ') => {
+            if let Cursor::Country(cc, _, true, open) = s.cursor() {
+                s.set_open(cc, !open);
             }
         }
-        // Right opens a closed header; on an open one it steps into the group.
-        KeyCode::Right => match s.selected_group() {
-            Some(k) if s.expanded.insert(k) => {}
-            Some(_) => s.step(true),
-            None => {}
-        },
-        // Left closes a header; on a country it only jumps to the header.
-        KeyCode::Left if s.query.is_empty() => match s.selected_row() {
-            Some(Row::Group(k, ..)) => {
-                s.expanded.remove(&k);
-            }
-            Some(Row::Country(c)) => s.select_group(continent(c.code)),
-            None => {}
-        },
-        // On a country, `h` closes its group and moves to the header.
-        KeyCode::Char('h') if s.query.is_empty() => {
-            let k = match s.selected_row() {
-                Some(Row::Group(k, ..)) => Some(k),
-                Some(Row::Country(c)) => Some(continent(c.code)),
-                None => None,
-            };
-            if let Some(k) = k {
-                s.expanded.remove(&k);
-                s.select_group(k);
-            }
-        }
+        KeyCode::Char('l' | 'h') | KeyCode::Right | KeyCode::Left => move_in_tree(s, k),
         // Keys that do I/O are ignored while a tunnel change is in flight.
         _ if s.busy.is_some() => {}
         KeyCode::Enter => {
-            if let Some(Row::Country(c)) = s.selected_row() {
-                let code = c.code;
-                s.start(Busy::Connecting(code));
-                fx.push(Effect::Connect(code));
+            let target = match s.selected_row() {
+                Some(Row::Country(c, ..)) => Some((c.code, None)),
+                Some(Row::City(c, city)) => Some((c.code, Some(city.clone()))),
+                _ => None,
+            };
+            if let Some((code, city)) = target {
+                s.start(Busy::Connecting(
+                    code,
+                    city.as_ref().map(|c| c.name.clone()),
+                ));
+                fx.push(Effect::Connect(code, city));
             }
         }
         KeyCode::Char('d') => {
@@ -470,6 +555,53 @@ fn on_key(s: &mut State, k: KeyCode, fx: &mut Vec<Effect>) {
             s.load_failed = false;
             fx.push(Effect::LoadCountries);
         }
+        _ => {}
+    }
+}
+
+/// Open/close/step keys (`h` `l` left right) at group, country and city level.
+fn move_in_tree(s: &mut State, k: KeyCode) {
+    match k {
+        KeyCode::Char('l') => match s.cursor() {
+            Cursor::Group(k) => {
+                s.expanded.insert(k);
+            }
+            Cursor::Country(cc, _, true, _) => s.set_open(cc, true),
+            _ => {}
+        },
+        // Right opens a closed header or country; on an open one it steps in.
+        KeyCode::Right => match s.cursor() {
+            Cursor::Group(k) if s.expanded.insert(k) => {}
+            Cursor::Country(cc, _, true, false) => s.set_open(cc, true),
+            Cursor::Group(_) | Cursor::Country(_, _, true, true) => s.step(true),
+            _ => {}
+        },
+        // Left closes a header or open country; otherwise it only jumps up a level.
+        KeyCode::Left if s.query.is_empty() => match s.cursor() {
+            Cursor::Group(k) => {
+                s.expanded.remove(&k);
+            }
+            Cursor::Country(cc, _, true, true) => s.set_open(cc, false),
+            Cursor::Country(_, k, ..) => s.select_group(k),
+            Cursor::City(cc) => s.select_country(cc),
+            Cursor::Nothing => {}
+        },
+        // `h` also closes: an open country, else the group (moving to its header).
+        KeyCode::Char('h') if s.query.is_empty() => match s.cursor() {
+            Cursor::Group(k) => {
+                s.expanded.remove(&k);
+            }
+            Cursor::Country(cc, _, true, true) => s.set_open(cc, false),
+            Cursor::Country(_, k, ..) => {
+                s.expanded.remove(&k);
+                s.select_group(k);
+            }
+            Cursor::City(cc) => {
+                s.set_open(cc, false);
+                s.select_country(cc);
+            }
+            Cursor::Nothing => {}
+        },
         _ => {}
     }
 }
@@ -571,12 +703,27 @@ fn draw_list(s: &State, frame: &mut Frame, area: ratatui::layout::Rect) {
                 }
                 ListItem::new(Line::from(spans))
             }
-            Row::Country(c) => {
+            Row::Country(c, open, _) => {
                 let mark = if is_up(c) { up_mark() } else { Span::raw(" ") };
+                // Only countries with a city level get a chevron.
+                let chevron = match (State::is_leaf(c), open) {
+                    (true, _) => "",
+                    (false, true) => " ▾",
+                    (false, false) => " ▸",
+                };
                 ListItem::new(Line::from(vec![
                     Span::raw("  "),
                     mark,
-                    Span::raw(format!(" {}  {}", c.code, c.name)),
+                    Span::raw(format!(" {}  {}{chevron}", c.code, c.name)),
+                ]))
+            }
+            Row::City(c, city) => {
+                let here = is_up(c) && s.city.as_deref() == Some(city.name.as_str());
+                let mark = if here { up_mark() } else { Span::raw(" ") };
+                ListItem::new(Line::from(vec![
+                    Span::raw("      "),
+                    mark,
+                    Span::raw(format!(" {} ({})", city.name, city.server_count)),
                 ]))
             }
         })
@@ -653,9 +800,12 @@ fn median(samples: &[u64]) -> u64 {
 /// The tunnel state with its symbol; `name` adds the country name when up.
 fn tunnel_span(s: &State, name: bool) -> Span<'static> {
     let bold = Modifier::BOLD;
-    match (s.busy, s.active()) {
-        (Some(Busy::Connecting(cc)), _) => Span::styled(
-            format!("◐ connecting to {cc}..."),
+    match (&s.busy, s.active()) {
+        (Some(Busy::Connecting(cc, city)), _) => Span::styled(
+            format!(
+                "◐ connecting to {cc}{}...",
+                city.as_ref().map_or_else(String::new, |c| format!(", {c}"))
+            ),
             s.fg(Color::Yellow).add_modifier(bold),
         ),
         (Some(Busy::Disconnecting), _) => {
@@ -673,8 +823,12 @@ fn tunnel_span(s: &State, name: bool) -> Span<'static> {
                 .iter()
                 .find(|c| name && c.code.as_str() == code)
                 .map_or_else(String::new, |c| format!("  {}", c.name));
+            let city = s
+                .city
+                .as_ref()
+                .map_or_else(String::new, |c| format!(", {c}"));
             Span::styled(
-                format!("● up  {code}{name}"),
+                format!("● up  {code}{name}{city}"),
                 s.fg(Color::Green).add_modifier(bold),
             )
         }
@@ -782,6 +936,7 @@ mod tests {
         Country {
             code: cc(code),
             name: name.into(),
+            cities: vec![],
         }
     }
 
@@ -811,6 +966,58 @@ mod tests {
         }
     }
 
+    fn with_cities(code: &str, name: &str, cities: &[(&str, u32)]) -> Country {
+        Country {
+            cities: cities
+                .iter()
+                .zip(1u32..)
+                .map(|((n, count), id)| City {
+                    id,
+                    name: (*n).into(),
+                    identifier: format!("{}_{}", code.to_lowercase(), n.to_lowercase()),
+                    server_count: *count,
+                })
+                .collect(),
+            ..country(code, name)
+        }
+    }
+
+    /// Fake data with a city level: DE and US have several cities, ZA one (so
+    /// no city level). All continents open, all countries closed. Rows:
+    /// 0 Africa, 1 ZA, 2 Europe, 3 DE, 4 North America, 5 US.
+    fn tree() -> State {
+        State {
+            countries: vec![
+                with_cities("DE", "Germany", &[("Frankfurt", 12), ("Berlin", 5)]),
+                with_cities(
+                    "US",
+                    "United States",
+                    &[("New York", 9), ("Los Angeles", 7), ("Chicago", 4)],
+                ),
+                with_cities("ZA", "South Africa", &[("Johannesburg", 4)]),
+            ],
+            ..open()
+        }
+    }
+
+    /// The tree as text: continents bare, countries with `+`/`-` when they
+    /// have a city level (open/closed), cities indented.
+    fn shape(s: &State) -> Vec<String> {
+        s.rows()
+            .iter()
+            .map(|r| match r {
+                Row::Group(k, ..) => k.to_string(),
+                Row::Country(c, _, _) if State::is_leaf(c) => {
+                    format!(" {}", c.code)
+                }
+                Row::Country(c, open, _) => {
+                    format!(" {}{}", c.code, if *open { "+" } else { "-" })
+                }
+                Row::City(_, ci) => format!("   {}", ci.name),
+            })
+            .collect()
+    }
+
     fn status(active: &[&str], tailnet: TailnetHealth) -> TunnelStatus {
         TunnelStatus {
             active: active.iter().map(|s| (*s).to_owned()).collect(),
@@ -830,7 +1037,7 @@ mod tests {
     }
 
     fn up(s: State, active: &[&str], ms: u64) -> State {
-        update(s, Event::Status(status(active, reachable(ms)), true)).0
+        update(s, Event::Status(status(active, reachable(ms)), true, None)).0
     }
 
     fn key(s: State, k: KeyCode) -> (State, Vec<Effect>) {
@@ -844,7 +1051,7 @@ mod tests {
     /// The code under the cursor, if it is on a country.
     fn on(s: &State) -> Option<String> {
         match s.selected_row() {
-            Some(Row::Country(c)) => Some(c.code.to_string()),
+            Some(Row::Country(c, ..)) => Some(c.code.to_string()),
             _ => None,
         }
     }
@@ -887,11 +1094,11 @@ mod tests {
     fn enter_connects_the_selection_and_blocks_input() {
         let (s, _) = key(open(), KeyCode::Char('G'));
         let (s, fx) = key(s, KeyCode::Enter);
-        assert_eq!(fx, [Effect::Connect(cc("US"))]);
-        assert_eq!(s.busy, Some(Busy::Connecting(cc("US"))));
+        assert_eq!(fx, [Effect::Connect(cc("US"), None)]);
+        assert_eq!(s.busy, Some(Busy::Connecting(cc("US"), None)));
         let (s, fx) = key(s, KeyCode::Char('d'));
         assert_eq!(fx, Vec::new());
-        assert_eq!(s.busy, Some(Busy::Connecting(cc("US"))));
+        assert_eq!(s.busy, Some(Busy::Connecting(cc("US"), None)));
     }
 
     #[test]
@@ -911,7 +1118,7 @@ mod tests {
     fn finished_reports_and_refreshes() {
         let s = keys(open(), &[KeyCode::Down, KeyCode::Enter]);
         let (s, fx) = update(s, Event::Finished(Ok(())));
-        assert_eq!((s.busy, s.message.as_str()), (None, "connected to ZA"));
+        assert_eq!((&s.busy, s.message.as_str()), (&None, "connected to ZA"));
         assert_eq!(fx, [Effect::Refresh]);
         let (s, _) = key(s, KeyCode::Char('d'));
         let (s, _) = update(s, Event::Finished(Err("helper missing".into())));
@@ -971,7 +1178,7 @@ mod tests {
         assert_eq!(s.latency.len(), DEFAULT_GRAPH_SAMPLES);
         assert_eq!(s.latency.last(), Some(&69));
         let down = TailnetHealth::NotInstalled;
-        let s = update(s, Event::Status(status(&[], down), true)).0;
+        let s = update(s, Event::Status(status(&[], down), true, None)).0;
         assert_eq!(s.latency.len(), DEFAULT_GRAPH_SAMPLES);
     }
 
@@ -1003,7 +1210,7 @@ mod tests {
         s.expanded.insert(Continent::Other);
         let rows = s.rows();
         assert_eq!(rows[rows.len() - 2], Row::Group(Continent::Other, 1, true));
-        assert!(matches!(rows[rows.len() - 1], Row::Country(c) if c.name == "Kosovo"));
+        assert!(matches!(rows[rows.len() - 1], Row::Country(c, ..) if c.name == "Kosovo"));
     }
 
     #[test]
@@ -1180,7 +1387,7 @@ mod tests {
         assert_eq!(on(&s).as_deref(), Some("US"));
         // Outside search mode Enter connects the first match.
         let (s, fx) = key(s, KeyCode::Enter);
-        assert_eq!(fx, [Effect::Connect(cc("US"))]);
+        assert_eq!(fx, [Effect::Connect(cc("US"), None)]);
         assert!(s.busy.is_some());
     }
 
@@ -1218,11 +1425,14 @@ mod tests {
 
     #[test]
     fn selection_stays_on_a_selectable_row_for_any_keys() {
-        const KEYS: [KeyCode; 18] = [
+        const KEYS: [KeyCode; 24] = [
             KeyCode::Char('/'),
             KeyCode::Char('z'),
             KeyCode::Char('u'),
             KeyCode::Char('x'),
+            KeyCode::Char('n'),
+            KeyCode::Char('e'),
+            KeyCode::Char('w'),
             KeyCode::Char('j'),
             KeyCode::Char('k'),
             KeyCode::Char('g'),
@@ -1234,17 +1444,33 @@ mod tests {
             KeyCode::Backspace,
             KeyCode::Up,
             KeyCode::Down,
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Enter,
             KeyCode::Enter,
             KeyCode::Esc,
             KeyCode::Char('d'),
         ];
         // Deterministic LCG walk; Finished clears `busy` so input keeps flowing.
         let mut seed = 0x2545_f491_u64;
-        let mut s = loaded();
-        for _ in 0..5_000 {
+        let mut s = tree();
+        for _ in 0..20_000 {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let k = KEYS[(seed >> 33) as usize % KEYS.len()];
-            s = key(s, k).0;
+            let (next, fx) = key(s, k);
+            s = next;
+            // Whatever Enter connects must be the row under the cursor.
+            for e in &fx {
+                if let Effect::Connect(code, city) = e {
+                    match s.selected_row() {
+                        Some(Row::Country(c, ..)) => assert!(city.is_none() && c.code == *code),
+                        Some(Row::City(c, ci)) => {
+                            assert!(c.code == *code && city.as_ref() == Some(ci));
+                        }
+                        r => panic!("connected from {r:?}"),
+                    }
+                }
+            }
             s.busy = None;
             s.should_quit = false;
             let rows = s.rows();
@@ -1474,7 +1700,7 @@ mod tests {
     fn draws_down() {
         let s = update(
             loaded(),
-            Event::Status(status(&[], TailnetHealth::NotInstalled), true),
+            Event::Status(status(&[], TailnetHealth::NotInstalled), true, None),
         )
         .0;
         insta::assert_snapshot!(render(&s).backend());
@@ -1482,7 +1708,11 @@ mod tests {
 
     #[test]
     fn draws_unknown_when_the_helper_cannot_answer() {
-        let s = update(loaded(), Event::Status(status(&[], reachable(30)), false)).0;
+        let s = update(
+            loaded(),
+            Event::Status(status(&[], reachable(30)), false, None),
+        )
+        .0;
         insta::assert_snapshot!(render(&s).backend());
     }
 
@@ -1518,5 +1748,288 @@ mod tests {
         insta::assert_snapshot!(
             render_sized(&up(loaded(), &["de"], 41), MIN_SIZE.0, MIN_SIZE.1).backend()
         );
+    }
+
+    fn at(s: &State) -> String {
+        match s.selected_row() {
+            Some(Row::Group(k, ..)) => k.to_string(),
+            Some(Row::Country(c, ..)) => c.code.to_string(),
+            Some(Row::City(_, ci)) => ci.name.clone(),
+            None => "-".into(),
+        }
+    }
+
+    /// `tree()` with US open and the cursor on it.
+    fn us_open() -> State {
+        let s = keys(tree(), &[KeyCode::Char('G'), KeyCode::Char(' ')]);
+        assert_eq!(at(&s), "US");
+        s
+    }
+
+    #[test]
+    fn tree_starts_with_countries_closed_and_single_city_countries_flat() {
+        assert_eq!(
+            shape(&tree()),
+            ["Africa", " ZA", "Europe", " DE-", "North America", " US-"]
+        );
+    }
+
+    #[test]
+    fn space_opens_and_closes_a_country_but_not_a_flat_one_or_a_city() {
+        let s = us_open();
+        assert_eq!(
+            shape(&s)[5..],
+            [" US+", "   New York", "   Los Angeles", "   Chicago"]
+        );
+        // On a city and on a flat country, space does nothing.
+        let s = keys(s, &[KeyCode::Down, KeyCode::Char(' ')]);
+        assert_eq!((at(&s), shape(&s).len()), ("New York".into(), 9));
+        let s = key(
+            keys(s, &[KeyCode::Char('g'), KeyCode::Down]),
+            KeyCode::Char(' '),
+        )
+        .0;
+        assert_eq!((at(&s), shape(&s).len()), ("ZA".into(), 9));
+        let s = keys(
+            s,
+            &[
+                KeyCode::Char('G'),
+                KeyCode::Char('k'),
+                KeyCode::Char('k'),
+                KeyCode::Char('k'),
+                KeyCode::Char(' '),
+            ],
+        );
+        assert_eq!(at(&s), "US");
+        assert_eq!(shape(&s)[5..], [" US-"]);
+    }
+
+    #[test]
+    fn enter_on_a_country_connects_the_country_even_when_it_has_cities() {
+        let (s, fx) = key(us_open(), KeyCode::Enter);
+        assert_eq!(fx, [Effect::Connect(cc("US"), None)]);
+        assert_eq!(s.busy, Some(Busy::Connecting(cc("US"), None)));
+    }
+
+    #[test]
+    fn enter_on_a_city_connects_that_city() {
+        let s = keys(us_open(), &[KeyCode::Down, KeyCode::Down]);
+        assert_eq!(at(&s), "Los Angeles");
+        let (s, fx) = key(s, KeyCode::Enter);
+        let Some(Effect::Connect(code, Some(city))) = fx.first() else {
+            panic!("{fx:?}");
+        };
+        assert_eq!(
+            (*code, city.name.as_str(), city.id),
+            (cc("US"), "Los Angeles", 2)
+        );
+        assert_eq!(
+            s.busy,
+            Some(Busy::Connecting(cc("US"), Some("Los Angeles".into())))
+        );
+        // Input is blocked while connecting, but the result names the city.
+        let (s, _) = update(s, Event::Finished(Ok(())));
+        assert_eq!(s.message, "connected to US, Los Angeles");
+    }
+
+    #[test]
+    fn l_and_right_open_and_h_and_left_close_at_every_level() {
+        // Country: l opens, h closes it (cursor stays), h again closes the group.
+        let s = keys(tree(), &[KeyCode::Char('G'), KeyCode::Char('l')]);
+        assert_eq!(shape(&s).len(), 9);
+        let s = key(s, KeyCode::Char('h')).0;
+        assert_eq!((at(&s), shape(&s).len()), ("US".into(), 6));
+        let s = key(s, KeyCode::Char('h')).0;
+        assert_eq!((at(&s), shape(&s).len()), ("North America".into(), 5));
+        // Right opens a closed country, then steps into it; right on a city is a no-op.
+        let s = keys(tree(), &[KeyCode::Char('G'), KeyCode::Right]);
+        assert_eq!((at(&s), shape(&s).len()), ("US".into(), 9));
+        let s = key(s, KeyCode::Right).0;
+        assert_eq!(at(&s), "New York");
+        let s = keys(s, &[KeyCode::Right, KeyCode::Char('l')]);
+        assert_eq!((at(&s), shape(&s).len()), ("New York".into(), 9));
+        // Left on a city jumps to its country; on an open country it closes it;
+        // on a closed country it jumps to the continent.
+        let s = key(s, KeyCode::Left).0;
+        assert_eq!(at(&s), "US");
+        let s = key(s, KeyCode::Left).0;
+        assert_eq!((at(&s), shape(&s).len()), ("US".into(), 6));
+        let s = key(s, KeyCode::Left).0;
+        assert_eq!(at(&s), "North America");
+        assert_eq!(shape(&s).len(), 6);
+        // h on a city closes its country and lands on it.
+        let s = keys(
+            tree(),
+            &[
+                KeyCode::Char('G'),
+                KeyCode::Right,
+                KeyCode::Right,
+                KeyCode::Char('h'),
+            ],
+        );
+        assert_eq!((at(&s), shape(&s).len()), ("US".into(), 6));
+        // Flat country: l/right do nothing, left/h go up to the group.
+        let s = keys(tree(), &[KeyCode::Down, KeyCode::Char('l'), KeyCode::Right]);
+        assert_eq!((at(&s), shape(&s).len()), ("ZA".into(), 6));
+        let s = key(s, KeyCode::Left).0;
+        assert_eq!(at(&s), "Africa");
+        assert_eq!(shape(&s).len(), 6);
+    }
+
+    #[test]
+    fn up_down_home_end_walk_through_cities() {
+        let s = us_open();
+        let s = key(s, KeyCode::Char('G')).0;
+        assert_eq!(at(&s), "Chicago");
+        let s = keys(s, &[KeyCode::Up, KeyCode::Char('k'), KeyCode::Up]);
+        assert_eq!(at(&s), "US");
+        let s = keys(
+            s,
+            &[KeyCode::Down, KeyCode::Down, KeyCode::Down, KeyCode::Down],
+        );
+        assert_eq!(at(&s), "Chicago");
+        assert_eq!(key(s, KeyCode::Home).0.selected, 0);
+    }
+
+    #[test]
+    fn search_by_city_opens_the_country_and_shows_only_matching_cities() {
+        let s = searching_in(tree(), "new y");
+        assert_eq!(shape(&s), ["North America", " US+", "   New York"]);
+        // The parent country does not match itself, so the cursor skips it.
+        assert_eq!(at(&s), "New York");
+        let (_, fx) = key(key(s, KeyCode::Enter).0, KeyCode::Enter);
+        assert!(
+            matches!(fx.first(), Some(Effect::Connect(c, Some(ci))) if *c == cc("US") && ci.name == "New York")
+        );
+    }
+
+    #[test]
+    fn search_matches_city_names_case_and_accent_insensitively() {
+        let s = State {
+            countries: vec![with_cities(
+                "CA",
+                "Canada",
+                &[("Montréal", 3), ("Toronto", 8)],
+            )],
+            ..State::default()
+        };
+        let s = searching_in(s, "MONTREAL");
+        assert_eq!(shape(&s), ["North America", " CA+", "   Montréal"]);
+    }
+
+    #[test]
+    fn search_ranks_code_prefix_first_and_country_matches_show_no_cities() {
+        // "u" hits the US by code and name; no city name contains it.
+        let s = searching_in(tree(), "us");
+        assert_eq!(shape(&s), ["North America", " US-"]);
+        assert_eq!(at(&s), "US");
+        // A name match keeps the country selectable and closed.
+        let s = searching_in(tree(), "germ");
+        assert_eq!(
+            (shape(&s), at(&s)),
+            (vec!["Europe".to_owned(), " DE-".to_owned()], "DE".into())
+        );
+    }
+
+    #[test]
+    fn search_on_the_only_city_of_a_flat_country_selects_the_country() {
+        let s = searching_in(tree(), "johan");
+        assert_eq!(shape(&s), ["Africa", " ZA"]);
+        let (_, fx) = key(key(s, KeyCode::Enter).0, KeyCode::Enter);
+        assert_eq!(fx, [Effect::Connect(cc("ZA"), None)]);
+    }
+
+    #[test]
+    fn search_mixes_country_and_city_hits_in_one_tree() {
+        // By name: Germany. By city: Frankfurt, Los Angeles, and Johannesburg,
+        // which is ZA's only city.
+        let s = searching_in(tree(), "an");
+        assert_eq!(
+            shape(&s),
+            [
+                "Europe",
+                " DE+",
+                "   Frankfurt",
+                "Africa",
+                " ZA",
+                "North America",
+                " US+",
+                "   Los Angeles"
+            ]
+        );
+        // Germany matches by name, so it is selectable and first; US is not.
+        assert_eq!(at(&s), "DE");
+        let s = keys(s, &[KeyCode::Down, KeyCode::Down, KeyCode::Down]);
+        assert_eq!(at(&s), "Los Angeles");
+    }
+
+    #[test]
+    fn filtering_ignores_open_state_and_clearing_restores_it() {
+        let s = key(searching_in(us_open(), "chi"), KeyCode::Enter).0;
+        assert_eq!(shape(&s), ["North America", " US+", "   Chicago"]);
+        // Toggle keys cannot change the filtered view.
+        let s = keys(s, &[KeyCode::Char('h'), KeyCode::Left, KeyCode::Right]);
+        assert_eq!(shape(&s), ["North America", " US+", "   Chicago"]);
+        let s = key(s, KeyCode::Esc).0;
+        assert_eq!(shape(&s).len(), 9, "US was open before the search");
+    }
+
+    #[test]
+    fn the_connected_city_is_marked_and_opened_at_start() {
+        let s = update(
+            tree(),
+            Event::Status(status(&["us"], reachable(30)), true, Some("Chicago".into())),
+        )
+        .0;
+        assert_eq!(at(&s), "Chicago");
+        assert_eq!(
+            shape(&s)[5..],
+            [" US+", "   New York", "   Los Angeles", "   Chicago"]
+        );
+    }
+
+    fn searching_in(s: State, text: &str) -> State {
+        typed(key(s, KeyCode::Char('/')).0, text)
+    }
+
+    fn connected_city_state() -> State {
+        update(
+            tree(),
+            Event::Status(
+                status(&["us"], reachable(283)),
+                true,
+                Some("New York".into()),
+            ),
+        )
+        .0
+    }
+
+    #[test]
+    fn draws_countries_closed_with_a_city_level() {
+        insta::assert_snapshot!(render(&tree()).backend());
+    }
+
+    #[test]
+    fn draws_country_expanded_with_cities() {
+        insta::assert_snapshot!(render_sized(&us_open(), 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_country_expanded_with_cities_and_the_connected_city() {
+        let s = connected_city_state();
+        insta::assert_snapshot!(render(&s).backend());
+    }
+
+    #[test]
+    fn draws_search_by_city() {
+        insta::assert_snapshot!(render(&searching_in(tree(), "new y")).backend());
+    }
+
+    #[test]
+    fn draws_the_connected_city_in_header_and_card() {
+        let s = connected_city_state();
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+        let (s, _) = key(s, KeyCode::Enter);
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
     }
 }

@@ -722,6 +722,7 @@ fe80::1%lo0                             link#1                                  
             load: 0,
             public_key: PublicKey("U1lOVEhFVElDLVBFRVItUFVCTElDLUtFWS0wMDAwMDE=".into()),
             country: "ZA".parse().unwrap(),
+            city: None,
         };
         let key = PrivateKey::new("U1lOVEhFVElDLVBSSVZBVEUtS0VZLU5PVC1SRUFMMDE=");
         render_wg_conf(&TunnelConfig::nordlynx(key, &server)).to_string()

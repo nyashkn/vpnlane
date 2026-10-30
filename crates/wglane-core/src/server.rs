@@ -17,4 +17,7 @@ pub struct Server {
     pub public_key: PublicKey,
     /// Country the server is in.
     pub country: CountryCode,
+    /// City name, when the provider reports one.
+    #[serde(default)]
+    pub city: Option<String>,
 }

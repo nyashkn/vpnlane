@@ -21,6 +21,7 @@ mod tests {
             load,
             public_key: PublicKey(String::new()),
             country: "DE".parse().unwrap(),
+            city: None,
         }
     }
 

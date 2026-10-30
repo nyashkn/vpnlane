@@ -145,6 +145,7 @@ fn conf_text(private: &str, public: &str, ip: IpAddr) -> String {
         load: 0,
         public_key: PublicKey(public.to_owned()),
         country: "ZZ".parse().expect("valid country code"),
+        city: None,
     };
     let conf = TunnelConfig::nordlynx(PrivateKey::new(private), &server);
     render_wg_conf(&conf).as_str().to_owned()

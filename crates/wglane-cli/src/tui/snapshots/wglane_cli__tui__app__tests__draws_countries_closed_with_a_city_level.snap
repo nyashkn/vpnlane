@@ -1,0 +1,14 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: render(&tree()).backend()
+---
+"· checking...                                                         "
+"┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
+"│> ▾ Africa (1)         ││tunnel   · checking...                     │"
+"│      ZA  South Africa ││exit ip  unknown                           │"
+"│  ▾ Europe (1)         ││tailnet  unknown                           │"
+"│      DE  Germany ▸    ││latency  -                                 │"
+"│  ▾ North America (1)  ││                                           │"
+"│      US  United States││                                           │"
+"└───────────────────────┘└───────────────────────────────────────────┘"
+"? help  enter connect  d disconnect  / search  q quit                 "

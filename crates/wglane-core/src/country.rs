@@ -63,6 +63,71 @@ pub struct Country {
     pub code: CountryCode,
     /// Display name, e.g. "South Africa".
     pub name: String,
+    /// Cities with servers; empty when the provider did not say.
+    #[serde(default)]
+    pub cities: Vec<City>,
+}
+
+/// A city the provider has servers in.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct City {
+    /// Provider id, used to filter server lookups (0 when unknown).
+    #[serde(default)]
+    pub id: u32,
+    /// Display name, e.g. "New York".
+    #[serde(default)]
+    pub name: String,
+    /// Provider slug, e.g. `us_new-york`.
+    #[serde(default)]
+    pub identifier: String,
+    /// How many servers the provider has there.
+    #[serde(default)]
+    pub server_count: u32,
+}
+
+/// Lower-cases and strips common Latin accents, for forgiving name matching.
+// shortcut: Latin letters only, no unicode-normalization dep; add the crate if other scripts appear.
+pub fn fold(s: &str) -> String {
+    s.chars()
+        .flat_map(char::to_lowercase)
+        .map(|c| match c {
+            'à'..='å' | 'ā' | 'ă' | 'ą' => 'a',
+            'ç' | 'ć' | 'č' => 'c',
+            'ď' | 'đ' => 'd',
+            'è'..='ë' | 'ē' | 'ę' | 'ě' => 'e',
+            'ì'..='ï' | 'ī' | 'ı' => 'i',
+            'ł' => 'l',
+            'ñ' | 'ń' | 'ň' => 'n',
+            'ò'..='ö' | 'ø' | 'ō' | 'ő' => 'o',
+            'ř' => 'r',
+            'ś' | 'š' | 'ş' => 's',
+            'ť' | 'ţ' => 't',
+            'ù'..='ü' | 'ū' | 'ů' | 'ű' => 'u',
+            'ý' | 'ÿ' => 'y',
+            'ź' | 'ż' | 'ž' => 'z',
+            c => c,
+        })
+        .collect()
+}
+
+impl Country {
+    /// The city whose name or identifier equals `query`, ignoring case and
+    /// accents. Fails with `UnknownCity`, which lists the valid names.
+    pub fn find_city(&self, query: &str) -> Result<&City, Error> {
+        let q = fold(query.trim());
+        self.cities
+            .iter()
+            .find(|c| fold(&c.name) == q || fold(&c.identifier) == q)
+            .ok_or_else(|| {
+                let mut names: Vec<&str> = self.cities.iter().map(|c| c.name.as_str()).collect();
+                names.sort_unstable();
+                Error::UnknownCity {
+                    country: self.code,
+                    query: query.to_owned(),
+                    valid: names.join(", "),
+                }
+            })
+    }
 }
 
 #[cfg(test)]
@@ -74,6 +139,33 @@ mod tests {
         let cc: CountryCode = " za ".parse().unwrap();
         assert_eq!(cc.as_str(), "ZA");
         assert_eq!(cc.to_lowercase(), "za");
+    }
+
+    fn us() -> Country {
+        let city = |id, name: &str, ident: &str| City {
+            id,
+            name: name.into(),
+            identifier: ident.into(),
+            server_count: 3,
+        };
+        Country {
+            code: "US".parse().unwrap(),
+            name: "United States".into(),
+            cities: vec![
+                city(1, "New York", "us_new-york"),
+                city(2, "Zürich", "us_zurich"),
+            ],
+        }
+    }
+
+    #[test]
+    fn city_match_ignores_case_and_accents_and_takes_identifiers() {
+        let c = us();
+        for q in ["new york", " NEW YORK ", "us_new-york", "zurich", "ZÜRICH"] {
+            assert!(c.find_city(q).is_ok(), "{q}");
+        }
+        let err = c.find_city("york").unwrap_err().to_string();
+        assert!(err.contains("New York, Zürich"), "{err}");
     }
 
     #[test]

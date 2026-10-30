@@ -5,7 +5,7 @@
 //! API changes do not break us, missing fields surface as `Error::Api`.
 
 use serde::Deserialize;
-use wglane_core::{Country, Error, ExitInsights, PrivateKey, PublicKey, Result, Server};
+use wglane_core::{City, Country, Error, ExitInsights, PrivateKey, PublicKey, Result, Server};
 
 /// `GET /v1/servers/countries` element.
 #[derive(Debug, Deserialize)]
@@ -13,6 +13,22 @@ pub(crate) struct WireCountry {
     pub(crate) id: u32,
     pub(crate) name: String,
     pub(crate) code: String,
+    #[serde(default)]
+    pub(crate) cities: Vec<WireCity>,
+}
+
+/// `cities` element of a countries entry. Every field is optional so an
+/// additive or partial API response still parses.
+#[derive(Debug, Deserialize)]
+pub(crate) struct WireCity {
+    #[serde(default)]
+    id: u32,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    identifier: String,
+    #[serde(default, rename = "serverCount")]
+    server_count: u32,
 }
 
 /// `GET /v1/users/services/credentials` body.
@@ -63,6 +79,13 @@ struct WireLocation {
 #[derive(Debug, Deserialize)]
 struct WireLocationCountry {
     code: String,
+    #[serde(default)]
+    city: Option<WireLocationCity>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WireLocationCity {
+    name: String,
 }
 
 fn bad_code(code: &str) -> Error {
@@ -77,7 +100,25 @@ pub(crate) fn parse_countries(json: &str) -> Result<Vec<(u32, Country)>> {
     wire.into_iter()
         .map(|c| {
             let code = c.code.parse().map_err(|_| bad_code(&c.code))?;
-            Ok((c.id, Country { code, name: c.name }))
+            let cities = c
+                .cities
+                .into_iter()
+                .filter(|c| !c.name.is_empty())
+                .map(|c| City {
+                    id: c.id,
+                    name: c.name,
+                    identifier: c.identifier,
+                    server_count: c.server_count,
+                })
+                .collect();
+            Ok((
+                c.id,
+                Country {
+                    code,
+                    name: c.name,
+                    cities,
+                },
+            ))
         })
         .collect()
 }
@@ -107,6 +148,7 @@ pub(crate) fn parse_servers(json: &str) -> Result<Vec<Server>> {
                 .code
                 .parse()
                 .map_err(|_| bad_code(&loc.country.code))?,
+            city: loc.country.city.as_ref().map(|c| c.name.clone()),
         });
     }
     Ok(out)
@@ -173,12 +215,35 @@ mod tests {
     }
 
     #[test]
+    fn countries_carry_cities_and_tolerate_missing_fields() {
+        let v = parse_countries(include_str!("../fixtures/countries.json")).unwrap();
+        let us = &v.iter().find(|(_, c)| c.code.as_str() == "US").unwrap().1;
+        let ny = &us.cities[0];
+        assert_eq!(
+            (
+                ny.id,
+                ny.name.as_str(),
+                ny.identifier.as_str(),
+                ny.server_count
+            ),
+            (30, "New York", "us_new-york", 9)
+        );
+        let bare = r#"[{"id":1,"name":"X","code":"DE","cities":[{"name":"A"},{"id":5}]}]"#;
+        let c = &parse_countries(bare).unwrap()[0].1;
+        assert_eq!(c.cities.len(), 1, "nameless city is dropped");
+        assert_eq!(c.cities[0].server_count, 0);
+        let none = r#"[{"id":1,"name":"X","code":"DE"}]"#;
+        assert_eq!(parse_countries(none).unwrap()[0].1.cities.len(), 0);
+    }
+
+    #[test]
     fn servers_fixture_skips_non_wireguard() {
         let v = parse_servers(include_str!("../fixtures/recommendations_za.json")).unwrap();
         let hosts: Vec<_> = v.iter().map(|s| s.hostname.as_str()).collect();
         assert_eq!(hosts, ["za0001.example.invalid", "za0002.example.invalid"]);
         assert_eq!(v[1].load, 9);
         assert_eq!(v[0].country.as_str(), "ZA");
+        assert_eq!(v[0].city.as_deref(), Some("Johannesburg"));
         assert!(v[0].public_key.0.starts_with("U1lOVEhFVElD"));
     }
 

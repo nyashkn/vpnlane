@@ -94,7 +94,7 @@ fn show(e: &Effective, json: bool) -> Result<String> {
         &e.default_country.source,
     );
     row(
-        "default_city (reserved)",
+        "default_city",
         opt(e.default_city.value.clone()),
         &e.default_city.source,
     );

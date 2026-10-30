@@ -131,6 +131,7 @@ impl UpRequest {
             public_key: self.public_key.clone(),
             // Unused by rendering.
             country: CountryCode::from_str("ZZ").unwrap_or_else(|_| unreachable!()),
+            city: None,
         };
         TunnelConfig::nordlynx(self.private_key.clone(), &server)
     }

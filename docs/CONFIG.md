@@ -21,7 +21,7 @@ All keys are optional.
 | Key | Type | Default | Used by |
 |---|---|---|---|
 | `default_country` | two-letter code, e.g. `"US"` | unset | `wglane up` with no argument |
-| `default_city` | string, 1 to 64 letters, digits, space, `-`, `'`, `.` | unset | reserved: validated, not used yet |
+| `default_city` | string, 1 to 64 letters, digits, space, `-`, `'`, `.` | unset | `wglane up` with no `--city`, when the country also came from the default (no argument): the city must exist in that country, else `up` stops and lists the valid ones |
 | `pick` | `"least-load"` or `"fastest"` | `"least-load"` | reserved: validated, not used yet (servers are always picked by least load) |
 | `bypass_extra` | list of CIDRs | `[]` | `up` and `watch`: routes that skip the tunnel, added to the automatic Tailscale ones |
 | `exit_ip_check` | bool | `true` | `status` and the TUI; `false` skips the exit IP lookup (so `protected` and the exit-country warning read as unknown) |
@@ -51,9 +51,14 @@ appears only for values a command takes on its own command line.
 
 `wglane up` picks the country as: the argument if given, else
 `WGLANE_COUNTRY`, else `default_country`, else it stops and says so. Within the
-country the server is the least loaded one. `pick` and `default_city` are
-accepted so a file written today keeps working when selection grows; they have
-no effect yet.
+country the server is the least loaded one. `--city` picks the least loaded
+server in that city; with no `--city` and no country argument, `default_city`
+does the same. A country given on the command line ignores `default_city`
+(so `wglane up DE` never trips over a US city). A cached config is reused only
+for the same request: switching between a city and the whole country, or to
+another city, regenerates it. `pick` is accepted so a file written today keeps
+working when selection grows; it has no effect yet. The TUI does not apply
+`default_city`.
 
 ## Worked example
 
@@ -70,7 +75,7 @@ warn_ratio = 2.0
 ```
 $ WGLANE_COUNTRY=DE wglane config show
 default_country        DE               env
-default_city (reserved) (unset)          default
+default_city           (unset)          default
 pick (reserved)        least-load       default
 bypass_extra           198.51.100.0/24  file
 exit_ip_check          false            file

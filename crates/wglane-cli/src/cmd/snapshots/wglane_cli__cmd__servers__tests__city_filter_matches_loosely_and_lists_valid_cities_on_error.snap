@@ -1,0 +1,6 @@
+---
+source: crates/wglane-cli/src/cmd/servers.rs
+expression: out
+---
+HOST             CITY      LOAD  IP
+za7.nordvpn.com  Pretória  9%    192.0.2.3

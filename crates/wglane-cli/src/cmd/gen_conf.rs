@@ -8,7 +8,8 @@ use color_eyre::Result;
 use serde_json::json;
 use wglane_core::ports::{ServerCatalog, TokenSource};
 use wglane_core::{
-    Country, CountryCode, PrivateKey, Server, Token, generate_config, rank_by_load, render_wg_conf,
+    City, Country, CountryCode, PrivateKey, Server, Token, generate_config, rank_by_load,
+    render_wg_conf,
 };
 use wglane_nord::NordApi;
 
@@ -47,7 +48,11 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
         &NordApi::new(),
         &ctx.token_source(),
         &args.countries,
-        |cc, body| Ok(store.write(cc, body)?),
+        |cc, body| {
+            // The config no longer matches what `up` last recorded for it.
+            ctx.record_city(&cc.to_lowercase(), None, None)?;
+            Ok(store.write(cc, body)?)
+        },
     )?;
     println!("{}", report(&done, ctx.json, &home_relative)?);
     Ok(())
@@ -63,7 +68,7 @@ fn generate_all<C: ServerCatalog, T: TokenSource>(
     let cached = Cached::new(catalog);
     let mut done = Vec::new();
     for &cc in countries {
-        let conf = generate_config(&cached, token, cc)?;
+        let (conf, _) = generate_config(&cached, token, cc, None)?;
         let path = write(cc, &render_wg_conf(&conf))?;
         let best = cached.best(cc)?;
         done.push(Generated {
@@ -136,7 +141,7 @@ impl<'a, C: ServerCatalog> Cached<'a, C> {
 
     /// The server `generate_config` picked: least loaded of the cached list.
     fn best(&self, cc: CountryCode) -> wglane_core::Result<Server> {
-        let mut v = self.recommended(cc, 5)?;
+        let mut v = self.recommended(cc, None, 5)?;
         rank_by_load(&mut v);
         v.into_iter()
             .next()
@@ -149,11 +154,20 @@ impl<C: ServerCatalog> ServerCatalog for Cached<'_, C> {
         self.inner.countries()
     }
 
-    fn recommended(&self, cc: CountryCode, limit: usize) -> wglane_core::Result<Vec<Server>> {
+    fn recommended(
+        &self,
+        cc: CountryCode,
+        city: Option<&City>,
+        limit: usize,
+    ) -> wglane_core::Result<Vec<Server>> {
+        // `gen` never asks for a city; the cache is per country.
+        if city.is_some() {
+            return self.inner.recommended(cc, city, limit);
+        }
         if let Some(v) = self.servers.borrow().get(&cc) {
             return Ok(v.clone());
         }
-        let v = self.inner.recommended(cc, limit)?;
+        let v = self.inner.recommended(cc, None, limit)?;
         self.servers.borrow_mut().insert(cc, v.clone());
         Ok(v)
     }
@@ -182,6 +196,7 @@ mod tests {
             load,
             public_key: PublicKey(format!("pk-{h}")),
             country: cc.parse().unwrap(),
+            city: None,
         };
         FakeCatalog {
             servers: [

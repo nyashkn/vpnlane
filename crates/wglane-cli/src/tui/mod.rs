@@ -75,10 +75,11 @@ fn execute(effect: Effect, ctx: &Context, exit_ip_check: bool) -> Event {
                 ctx.recorded_routes(),
                 exit_ip_check,
             );
-            Event::Status(st, known)
+            let city = st.active.first().and_then(|a| ctx.recorded_city(a));
+            Event::Status(st, known, city)
         }
-        Effect::Connect(cc) => Event::Finished(
-            up::connect_real(ctx, cc)
+        Effect::Connect(cc, city) => Event::Finished(
+            up::connect_real(ctx, cc, city.as_ref())
                 .map(drop)
                 .map_err(|e| e.to_string()),
         ),

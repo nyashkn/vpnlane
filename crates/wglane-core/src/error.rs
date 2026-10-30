@@ -23,6 +23,17 @@ pub enum Error {
     #[error("unknown country {0}: run `wglane servers` to list supported countries")]
     UnknownCountry(CountryCode),
 
+    /// The country has no city by this name.
+    #[error("unknown city {query:?} in {country}; valid cities: {valid}")]
+    UnknownCity {
+        /// Country searched.
+        country: CountryCode,
+        /// What the user typed.
+        query: String,
+        /// Valid city names, comma separated.
+        valid: String,
+    },
+
     /// No server for this country speaks WireGuard right now.
     #[error("no WireGuard servers available for {0}")]
     NoServers(CountryCode),
