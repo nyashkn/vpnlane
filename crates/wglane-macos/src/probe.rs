@@ -24,12 +24,12 @@ impl<R: CommandRunner> TailscalePing<R> {
         if !status.success() {
             return unreachable(format!("tailscale status failed: {}", status.stderr.trim()));
         }
-        let Some(peer) = online_peer(&status.stdout) else {
+        let Some((peer, ip)) = online_peer(&status.stdout) else {
             return unreachable("no online tailnet peer to ping".into());
         };
         let ping = self
             .runner
-            .run("tailscale", &["ping", "-c", "1", "--timeout", "3s", &peer])?;
+            .run("tailscale", &["ping", "-c", "1", "--timeout", "3s", &ip])?;
         match ping.success().then(|| latency_ms(&ping.stdout)).flatten() {
             Some(latency_ms) => Ok(TailnetHealth::Reachable { peer, latency_ms }),
             None => unreachable(format!("no reply from {peer}")),
@@ -48,15 +48,16 @@ impl<R: CommandRunner> TailnetProbe for TailscalePing<R> {
     }
 }
 
-/// First online peer's MagicDNS name (`status --json` `.Peer[].DNSName`).
-fn online_peer(status_json: &str) -> Option<String> {
+/// First online peer's MagicDNS name and first Tailscale IP (`status --json`).
+/// `tailscale ping` rejects the DNS name ("no matching peer"), so ping the IP.
+fn online_peer(status_json: &str) -> Option<(String, String)> {
     let status: Value = serde_json::from_str(status_json).ok()?;
     status["Peer"]
         .as_object()?
         .values()
         .filter(|p| p["Online"].as_bool() == Some(true))
-        .find_map(|p| p["DNSName"].as_str())
-        .map(|n| n.trim_end_matches('.').to_owned())
+        .find_map(|p| Some((p["DNSName"].as_str()?, p["TailscaleIPs"][0].as_str()?)))
+        .map(|(n, ip)| (n.trim_end_matches('.').to_owned(), ip.to_owned()))
 }
 
 /// `23` from `pong from host (100.64.0.2) via DERP(nyc) in 23ms`.
@@ -76,8 +77,8 @@ mod tests {
 
     // Synthetic; shape follows `tailscale status --json`.
     const STATUS: &str = r#"{"Peer":{
-        "nodekey:aa":{"DNSName":"off.tail.example.","Online":false},
-        "nodekey:bb":{"DNSName":"box.tail.example.","Online":true}}}"#;
+        "nodekey:aa":{"DNSName":"off.tail.example.","TailscaleIPs":["100.64.0.1"],"Online":false},
+        "nodekey:bb":{"DNSName":"box.tail.example.","TailscaleIPs":["100.64.0.2"],"Online":true}}}"#;
     const PONG: &str = "pong from box (100.64.0.2) via DERP(nyc) in 23ms\n";
 
     #[test]
@@ -102,7 +103,7 @@ mod tests {
                 "1",
                 "--timeout",
                 "3s",
-                "box.tail.example"
+                "100.64.0.2"
             ]
         );
     }
