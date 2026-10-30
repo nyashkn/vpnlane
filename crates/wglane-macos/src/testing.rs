@@ -39,6 +39,13 @@ impl FakeRunner {
         })
     }
 
+    /// Records a call without consuming a scripted reply (for wrappers that answer it themselves).
+    pub fn note(&self, program: &str, args: &[&str]) {
+        let mut call = vec![program.to_owned()];
+        call.extend(args.iter().map(|a| (*a).to_owned()));
+        self.calls.borrow_mut().push(call);
+    }
+
     /// Every call so far as `[program, args...]`.
     pub fn calls(&self) -> Vec<Vec<String>> {
         self.calls.borrow().clone()

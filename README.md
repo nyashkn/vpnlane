@@ -10,7 +10,7 @@ terminal for that). Rust CLI and TUI.
 > audited, no long soak: expect rough edges and run `wglane doctor` first.
 > macOS only. No release is published yet, so build from source (once
 > released: `brew install nyashkn/tap/wglane-cli`). **Known gap:** IPv6 is not tunnelled; it
-> is blocked while the tunnel is up (see
+> is rejected (best effort) while the tunnel is up (see
 > [Security model and known limits](#security-model-and-known-limits)).
 
 ## Why
@@ -146,11 +146,13 @@ account, not isolation from it. Full design:
 
 wglane is pre-alpha and has not been audited. What it does not protect against:
 
-- IPv6. The Nord config is IPv4-only, so while a tunnel is up wglane rejects
-  global IPv6 (`2000::/3`) and apps fall back to IPv4 through Nord. Loopback,
-  link-local and Tailscale's `fd7a::/48` are untouched. Tailscale's IPv6
-  underlay path is cut too and falls back to IPv4/DERP, which have bypass
-  routes. This is not a kill switch: if the tunnel drops, IPv4 is not blocked.
+- IPv6. The Nord config is IPv4-only, so while a tunnel is up wglane adds
+  reject routes for global IPv6 (`2000::/3`) and the NAT64 prefixes
+  (`64:ff9b::/96`, `64:ff9b:1::/48`), and apps should fall back to IPv4 through
+  Nord. This is best effort and not a kill switch: sockets bound to a physical
+  interface can bypass unscoped routes, and if the tunnel drops IPv4 is not
+  blocked. Tailscale's IPv6 underlay path may be cut too and may fall back to
+  IPv4/DERP (which have bypass routes); this is unverified.
 - The sudo rule is a capability of your account. Any process running as you can
   use the helper to send host traffic (`0.0.0.0/1` + `128.0.0.0/1`) to any
   WireGuard peer on the NordLynx port, with keys that process chooses.
