@@ -2,6 +2,30 @@
 
 All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.2.0](https://github.com/nyashkn/wglane/compare/v0.1.1...v0.2.0) (2026-10-30)
+
+This release improves the `wglane tui` dashboard and fixes IPv6 block routes on macOS.
+
+### What's New
+
+#### Search countries in the dashboard ([#18](https://github.com/nyashkn/wglane/issues/18))
+
+The `wglane tui` dashboard now has country search, so you can find a country without scrolling the list.
+
+#### A clearer dashboard ([#20](https://github.com/nyashkn/wglane/issues/20))
+
+The server list is now a continent tree. A state banner shows the current state, and a help overlay lists the keys. The dashboard also respects `NO_COLOR`.
+
+### Fixes
+
+* The latency graph in `wglane tui` is fixed ([#18](https://github.com/nyashkn/wglane/issues/18)).
+* The latency graph now scales to the window you can see ([#21](https://github.com/nyashkn/wglane/issues/21)).
+* On macOS, IPv6 block routes are now checked with `netstat`, and routes left stranded are recovered ([#16](https://github.com/nyashkn/wglane/issues/16)).
+
+### Smaller changes
+
+* The docs now include CLI and TUI demo recordings ([#19](https://github.com/nyashkn/wglane/issues/19)).
+
 ## [0.1.1](https://github.com/nyashkn/wglane/compare/v0.1.0...v0.1.1) (2026-10-30)
 
 A small release that fixes how wglane is published. The command itself does not change.
