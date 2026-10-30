@@ -3,7 +3,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use color_eyre::eyre::{Result, eyre};
@@ -92,7 +92,16 @@ impl Context {
     /// (base plus preset, as resolved then), because the helper replaces the
     /// whole set. With nothing recorded, the top-level `bypass_extra`.
     pub(crate) fn applied_bypass(&self) -> Result<StaticBypass> {
-        let extra = match self.last_request() {
+        let last = match self.load_state() {
+            Ok(s) => s.last,
+            Err(e) => {
+                eprintln!(
+                    "warning: {e}; using the top-level bypass_extra, any preset routes are not re-applied"
+                );
+                None
+            }
+        };
+        let extra = match last {
             Some(last) => last.bypass_extra,
             None => self.settings(Overrides::default())?.bypass_extra.value,
         };
@@ -116,10 +125,28 @@ impl Context {
     /// once, then deleted) or empty; a corrupt one is empty; a file from a
     /// newer schema is an error, so it is never overwritten.
     fn load_state(&self) -> Result<State> {
+        if let Some(s) = self.read_state()? {
+            return Ok(s);
+        }
+        let _lock = self.lock_state()?;
+        self.load_locked()
+    }
+
+    /// `load_state` for a caller that holds the lock.
+    fn load_locked(&self) -> Result<State> {
+        match self.read_state()? {
+            Some(s) => Ok(s),
+            None => self.migrate_legacy(),
+        }
+    }
+
+    /// The file as it is; `None` when it does not exist. Writers replace it
+    /// by rename, so a reader never sees half a file.
+    fn read_state(&self) -> Result<Option<State>> {
         let path = self.state_file();
         match fs::read_to_string(&path) {
             Ok(text) => match serde_json::from_str::<State>(&text) {
-                Ok(s) if s.version == STATE_VERSION => Ok(s),
+                Ok(s) if s.version == STATE_VERSION => Ok(Some(s)),
                 Ok(s) => Err(eyre!(
                     "{} is version {}, this wglane reads version {STATE_VERSION}: upgrade wglane or delete the file",
                     path.display(),
@@ -127,22 +154,51 @@ impl Context {
                 )),
                 Err(e) => {
                     tracing::warn!("ignoring unreadable {}: {e}", path.display());
-                    Ok(State::default())
+                    Ok(Some(State::default()))
                 }
             },
-            Err(e) if e.kind() == ErrorKind::NotFound => self.migrate_legacy(),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
             Err(e) => Err(eyre!("cannot read {}: {e}", path.display())),
         }
     }
 
-    fn save_state(&self, state: &State) -> Result<()> {
-        let tmp = self.config_dir.join("state.json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(state)? + "\n")?;
-        Ok(fs::rename(&tmp, self.state_file())?)
+    /// Exclusive lock on `state.json.lock`, held until the guard drops. `up`
+    /// and `watch` write the state from different processes, and every
+    /// writer reads, changes and writes: without this they lose updates.
+    fn lock_state(&self) -> Result<fs::File> {
+        let path = self.config_dir.join("state.json.lock");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| eyre!("cannot open {}: {e}", path.display()))?;
+        file.lock()
+            .map_err(|e| eyre!("cannot lock {}: {e}", path.display()))?;
+        Ok(file)
     }
 
+    /// Writes through a temp file of its own name, then renames over `state.json`.
+    fn save_state(&self, state: &State) -> Result<()> {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let tmp = self.config_dir.join(format!(
+            "state.json.{}.{}.tmp",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let write = || -> Result<()> {
+            fs::write(&tmp, serde_json::to_string_pretty(state)? + "\n")?;
+            Ok(fs::rename(&tmp, self.state_file())?)
+        };
+        write().inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })
+    }
+
+    /// Read, change, write, all under the lock.
     fn update_state(&self, change: impl FnOnce(&mut State)) -> Result<()> {
-        let mut state = self.load_state()?;
+        let _lock = self.lock_state()?;
+        let mut state = self.load_locked()?;
         change(&mut state);
         self.save_state(&state)
     }
@@ -186,23 +242,22 @@ impl Context {
         if old.is_empty() {
             return Ok(state);
         }
-        // The old active preset becomes the last request when its place is known.
+        // The old active preset becomes the last request: its routes and name
+        // are real even when no place is known (a preset with only bypass_extra).
         state.connected = preset.is_some() || state.bypass_routes > 0;
         if let (Some(name), Ok(file)) = (preset, self.file_config()) {
             let eff = file.resolve(&Overrides::default(), Overrides::default());
             let req = eff.overlay(eff.preset(&name));
-            if let Some(location) = req.location.filter(|_| eff.preset(&name).is_some()) {
-                state.last = Some(LastRequest {
-                    location,
-                    pick: req.pick,
-                    bypass_extra: req.bypass_extra,
-                    preset: Some(PresetUse {
-                        name,
-                        overridden: Vec::new(),
-                    }),
-                    at: unix_now(),
-                });
-            }
+            state.last = Some(LastRequest {
+                location: req.location,
+                pick: req.pick,
+                bypass_extra: req.bypass_extra,
+                preset: Some(PresetUse {
+                    name,
+                    overridden: Vec::new(),
+                }),
+                at: unix_now(),
+            });
         }
         self.save_state(&state)?;
         for path in old {
@@ -288,6 +343,14 @@ impl Context {
     }
 }
 
+/// Bookkeeping that failed after the connection itself succeeded is a
+/// warning, not a failed command: the tunnel is up either way.
+pub(crate) fn note(what: &str, result: Result<()>) {
+    if let Err(e) = result {
+        eprintln!("warning: {what}: {e}");
+    }
+}
+
 /// Seconds since the Unix epoch (0 if the clock is before it).
 pub(crate) fn unix_now() -> u64 {
     SystemTime::now()
@@ -337,7 +400,7 @@ mod tests {
 
     fn last(location: &str, preset: Option<&str>) -> LastRequest {
         LastRequest {
-            location: location.parse().unwrap(),
+            location: Some(location.parse().unwrap()),
             pick: wglane_core::Pick::LeastLoad,
             bypass_extra: vec!["203.0.113.0/24".parse().unwrap()],
             preset: preset.map(|n| PresetUse {
@@ -357,7 +420,12 @@ mod tests {
         assert_eq!(c.active_preset().unwrap().name, "work");
         // A fresh Context reads the same file.
         assert_eq!(
-            ctx(dir.path()).last_request().unwrap().location.to_string(),
+            ctx(dir.path())
+                .last_request()
+                .unwrap()
+                .location
+                .unwrap()
+                .to_string(),
             "DE/Berlin"
         );
         c.record_down().unwrap();
@@ -429,7 +497,7 @@ mod tests {
         let active = c.active_preset().unwrap();
         assert_eq!(active.name, "work");
         let last = c.last_request().unwrap();
-        assert_eq!(last.location.to_string(), "DE/Berlin");
+        assert_eq!(last.location.unwrap().to_string(), "DE/Berlin");
         assert_eq!(last.bypass_extra.len(), 1);
 
         for gone in ["active-preset", "bypass-routes", "de.city", "us.city"] {
@@ -454,5 +522,65 @@ mod tests {
         let set = c.applied_bypass().unwrap().0;
         assert_eq!(set.len(), 2);
         assert!(set.iter().all(|n| n.to_string().starts_with("203.0.113")));
+    }
+
+    /// `up` and `watch` write the state from different processes (here: threads
+    /// with their own Context) and each write is read-change-write.
+    #[test]
+    fn concurrent_writers_lose_no_update_and_none_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let rounds = 150;
+        let work = |i: usize, c: Context| {
+            for n in 0..rounds {
+                if i == 0 {
+                    c.record_routes(n).unwrap();
+                } else {
+                    c.record_city(&format!("t{i}-{n}"), Some("X"), None)
+                        .unwrap();
+                }
+            }
+        };
+        std::thread::scope(|sc| {
+            for i in 0..3 {
+                let c = ctx(dir.path());
+                sc.spawn(move || work(i, c));
+            }
+        });
+        let s = ctx(dir.path()).state();
+        assert_eq!(s.confs.len(), 2 * rounds, "no update was rolled back");
+        assert_eq!(s.bypass_routes, rounds - 1);
+        let stray: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(stray.is_empty(), "temp files left behind: {stray:?}");
+    }
+
+    #[test]
+    fn migration_keeps_a_preset_that_only_adds_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        fs::write(
+            c.config_file(),
+            "bypass_extra = [\"198.51.100.0/24\"]\n[presets.office]\nbypass_extra = [\"203.0.113.0/24\"]\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("active-preset"), "office\n").unwrap();
+        fs::write(dir.path().join("bypass-routes"), "2\n").unwrap();
+        assert_eq!(c.active_preset().unwrap().name, "office");
+        let last = c.last_request().unwrap();
+        assert_eq!(last.location, None, "no place was ever recorded");
+        assert_eq!(last.bypass_extra.len(), 2, "base and the preset's route");
+        assert_eq!(c.applied_bypass().unwrap().0.len(), 2);
+    }
+
+    #[test]
+    fn an_unreadable_state_makes_applied_bypass_fall_back_not_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        fs::write(c.config_file(), "bypass_extra = [\"198.51.100.0/24\"]\n").unwrap();
+        fs::write(c.state_file(), "{\"version\": 99}").unwrap();
+        assert_eq!(c.applied_bypass().unwrap().0.len(), 1);
     }
 }

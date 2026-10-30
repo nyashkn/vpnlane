@@ -209,6 +209,18 @@ preset and cached-config notes.
   (If you edit `bypass_extra` in `config.toml` while connected, the new list
   applies at the next `up`.)
 
+Writers (`up`, `watch`, `down`) take an exclusive lock on `state.json.lock`
+around each read-change-write and replace the file by rename, so overlapping
+commands do not lose updates. If the state cannot be written after a connect,
+wglane prints a warning on stderr and the command still succeeds.
+
+**Downgrading.** `state.json` replaces `active-preset`, `bypass-routes` and
+`<cc>.city`, which are deleted on import. An older binary does not read
+`state.json`: it sees no active preset and no city notes, and its `watch`
+re-applies only the top-level `bypass_extra`. Nothing breaks; it just forgets.
+Deleting `state.json` is always safe (you lose `up -`, the active preset and
+the city notes; the next `up` rebuilds them).
+
 ## `exit_ip_check = false` is loud
 
 The key stays valid. Turning the leak check off is a choice, but never a silent

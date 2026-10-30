@@ -52,7 +52,10 @@ pub(crate) fn disconnect_real(ctx: &Context) -> Result<Disconnected> {
 /// preset are cleared, the last request stays for `up -`.
 pub(crate) fn disconnect_recorded<T: Tunnel>(ctx: &Context, tunnel: &T) -> Result<Disconnected> {
     let done = disconnect(tunnel, ctx.conf_store().dir())?;
-    ctx.record_down()?;
+    crate::context::note(
+        "disconnected, but could not update state.json",
+        ctx.record_down(),
+    );
     Ok(done)
 }
 

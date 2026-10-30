@@ -121,9 +121,12 @@ pub(crate) fn active_preset<T: Tunnel>(ctx: &Context, tunnel: &T) -> Option<Pres
 pub(crate) fn current_state<T: Tunnel>(ctx: &Context, tunnel: &T) -> Option<ActiveState> {
     let cc: CountryCode = tunnel.active().ok()?.first()?.parse().ok()?;
     Some(
-        match ctx.last_request().filter(|l| l.location.country() == cc) {
+        match ctx
+            .last_request()
+            .filter(|l| l.location.as_ref().is_none_or(|p| p.country() == cc))
+        {
             Some(l) => ActiveState {
-                location: Some(l.location),
+                location: l.location.or(Some(Location::country_only(cc))),
                 pick: l.pick,
                 bypass_extra: l.bypass_extra,
             },
@@ -473,7 +476,8 @@ mod tests {
         fn last(&self) -> String {
             self.ctx()
                 .last_request()
-                .map_or("-".to_owned(), |l| l.location.to_string())
+                .and_then(|l| l.location)
+                .map_or("-".to_owned(), |l| l.to_string())
         }
     }
 
@@ -641,5 +645,29 @@ mod tests {
         assert_eq!(*rig.tunnel.up.borrow(), ["us"]);
         assert_eq!(rig.ctx().active_preset(), None);
         assert_eq!(rig.ctx().last_request(), None);
+    }
+
+    #[test]
+    fn going_from_a_city_to_its_country_regenerates_the_cached_config() {
+        let rig = Rig::new();
+        let regenerated = |d: up::Connected| d.summary(cc("DE")).contains("config regenerated");
+        assert!(regenerated(rig.up(Some("DE/Berlin"), None, None).unwrap()));
+        assert!(!regenerated(rig.up(Some("DE/Berlin"), None, None).unwrap()));
+        assert!(
+            regenerated(rig.up(Some("DE"), None, None).unwrap()),
+            "a whole-country request must not reuse the city's config"
+        );
+        assert!(!regenerated(rig.up(Some("DE"), None, None).unwrap()));
+        assert!(regenerated(rig.up(Some("DE/Berlin"), None, None).unwrap()));
+    }
+
+    #[test]
+    fn an_unwritable_state_warns_but_does_not_fail_the_connect() {
+        let rig = Rig::new();
+        std::fs::write(rig.dir.path().join("state.json"), "{\"version\": 99}").unwrap();
+        let done = rig.up(Some("DE"), None, None);
+        assert!(done.is_ok(), "{done:?}");
+        assert_eq!(*rig.tunnel.up.borrow(), ["de"]);
+        crate::cmd::down::disconnect_recorded(&rig.ctx(), &rig.tunnel).unwrap();
     }
 }

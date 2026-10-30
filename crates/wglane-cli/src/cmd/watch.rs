@@ -162,7 +162,7 @@ mod tests {
 
         // `up --preset work` recorded both routes; the refresh re-applies both.
         ctx.record_applied(wglane_core::LastRequest {
-            location: "US".parse().unwrap(),
+            location: Some("US".parse().unwrap()),
             pick: wglane_core::Pick::LeastLoad,
             bypass_extra: vec![
                 "203.0.113.0/24".parse().unwrap(),

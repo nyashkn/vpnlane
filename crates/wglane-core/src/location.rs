@@ -64,7 +64,10 @@ fn check_city(city: &str) -> Result<()> {
         && city.chars().count() <= MAX_CITY
         && city
             .chars()
-            .all(|c| c.is_alphanumeric() || " -_'.".contains(c));
+            // Combining marks, so a decomposed "Zu\u{308}rich" is accepted too.
+            .all(|c| {
+                c.is_alphanumeric() || " -_'.".contains(c) || ('\u{300}'..='\u{36f}').contains(&c)
+            });
     if ok {
         Ok(())
     } else {
@@ -152,6 +155,11 @@ mod tests {
     #[test]
     fn city_matching_ignores_case_and_accents() {
         assert!(loc("CH/Zürich").same_place(&loc("ch/ZURICH")));
+        // Decomposed (u + combining diaeresis) as a terminal or macOS filename may send it.
+        let decomposed = loc("DE/Zu\u{308}rich");
+        assert_eq!(decomposed.city(), Some("Zu\u{308}rich"));
+        assert!(decomposed.same_place(&loc("de/zürich")));
+        assert!(decomposed.same_place(&loc("DE/ZURICH")));
         assert!(!loc("CH/Zürich").same_place(&loc("CH")));
         assert!(!loc("DE/Berlin").same_place(&loc("AT/Berlin")));
     }

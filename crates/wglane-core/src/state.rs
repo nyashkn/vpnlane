@@ -50,8 +50,10 @@ impl Default for State {
 /// A request as it was applied: the resolved values, not the layers they came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LastRequest {
-    /// Where.
-    pub location: Location,
+    /// Where; `None` only for a request migrated from an older release that
+    /// never recorded it (the bypass set and preset are still real).
+    #[serde(default)]
+    pub location: Option<Location>,
     /// How the server was chosen.
     pub pick: Pick,
     /// Extra bypass CIDRs applied (base plus preset), the set `watch` re-applies.
@@ -105,7 +107,7 @@ mod tests {
             connected: true,
             bypass_routes: 3,
             last: Some(LastRequest {
-                location: "DE/Berlin".parse().unwrap(),
+                location: Some("DE/Berlin".parse().unwrap()),
                 pick: Pick::Fastest,
                 bypass_extra: vec!["203.0.113.0/24".parse().unwrap()],
                 preset: Some(PresetUse {

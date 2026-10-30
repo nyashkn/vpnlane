@@ -16,7 +16,7 @@ use wglane_core::{
 use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
 use wglane_nord::NordApi;
 
-use crate::context::{Context, unix_now};
+use crate::context::{Context, note, unix_now};
 
 #[derive(Debug, clap::Args)]
 #[command(
@@ -181,8 +181,11 @@ fn replay(ctx: &Context, args: &Args) -> Result<Plan> {
     let last = ctx
         .last_request()
         .ok_or_else(|| eyre!("no previous connection to repeat: run `wglane up CC` first"))?;
+    let location = last.location.ok_or_else(|| {
+        eyre!("the last request has no location (it was migrated from an older wglane): run `wglane up CC` once")
+    })?;
     Ok(Plan {
-        location: last.location,
+        location,
         bypass: last.bypass_extra.into_iter().collect(),
         preset: last.preset,
         pick: last.pick,
@@ -387,8 +390,8 @@ fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
     // shortcut: a city name the shape check rejects is recorded as its country; widen the check if one turns up.
     let location = Location::new(cc, city.map(|c| c.name.clone()))
         .unwrap_or_else(|_| Location::country_only(cc));
-    ctx.record_applied(LastRequest {
-        location,
+    let applied = ctx.record_applied(LastRequest {
+        location: Some(location),
         pick: if prober.is_some() {
             Pick::Fastest
         } else {
@@ -397,7 +400,11 @@ fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
         bypass_extra: extra.0.iter().copied().collect(),
         preset,
         at: unix_now(),
-    })?;
+    });
+    note(
+        "connected, but could not record it in state.json (`up -` will not see it)",
+        applied,
+    );
     Ok(done)
 }
 
@@ -450,10 +457,16 @@ pub(crate) fn connect_recorded<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: T
     if done.regenerated {
         let choice = picked.into_inner();
         let server_city = choice.as_ref().and_then(|c| c.server.city.as_deref());
-        ctx.record_city(&cc.to_lowercase(), want, server_city)?;
+        note(
+            "could not record the config's city in state.json",
+            ctx.record_city(&cc.to_lowercase(), want, server_city),
+        );
         done.picked = choice;
     }
-    ctx.record_routes(done.routes)?;
+    note(
+        "could not record the route count in state.json",
+        ctx.record_routes(done.routes),
+    );
     Ok(done)
 }
 
