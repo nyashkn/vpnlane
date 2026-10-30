@@ -4,9 +4,9 @@ expression: render(&s).backend()
 ---
 "· checking  asking the helper which tunnel is up                      "
 "browse  the full tree, for when you do not know the name · esc home   "
+"                                       LATENCY      LOAD              "
 "┌ filter: zzz_ ──────────────────────────────────────────────────────┐"
 "│  no match (esc clears)                                             │"
-"│                                                                    │"
 "│                                                                    │"
 "│                                                                    │"
 "│                                                                    │"

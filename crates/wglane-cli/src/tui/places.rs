@@ -174,23 +174,26 @@ pub(crate) fn reprobe(s: &mut State, fx: &mut Vec<Effect>) {
     }
 }
 
-/// `width` cells of a bar for `value` out of `max`, in eighths, padded with `·`.
+/// `width` cells of a bar for `value` out of `max`: whole `█` cells, rounded
+/// up so a non-zero value always shows, padded with `░` so filled and empty
+/// differ by glyph and not only by colour (`NO_COLOR`).
 pub(crate) fn bar(value: u64, max: u64, width: usize) -> String {
-    const PART: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
-    if width == 0 {
-        return String::new();
-    }
     let cells = u64::try_from(width).unwrap_or(u64::MAX);
-    let eighths = if max == 0 || value == 0 {
+    let full = if max == 0 || value == 0 || width == 0 {
         0
     } else {
-        // Round up, so the smallest non-zero value still shows a sliver.
-        (value * cells * 8).div_ceil(max).clamp(1, cells * 8)
+        usize::try_from((value * cells).div_ceil(max).clamp(1, cells)).unwrap_or(width)
     };
-    let full = usize::try_from(eighths / 8).unwrap_or(width);
-    let part = PART[usize::try_from(eighths % 8).unwrap_or(0)];
-    let used = full + usize::from(!part.is_empty());
-    format!("{}{part}{}", "█".repeat(full), "·".repeat(width - used))
+    format!("{}{}", "█".repeat(full), "░".repeat(width - full))
+}
+
+/// Why a list has no latencies, for the line under it; yellow at the call site.
+pub(crate) fn unavailable_hint(s: &State) -> &'static str {
+    if s.is_up() {
+        "latency unavailable while connected"
+    } else {
+        "latency unavailable: no server answered a ping"
+    }
 }
 
 /// Scale and widths for one list of metric columns: bars are relative to the
@@ -230,7 +233,7 @@ impl Scale {
     }
 }
 
-/// `151 ms ███▎·   58% ██▉··  fastest`. Unknown values are `-`, a place
+/// `151 ms ███░░   58% ██░░░  fastest`. Unknown values are `-`, a place
 /// being measured reads `probing`; nothing is ever estimated.
 pub(crate) fn metrics(s: &State, k: &PlaceKey, sc: &Scale) -> Vec<Span<'static>> {
     let dim = Style::new().add_modifier(Modifier::DIM);
@@ -294,10 +297,10 @@ mod tests {
     #[test]
     fn bars_are_relative_round_up_and_pad() {
         assert_eq!(bar(10, 10, 4), "████");
-        assert_eq!(bar(5, 10, 4), "██··");
-        assert_eq!(bar(1, 100, 4), "▏···", "a sliver, never empty");
-        assert_eq!(bar(0, 100, 4), "····");
-        assert_eq!(bar(3, 0, 4), "····");
+        assert_eq!(bar(5, 10, 4), "██░░");
+        assert_eq!(bar(1, 100, 4), "█░░░", "a sliver, never empty");
+        assert_eq!(bar(0, 100, 4), "░░░░");
+        assert_eq!(bar(3, 0, 4), "░░░░");
         assert_eq!(bar(3, 7, 0), "");
         for v in 0..=50 {
             assert_eq!(bar(v, 50, 5).chars().count(), 5);

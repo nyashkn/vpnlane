@@ -1851,3 +1851,39 @@ fn draws_browse_with_bars() {
     let s = keys(key(home(), KeyCode::Char('b')).0, &[KeyCode::Char('g')]);
     insta::assert_snapshot!(render_sized(&s, 96, 24).backend());
 }
+
+#[test]
+fn draws_browse_column_header_100() {
+    let s = keys(key(home(), KeyCode::Char('b')).0, &[KeyCode::Char('g')]);
+    insta::assert_snapshot!(render_sized(&s, 100, 24).backend());
+}
+
+#[test]
+fn draws_browse_column_header_60() {
+    let s = keys(key(home(), KeyCode::Char('b')).0, &[KeyCode::Char('g')]);
+    insta::assert_snapshot!(render_sized(&s, 60, 24).backend());
+}
+
+#[test]
+fn browse_degrades_the_header_and_explains_unavailable_latency() {
+    let s = keys(key(home(), KeyCode::Char('b')).0, &[KeyCode::Char('g')]);
+    assert!(screen(&s, 45, 24).contains("LAT "));
+    let narrow = screen(&s, 36, 24);
+    assert!(!narrow.contains("LAT") && narrow.contains("% load"));
+    // Every probe failed while connected: the hint shows in browse too.
+    let mut s = s;
+    let keys_: Vec<_> = s.probes.keys().cloned().collect();
+    let epoch = s.probe_epoch;
+    for key in keys_ {
+        s = update(
+            s,
+            Event::ProbeResult {
+                epoch,
+                key,
+                latency_ms: None,
+            },
+        )
+        .0;
+    }
+    assert!(screen(&s, 96, 24).contains("latency unavailable while connected"));
+}

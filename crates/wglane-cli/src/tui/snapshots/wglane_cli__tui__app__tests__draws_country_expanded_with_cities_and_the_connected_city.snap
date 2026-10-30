@@ -4,8 +4,8 @@ expression: render(&s).backend()
 ---
 "● up  US New York  283 ms ▁  exit 203.0.113.7                         "
 "browse  the full tree, for when you do not know the name · esc home   "
+"                                       LATENCY      LOAD              "
 "┌ servers ───────────────────────────────────────────────────────────┐"
-"│  ▾ Europe (1)                                                      │"
 "│      DE  Germany ▸                         -         -             │"
 "│  ▾ North America (1)                                               │"
 "│    ● US  United States ▾             probing         -             │"
