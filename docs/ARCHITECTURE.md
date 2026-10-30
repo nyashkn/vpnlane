@@ -103,7 +103,8 @@ names only the helper and has no argument list.
 5. `route add -inet6 -net <prefix> ::1 -reject` for `2000::/3`, `64:ff9b::/96`
    and `64:ff9b:1::/48` (NAT64): IPv6 is rejected while a tunnel is up. `route`
    exits 0 even when the kernel refuses, so each add is checked with
-   `route -n get -inet6` (destination, mask, gateway `::1`, `REJECT` flag) and a
+   `netstat -rn -f inet6` (destination parsed as that exact prefix, gateway `::1`,
+   flag `R`, netif `lo0`; `route get` cannot see reject routes) and a
    failed check fails `up`. The routes are shared; later tunnels find them in
    place.
 
