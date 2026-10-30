@@ -84,7 +84,10 @@ impl Preset {
     pub fn resolve(&self, base: &Effective) -> EffectiveRequest {
         let (country, city) = match self.country {
             Some(c) => (Some(c), self.city.clone()),
-            None => (base.default_country.value, base.default_city.value.clone()),
+            None => (
+                base.default_country.value,
+                base.default_city_for(base.default_country.value),
+            ),
         };
         let mut bypass_extra = base.bypass_extra.value.clone();
         for net in self.bypass_extra.iter().flatten() {
@@ -177,6 +180,8 @@ pub enum ChangeLine {
     },
     /// This many bypass routes would be added.
     AddRoutes(usize),
+    /// This many bypass routes would be removed.
+    RemoveRoutes(usize),
     /// Nothing would change.
     AlreadyActive,
 }
@@ -186,16 +191,22 @@ impl fmt::Display for ChangeLine {
         match self {
             Self::Changed { key, from, to } => write!(f, "{key}  {from} -> {to}"),
             Self::AddRoutes(n) => write!(f, "bypass_extra  {}", routes(*n)),
+            Self::RemoveRoutes(n) => write!(f, "bypass_extra  -{}", &routes(*n)[1..]),
             Self::AlreadyActive => f.write_str("already active"),
         }
     }
 }
 
-/// What applying `preset` would change from `current` (`None`: not connected).
+/// What applying `preset` would change from `current` (`None`: not connected),
+/// judged on what the preset resolves to against `base`, not as written.
 /// Unchanged keys are omitted; no difference at all is [`ChangeLine::AlreadyActive`].
-pub fn describe_change(current: Option<&ActiveState>, preset: &Preset) -> Vec<ChangeLine> {
-    let dash = || "-".to_owned();
-    let shown = |v: Option<String>| v.unwrap_or_else(dash);
+pub fn describe_change(
+    current: Option<&ActiveState>,
+    preset: &Preset,
+    base: &Effective,
+) -> Vec<ChangeLine> {
+    let req = preset.resolve(base);
+    let shown = |v: Option<String>| v.unwrap_or_else(|| "-".to_owned());
     let mut out = Vec::new();
     let mut changed = |key, from: Option<String>, to: Option<String>| {
         out.push(ChangeLine::Changed {
@@ -206,37 +217,37 @@ pub fn describe_change(current: Option<&ActiveState>, preset: &Preset) -> Vec<Ch
     };
     let cur_country = current.and_then(|c| c.country);
     let cur_city = current.and_then(|c| c.city.clone());
-    if let Some(c) = preset.country {
-        if cur_country != Some(c) {
-            changed(
-                "country",
-                cur_country.map(|c| c.to_string()),
-                Some(c.to_string()),
-            );
-        }
-        // A preset with a country owns the city: none means the whole country.
-        if cur_city.as_deref().map(fold) != preset.city.as_deref().map(fold) {
-            changed("city", cur_city, preset.city.clone());
-        }
+    if req.country.is_some() && cur_country != req.country {
+        changed(
+            "country",
+            cur_country.map(|c| c.to_string()),
+            req.country.map(|c| c.to_string()),
+        );
     }
-    if let Some(p) = preset.pick {
-        let cur = current.map(|c| c.pick);
-        if cur != Some(p) {
-            changed("pick", cur.map(|p| p.to_string()), Some(p.to_string()));
-        }
+    if cur_city.as_deref().map(fold) != req.city.as_deref().map(fold) {
+        changed("city", cur_city, req.city.clone());
+    }
+    // Not connected: only an explicit preset pick is news.
+    let cur_pick = current.map(|c| c.pick);
+    if cur_pick != Some(req.pick) && (current.is_some() || preset.pick.is_some()) {
+        changed(
+            "pick",
+            cur_pick.map(|p| p.to_string()),
+            Some(req.pick.to_string()),
+        );
     }
     let have: BTreeSet<_> = current.iter().flat_map(|c| &c.bypass_extra).collect();
-    let added: BTreeSet<_> = preset
-        .bypass_extra
-        .iter()
-        .flatten()
-        .filter(|n| !have.contains(n))
-        .collect();
-    if out.is_empty() && added.is_empty() {
+    let want: BTreeSet<_> = req.bypass_extra.iter().collect();
+    let added = want.difference(&have).count();
+    let removed = have.difference(&want).count();
+    if out.is_empty() && added == 0 && removed == 0 {
         return vec![ChangeLine::AlreadyActive];
     }
-    if !added.is_empty() {
-        out.push(ChangeLine::AddRoutes(added.len()));
+    if added > 0 {
+        out.push(ChangeLine::AddRoutes(added));
+    }
+    if removed > 0 {
+        out.push(ChangeLine::RemoveRoutes(removed));
     }
     out
 }
@@ -270,7 +281,11 @@ mod tests {
     }
 
     fn lines(cur: Option<&ActiveState>, p: &Preset) -> Vec<String> {
-        describe_change(cur, p)
+        lines_in(&base(""), cur, p)
+    }
+
+    fn lines_in(b: &Effective, cur: Option<&ActiveState>, p: &Preset) -> Vec<String> {
+        describe_change(cur, p, b)
             .iter()
             .map(ToString::to_string)
             .collect()
@@ -339,7 +354,14 @@ mod tests {
             country: Some(cc("DE")),
             ..Preset::default()
         };
-        assert_eq!(lines(Some(&cur), &de), ["city  berlin -> -"]);
+        assert_eq!(
+            lines(Some(&cur), &de),
+            [
+                "city  berlin -> -",
+                "pick  fastest -> least-load",
+                "bypass_extra  -1 route"
+            ]
+        );
         // Identical.
         let cur = state(
             "DE",
@@ -349,6 +371,54 @@ mod tests {
         );
         assert_eq!(lines(Some(&cur), &berlin), ["already active"]);
         assert_eq!(lines(None, &Preset::default()), ["already active"]);
+    }
+
+    #[test]
+    fn describe_change_uses_the_resolved_request() {
+        let b = base("default_country = \"ZA\"\nbypass_extra = [\"203.0.113.0/24\"]\n");
+        let cur = state("DE", None, Pick::LeastLoad, &["203.0.113.0/24"]);
+        // No country in the preset: the switch to default_country still shows.
+        let fast = Preset {
+            pick: Some(Pick::Fastest),
+            ..Preset::default()
+        };
+        assert_eq!(
+            lines_in(&b, Some(&cur), &fast),
+            ["country  DE -> ZA", "pick  least-load -> fastest"]
+        );
+        // An empty preset is active only when it resolves to the connection.
+        let empty = Preset::default();
+        assert_eq!(lines_in(&b, Some(&cur), &empty), ["country  DE -> ZA"]);
+        let za = state("ZA", None, Pick::LeastLoad, &["203.0.113.0/24"]);
+        assert_eq!(lines_in(&b, Some(&za), &empty), ["already active"]);
+        // Routes that applying would remove are shown.
+        let work = state(
+            "ZA",
+            None,
+            Pick::LeastLoad,
+            &["203.0.113.0/24", "203.0.113.9/32", "203.0.113.10/32"],
+        );
+        assert_eq!(
+            lines_in(&b, Some(&work), &empty),
+            ["bypass_extra  -2 routes"]
+        );
+    }
+
+    #[test]
+    fn default_city_only_for_default_country() {
+        let file =
+            FileConfig::parse("default_country = \"US\"\ndefault_city = \"Chicago\"\n").unwrap();
+        let env = |c: &str| Overrides {
+            country: Some(cc(c)),
+            ..Overrides::default()
+        };
+        let r = Preset::default().resolve(&file.resolve(Overrides::default(), env("DE")));
+        assert_eq!((r.country, r.city), (Some(cc("DE")), None));
+        let r = Preset::default().resolve(&file.resolve(Overrides::default(), env("US")));
+        assert_eq!(r.city.as_deref(), Some("Chicago"));
+        let r =
+            Preset::default().resolve(&file.resolve(Overrides::default(), Overrides::default()));
+        assert_eq!(r.city.as_deref(), Some("Chicago"));
     }
 
     #[test]

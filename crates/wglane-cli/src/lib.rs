@@ -19,7 +19,14 @@ pub fn command() -> clap::Command {
 
 /// Parses argv, sets up error reporting and logging, runs the subcommand.
 pub fn run() -> color_eyre::Result<()> {
-    color_eyre::install()?;
+    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        // The blank theme: plain-text error reports.
+        color_eyre::config::HookBuilder::new()
+            .theme(color_eyre::config::Theme::new())
+            .install()?;
+    } else {
+        color_eyre::install()?;
+    }
     let cli = Cli::parse();
     init_tracing(cli.global.verbose);
     let ctx = Context::from_global(&cli.global)?;
