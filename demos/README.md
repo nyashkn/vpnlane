@@ -1,19 +1,35 @@
 # Demo recordings
 
-`cli.md` and `tui.md` are [sprintshow](https://github.com/zookanalytics/sprintshow)
-terminal scripts; `docs/media/{cli,tui}.gif` are made from them.
+`docs/media/{cli,tui}.gif` show only the real terminal: no title card, captions or slides.
+Regenerate with `just demo`; it runs `demos/cli.tape` and `demos/tui.tape` through [VHS](https://github.com/charmbracelet/vhs).
 
-Regenerate with `just demo`. One-time setup (sprintshow is not on npm; nothing is added to this repo):
+Setup: `brew install vhs` (pulls ttyd + ffmpeg), node (for the proxy), network access to api.nordvpn.com. No token, sudo or VPN.
 
-```sh
-git clone https://github.com/zookanalytics/sprintshow ~/.cache/sprintshow-src
-cd ~/.cache/sprintshow-src && npm ci && npm run build && npx playwright install chromium-headless-shell
-```
+## Why VHS
 
-Also needs node >= 22.18, ffmpeg and network access to api.nordvpn.com. No token, sudo or VPN.
+| Option | Verdict |
+|---|---|
+| sprintshow (previous) | Every run renders a title card and step caption bars; no option removes them, only `ffmpeg -ss` cropping of the card. Needs a source checkout, Playwright and a browser. Rejected. |
+| **VHS** | `.tape` is a plain-text keystroke list; output is the terminal only; GIF is written directly (small, deterministic). One brew install. **Chosen.** |
+| hyperframes | HTML/GSAP motion-graphics compositions. Its terminal pieces (`techniques.md` typing effect, `prompt-type-submit-generate`) animate fake text, not a real program, so they cannot show the actual TUI. Not a fit. |
 
-Privacy: `record.sh` runs the shell with an empty temp `HOME`, `WGLANE_CONFIG_DIR=/tmp/wglane-demo`,
-prompt `$ `, and a PATH without `tailscale`. The recording trims sprintshow's 3 s title card. For the TUI, `proxy-first-only.mjs` lets only the
-country-list request through, so the exit-IP lookup fails and the panel reads `unknown`.
-The `servers ZA` output is piped through `awk` to drop the server IP column.
-`doctor` reflects the recording machine's helper/wireguard-tools state. Review the frames before committing.
+## Editing the scripts
+
+`tui.tape` is a short keystroke list: re-edit it after a UI change and run `just demo`.
+- `Type "x"` types literally; `Type@200ms "za"` slows typing; `Down@400ms 3` repeats a key with a gap.
+- `Sleep` after any key that redraws or hits the network (1.5 s+ after launch, 0.5 to 1 s between navigation keys).
+- In `cli.tape`, `Wait+Line@20s /^\$$/` waits for the prompt to return, so network latency cannot race the typing.
+- Look and size live in `settings.tape` (800x440, Nord). Keep each GIF under ~1.5 MB and 20 s.
+
+## Privacy
+
+`record.sh` runs with an empty temp `HOME`, `WGLANE_CONFIG_DIR=/tmp/wglane-demo`, prompt `$ `, a PATH without
+`tailscale`, and `RUST_LOG=error` (warnings otherwise paint over the TUI). For the TUI, `proxy-first-only.mjs`
+lets only the country-list request through so the exit-IP lookup fails and reads `unknown`.
+`servers ZA` is piped through `awk` to drop the server IP column. The tunnel indicator and `doctor` reflect the
+recording machine's state. Review the frames before committing.
+
+The recording shell also runs under `sandbox-exec` with the wireguard run dir hidden (and a dummy mode-600
+token in the temp config dir), so the recorder's real tunnel never shows. The side effect is that `sudo` cannot
+run in there (macOS blocks setuid under sandbox-exec), so the TUI tunnel field reads `unknown (run wglane doctor)`
+instead of `down`. A true `down` needs a seam (e.g. an env override for the sudo path) in wglane-macos.
