@@ -18,7 +18,7 @@ First release. wglane connects a Mac to a NordLynx tunnel and keeps Tailscale wo
 
 #### Check your setup with `wglane doctor`
 
-`wglane doctor` checks prerequisites and prints the fix for each failure. It also checks that the tool directory is root-owned and that bash 4 or newer is installed.
+`wglane doctor` checks prerequisites and prints the fix for each failure. It also checks that the helper's tool directory is root-owned.
 
 #### Stay connected across network changes with `wglane watch`
 
@@ -48,6 +48,6 @@ IPv6 is not tunnelled, so it used to go around the VPN. While a tunnel is up, wg
 
 * `wglane completions` prints shell completions, and `cargo xtask man` builds man pages.
 * Global `--json`, `-v` and `--config-dir` (or `WGLANE_CONFIG_DIR`) options.
-* Releases ship `wglane` and `wglane-helper` in one GitHub archive. Homebrew comes later.
+* Releases ship `wglane` and `wglane-helper` in GitHub archives for Apple silicon and Intel. Homebrew comes later.
 * README and architecture docs now cover the install flow, setup steps and troubleshooting.
 * Known limit: there is no kill switch.
