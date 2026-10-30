@@ -1,0 +1,7 @@
+---
+source: crates/wglane-cli/src/cmd/doctor.rs
+expression: "render(&rows, false).unwrap()"
+---
+ok    wireguard-tools
+FAIL  helper           fix: sudo wglane install-helper
+FAIL  config dir       fix: chmod 700 /home/u/.config/wglane

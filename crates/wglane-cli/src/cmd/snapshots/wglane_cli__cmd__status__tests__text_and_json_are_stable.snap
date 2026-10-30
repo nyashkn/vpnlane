@@ -1,0 +1,8 @@
+---
+source: crates/wglane-cli/src/cmd/status.rs
+expression: "render(&status(), false).unwrap()"
+---
+tunnel         za
+exit ip        192.0.2.7
+tailnet        ok (peer.example.ts.net, 23ms)
+bypass routes  3

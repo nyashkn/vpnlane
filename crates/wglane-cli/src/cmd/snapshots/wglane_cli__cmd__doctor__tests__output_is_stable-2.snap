@@ -1,0 +1,20 @@
+---
+source: crates/wglane-cli/src/cmd/doctor.rs
+expression: "render(&rows, true).unwrap()"
+---
+[
+  {
+    "check": "wireguard-tools",
+    "status": "pass"
+  },
+  {
+    "check": "helper",
+    "fix": "sudo wglane install-helper",
+    "status": "fail"
+  },
+  {
+    "check": "config dir",
+    "fix": "chmod 700 /home/u/.config/wglane",
+    "status": "fail"
+  }
+]
