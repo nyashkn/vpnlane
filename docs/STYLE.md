@@ -40,3 +40,16 @@ filtered for a small CLI.
 - Secrets: never on argv, never in `Debug`, zeroized on drop, files mode 0600.
 - `#[allow]` only narrowly, with `reason = "..."`.
 - Shortcuts with a known limit get `// shortcut: <limit>, <when to upgrade>`.
+
+## Commits and PR titles
+
+Conventional Commits drive releases (flow: [RELEASING.md](RELEASING.md)). The PR title becomes the squash commit on `main`, so the title must carry the prefix.
+
+| Prefix | Means | Release |
+|---|---|---|
+| `feat:` | new user-visible capability | minor bump |
+| `fix:` | bug fix | patch bump |
+| `feat!:` or a `BREAKING CHANGE:` footer | breaking change | pre-1.0 also minor (`bump-minor-pre-major`) |
+| `docs:` `chore:` `ci:` `test:` `refactor:` | no user-visible change | none |
+
+A PR that mixes a feature and a fix should be split, or use `feat:`.
