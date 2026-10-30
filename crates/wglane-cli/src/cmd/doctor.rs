@@ -28,10 +28,10 @@ Every failed check prints the exact command to fix it. The UDP check sends one
 handshake-shaped packet to a server from a generated config. Nord never
 answers it, so it can only prove this machine lets the packet out; whether the
 network delivers it is reported as unknown (`??`, not a failure).",
-    after_help = "\
+    after_help = concat!("\
 Examples:
-  wglane doctor
-  wglane doctor --json"
+  ", brand_name!(), " doctor
+  ", brand_name!(), " doctor --json")
 )]
 pub(crate) struct Args {}
 
@@ -106,7 +106,7 @@ fn check_program<R: CommandRunner>(runner: &R, program: &str, fix: &str) -> Chec
 fn check_helper(path: &Path, owner_uid: u32) -> Check {
     match std::fs::metadata(path) {
         Ok(m) if m.uid() == owner_uid && m.permissions().mode() & 0o022 == 0 => Check::Pass,
-        _ => fail("sudo wglane install-helper"),
+        _ => fail(concat!("sudo ", brand_name!(), " install-helper")),
     }
 }
 
@@ -115,7 +115,7 @@ fn check_helper(path: &Path, owner_uid: u32) -> Check {
 fn check_tools(dir: &Path, top: &Path, owner_uid: u32) -> Check {
     match check_tool_dir(dir, top, owner_uid) {
         Ok(()) => Check::Pass,
-        Err(_) => fail("sudo wglane install-helper"),
+        Err(_) => fail(concat!("sudo ", brand_name!(), " install-helper")),
     }
 }
 
@@ -124,7 +124,7 @@ fn check_sudoers(path: &Path) -> Check {
     if path.exists() {
         Check::Pass
     } else {
-        fail("sudo wglane install-helper")
+        fail(concat!("sudo ", brand_name!(), " install-helper"))
     }
 }
 
@@ -137,26 +137,40 @@ fn check_token<T: TokenSource>(source: &T) -> Check {
     }
 }
 
-const UDP_WHY: &str = "NordLynx only speaks UDP 51820, so `wglane up` will connect but never \
+const UDP_WHY: &str = concat!(
+    "NordLynx only speaks UDP 51820, so `",
+    brand_name!(),
+    " up` will connect but never \
     handshake on a network that blocks it (hotspots, campus, hotel, some ISPs). Options: use \
     another network or a phone hotspot; ask the network owner to allow outbound UDP 51820; \
-    check local firewall/pf rules; or use the Nord app's NordWhisper, which wglane does not \
-    support (see docs/notes/udp-blocked-fallback.md)";
+    check local firewall/pf rules; or use the Nord app's NordWhisper, which ",
+    brand_name!(),
+    " does not \
+    support (see docs/notes/udp-blocked-fallback.md)"
+);
 
 /// A WireGuard server never answers an unauthenticated initiation, so the most
 /// this can prove is that the local stack lets the datagram out.
 fn check_udp<U: UdpProbe>(udp: &U, endpoint: Option<std::net::SocketAddr>) -> Check {
     let Some(endpoint) = endpoint else {
         return Check::Unknown {
-            note: "no generated config to take an endpoint from; run `wglane gen <CC>` and retry"
-                .into(),
+            note: concat!(
+                "no generated config to take an endpoint from; run `",
+                brand_name!(),
+                " gen <CC>` and retry"
+            )
+            .into(),
         };
     };
     match udp.send_probe(endpoint) {
         Ok(()) => Check::Unknown {
-            note: "packet left this machine; delivery cannot be tested without a tunnel. \
-                   If `wglane up` never handshakes, this network may block UDP 51820"
-                .into(),
+            note: concat!(
+                "packet left this machine; delivery cannot be tested without a tunnel. \
+                   If `",
+                brand_name!(),
+                " up` never handshakes, this network may block UDP 51820"
+            )
+            .into(),
         },
         Err(e) => fail(format!("{e}. {UDP_WHY}")),
     }
@@ -189,7 +203,7 @@ fn leak_check(enabled: bool) -> Check {
         Check::Pass
     } else {
         Check::Warn {
-            note: "exit_ip_check = false: `status` cannot tell you if traffic leaks; remove the key or set WGLANE_EXIT_IP_CHECK=true".to_owned(),
+            note: concat!("exit_ip_check = false: `status` cannot tell you if traffic leaks; remove the key or set ", brand_env!("EXIT_IP_CHECK"), "=true").to_owned(),
         }
     }
 }

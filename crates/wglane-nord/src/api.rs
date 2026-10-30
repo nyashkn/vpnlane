@@ -42,7 +42,10 @@ impl NordApi {
         let agent = ureq::Agent::config_builder()
             .tls_config(tls)
             .timeout_global(Some(TIMEOUT))
-            .user_agent(concat!("wglane/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!(
+                concat!(brand_name!(), "/"),
+                env!("CARGO_PKG_VERSION")
+            ))
             .build()
             .into();
         Self {

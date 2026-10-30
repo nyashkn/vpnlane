@@ -3,6 +3,8 @@
 //! This crate does no I/O: adapters in `wglane-nord` and `wglane-macos`
 //! implement the traits in [`ports`], and the binary wires them together.
 
+#[macro_use]
+pub mod brand;
 mod bypass;
 mod config;
 mod country;

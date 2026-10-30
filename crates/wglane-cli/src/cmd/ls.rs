@@ -14,15 +14,15 @@ use crate::context::Context;
 #[derive(Debug, clap::Args)]
 #[command(
     about = "List countries, or the cities of one country with server counts",
-    long_about = "\
+    long_about = concat!("\
 Without COUNTRY: every country the provider serves.
 With COUNTRY: its cities and how many servers each has. Use a name with
-`wglane up COUNTRY --city NAME`.",
-    after_help = "\
+`", brand_name!(), " up COUNTRY --city NAME`."),
+    after_help = concat!("\
 Examples:
-  wglane ls
-  wglane ls US
-  wglane ls DE --json"
+  ", brand_name!(), " ls
+  ", brand_name!(), " ls US
+  ", brand_name!(), " ls DE --json")
 )]
 pub(crate) struct Args {
     /// Country whose cities to list; omit to list countries.

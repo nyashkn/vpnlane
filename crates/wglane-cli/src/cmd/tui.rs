@@ -11,9 +11,9 @@ use crate::context::Context;
 Full-screen terminal dashboard. Press q to quit.
 
 Built only with the `tui` cargo feature (on by default).",
-    after_help = "\
+    after_help = concat!("\
 Examples:
-  wglane tui"
+  ", brand_name!(), " tui")
 )]
 pub(crate) struct Args {}
 
@@ -24,6 +24,10 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     #[cfg(not(feature = "tui"))]
     {
         let _ = ctx;
-        color_eyre::eyre::bail!("this wglane was built without the `tui` feature");
+        color_eyre::eyre::bail!(concat!(
+            "this ",
+            brand_name!(),
+            " was built without the `tui` feature"
+        ));
     }
 }

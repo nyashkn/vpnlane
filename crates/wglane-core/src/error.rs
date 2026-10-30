@@ -20,7 +20,7 @@ pub enum Error {
     InvalidCountryCode(String),
 
     /// The provider does not serve this country.
-    #[error("unknown country {0}: run `wglane servers` to list supported countries")]
+    #[error("unknown country {}: run `{} servers` to list supported countries", .0, crate::brand::BIN)]
     UnknownCountry(CountryCode),
 
     /// The country has no city by this name.

@@ -32,19 +32,19 @@ cleared by `down`.
 
 Only the shape of a preset's city is checked when the file is read; it is
 checked against Nord's list when you apply, and the error lists valid cities.",
-    after_help = "\
+    after_help = concat!("\
 Examples:
-  wglane preset list              numbered key, name, label, summary; * marks the active one
-  wglane preset show work         the resolved request, and what applying it would change now
-  wglane preset apply work        connect (same as `wglane up --preset work`)
-  wglane preset list --json
+  ", brand_name!(), " preset list              numbered key, name, label, summary; * marks the active one
+  ", brand_name!(), " preset show work         the resolved request, and what applying it would change now
+  ", brand_name!(), " preset apply work        connect (same as `", brand_name!(), " up --preset work`)
+  ", brand_name!(), " preset list --json
 
 Config:
   preset_order = [\"work\", \"home\"]
   [presets.work]
   label = \"Office exit\"
   country = \"DE\"
-  city = \"Berlin\""
+  city = \"Berlin\"")
 )]
 pub(crate) struct Args {
     #[command(subcommand)]
@@ -60,7 +60,7 @@ enum Action {
         /// Preset name.
         name: String,
     },
-    /// Connect with a preset (same as `wglane up --preset NAME`).
+    #[command(about = concat!("Connect with a preset (same as `", brand_name!(), " up --preset NAME`)"))]
     Apply {
         /// Preset name.
         name: String,
@@ -162,10 +162,12 @@ fn list(settings: &Effective, active: Option<&str>, json: bool) -> Result<String
         return Ok(serde_json::to_string_pretty(&rows)?);
     }
     if presets.is_empty() {
-        return Ok(
-            "no presets: add [presets.NAME] tables to config.toml (see `wglane config init`)"
-                .to_owned(),
-        );
+        return Ok(concat!(
+            "no presets: add [presets.NAME] tables to config.toml (see `",
+            brand_name!(),
+            " config init`)"
+        )
+        .to_owned());
     }
     let w = |f: fn(&NamedPreset) -> usize| presets.iter().map(f).max().unwrap_or(0);
     let (nw, lw) = (
@@ -206,7 +208,12 @@ fn show(
             .map(|p| p.name.as_str())
             .collect();
         return Err(color_eyre::eyre::eyre!(
-            "unknown preset {name:?}: {} (see `wglane preset list`)",
+            concat!(
+                "unknown preset {:?}: {} (see `",
+                brand_name!(),
+                " preset list`)"
+            ),
+            name,
             if names.is_empty() {
                 "none defined in config.toml".to_owned()
             } else {

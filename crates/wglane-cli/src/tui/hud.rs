@@ -168,9 +168,12 @@ pub(crate) fn state_spans(s: &State, tiny: bool) -> Vec<Span<'static>> {
 fn sub_line(s: &State) -> Line<'static> {
     let text = match (&s.busy, s.connected_cc()) {
         (Some(_), _) => "keys that change the tunnel wait; space, b and ? still work".to_owned(),
-        (None, _) if s.status.is_some() && !s.tunnel_known => {
-            "r retries · run `wglane doctor` in a shell to see why".to_owned()
-        }
+        (None, _) if s.status.is_some() && !s.tunnel_known => concat!(
+            "r retries · run `",
+            brand_name!(),
+            " doctor` in a shell to see why"
+        )
+        .to_owned(),
         (None, Some(cc)) => {
             let mut parts = Vec::new();
             match s
@@ -405,7 +408,11 @@ fn error_lines(s: &State) -> Vec<Line<'static>> {
     let next = if s.udp == Some(Udp::Blocked) {
         "switch network (a phone hotspot often works) · enter retries · space jump"
     } else {
-        "enter retries · space jump · wglane doctor in a shell for the full check"
+        concat!(
+            "enter retries · space jump · ",
+            brand_name!(),
+            " doctor in a shell for the full check"
+        )
     };
     let mut err = vec![label("error")];
     err.push(Span::styled(

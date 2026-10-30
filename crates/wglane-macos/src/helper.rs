@@ -23,16 +23,16 @@ use crate::{CommandOutput, CommandRunner, RouteTable, WgGo};
 
 /// Root-owned install location of `wglane-helper` (never the user-writable
 /// Homebrew copy: a sudoers rule on a user-writable binary is a root exploit).
-pub const HELPER_PATH: &str = "/usr/local/libexec/wglane-helper";
+pub use wglane_core::brand::HELPER_PATH;
 
 /// Root-owned (0700) directory where the helper keeps the configs it renders
 /// and its bypass-route record. Nothing in it is ever taken from the caller.
-pub const STATE_DIR: &str = "/var/db/wglane";
+pub use wglane_core::brand::STATE_DIR;
 
 /// Root-owned copies of `wg` and `wireguard-go`, put there by `install-helper`
 /// after checking they load only system libraries. Homebrew's own copies are
 /// user-writable, so the helper never runs them.
-pub const TOOL_DIR: &str = "/usr/local/libexec/wglane/bin";
+pub use wglane_core::brand::TOOL_DIR;
 /// What `install-helper` copies into [`TOOL_DIR`]: the only non-system
 /// programs root ever runs.
 pub(crate) const TOOLS: [&str; 2] = ["wg", "wireguard-go"];
@@ -189,7 +189,12 @@ impl UpRequest {
         if *req.render() == text {
             Ok(req)
         } else {
-            Err("config has lines wglane did not generate (PostUp?); regenerate it".into())
+            Err(concat!(
+                "config has lines ",
+                brand_name!(),
+                " did not generate (PostUp?); regenerate it"
+            )
+            .into())
         }
     }
 }
@@ -269,10 +274,10 @@ impl<R: CommandRunner> HelperClient<R> {
         }
         let mut stderr = out.stderr.trim().to_owned();
         if stderr.contains("password is required") || stderr.contains("terminal is required") {
-            stderr.push_str("; run `sudo wglane install-helper`");
+            stderr.push_str(concat!("; run `sudo ", brand_name!(), " install-helper`"));
         }
         Err(Error::Command {
-            program: "sudo wglane-helper".into(),
+            program: concat!("sudo ", brand_name!(), "-helper").into(),
             status: out
                 .code
                 .map_or_else(|| "killed by signal".into(), |c| format!("exit {c}")),
@@ -326,7 +331,7 @@ impl<R: CommandRunner> Tunnel for HelperClient<R> {
 
 fn bad_conf(conf: &Path, why: &str) -> Error {
     Error::Command {
-        program: "wglane".into(),
+        program: brand_name!().into(),
         status: "refused".into(),
         stderr: format!("{}: {why}", conf.display()),
     }
@@ -386,7 +391,8 @@ impl fmt::Display for HelperError {
         match self {
             Self::Usage(m) => write!(
                 f,
-                "{m}\nusage: wglane-helper up <CC> < fields | down | active | bypass <gateway> <cidr>..."
+                "{m}\nusage: {}-helper up <CC> < fields | down | active | bypass <gateway> <cidr>...",
+                brand_name!()
             ),
             Self::Run(e) => write!(f, "{e}"),
         }
@@ -510,7 +516,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
         let real = self.routes.physical_gateway()?;
         if real != gateway {
             return Err(HelperError::Run(Error::Command {
-                program: "wglane-helper".into(),
+                program: concat!(brand_name!(), "-helper").into(),
                 status: "refused".into(),
                 stderr: format!("{gateway} is not the physical gateway ({real})"),
             }));
@@ -562,7 +568,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
             Ok(true)
         } else {
             Err(Error::Command {
-                program: "wglane-helper".into(),
+                program: concat!(brand_name!(), "-helper").into(),
                 status: "refused".into(),
                 stderr: format!(
                     "{} must be a real directory owned by uid {}, mode 0700",
@@ -731,7 +737,10 @@ impl CommandRunner for RootRunner {
 /// 2 bad usage or not root.
 pub fn helper_main() -> ExitCode {
     if !rustix::process::geteuid().is_root() {
-        eprintln!("wglane-helper: must run as root (via `sudo -n`)");
+        eprintln!(concat!(
+            brand_name!(),
+            "-helper: must run as root (via `sudo -n`)"
+        ));
         return ExitCode::from(2);
     }
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
@@ -747,11 +756,11 @@ pub fn helper_main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e @ HelperError::Usage(_)) => {
-            eprintln!("wglane-helper: {e}");
+            eprintln!("{}-helper: {e}", brand_name!());
             ExitCode::from(2)
         }
         Err(e) => {
-            eprintln!("wglane-helper: {e}");
+            eprintln!("{}-helper: {e}", brand_name!());
             ExitCode::from(1)
         }
     }
