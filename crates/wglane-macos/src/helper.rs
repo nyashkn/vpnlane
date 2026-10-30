@@ -351,7 +351,7 @@ impl<R: CommandRunner> RouteBypass for HelperClient<R> {
 
     /// No-op: the helper records what it installed and removes it on `down`
     /// (and removes stale entries on the next `bypass`). There is no
-    /// standalone clear verb; see the open question in `docs/ARCHITECTURE.md`.
+    /// standalone clear verb: `bypass` replaces the recorded routes, `down` removes them.
     fn clear(&self, _set: &BypassSet) -> Result<()> {
         Ok(())
     }

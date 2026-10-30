@@ -2,12 +2,14 @@
 
 Use NordVPN (NordLynx/WireGuard) on macOS without breaking Tailscale or
 Headscale. One command connects to a Nord country; your tailnet keeps working,
-and it keeps working when you change Wi-Fi. Rust CLI and TUI.
+and it keeps working when you change Wi-Fi (leave `wglane watch` running in a
+terminal for that). Rust CLI and TUI.
 
 > **Status: pre-alpha.** Unit tested against fakes and smoke-tested by hand on
-> one Mac across four networks (home Wi-Fi, two phone hotspots). Not audited,
-> no long soak: expect rough edges and run `wglane doctor` first. macOS only.
-> Not packaged yet; build from source. **Known gap:** IPv6 is not tunnelled, so
+> one Mac across several networks (home Wi-Fi and two phone hotspots). Not
+> audited, no long soak: expect rough edges and run `wglane doctor` first.
+> macOS only. No release is published yet, so build from source (once
+> released: `brew install nyashkn/tap/wglane-cli`). **Known gap:** IPv6 is not tunnelled, so
 > on a dual-stack network IPv6 traffic bypasses the VPN (see
 > [Security model and known limits](#security-model-and-known-limits)).
 
@@ -50,83 +52,95 @@ fetch your WireGuard key and server list.
    wglane watch: Wi-Fi changes ─▶ re-point those host routes at the new gateway
 ```
 
+Surviving a Wi-Fi change needs `wglane watch` running in the foreground. Without
+it the routes keep pointing at the old gateway.
+
 The tunnel's own packets and Tailscale's underlay must skip the tunnel or the
 tailnet dies. That is the whole trick: host routes via the physical gateway,
 no `DNS =` line, and a watcher that keeps them correct as networks change.
 
-## Install
+## Install and set up
 
-From source (no release is published yet):
+Do these in order.
 
-```sh
-brew install wireguard-tools wireguard-go   # provides wg and wireguard-go
-cargo install --path crates/wglane-cli
-sudo wglane install-helper            # one time, see "Privilege model"
-wglane doctor                         # what is still missing, and the fix
-```
+1. Clone: `git clone https://github.com/nyashkn/wglane && cd wglane`
+2. Prerequisites:
+   - macOS with the Xcode Command Line Tools (`xcode-select --install`).
+   - Rust, via [rustup](https://rustup.rs).
+   - Homebrew packages: `brew install wireguard-tools wireguard-go`.
+   - The `tailscale` CLI on your `PATH`. wglane needs it to find the control
+     server and relays it must protect; without it `up` installs 0 bypass
+     routes and the tailnet is not protected. With the Tailscale app: Settings
+     > Install CLI.
+   - A NordVPN subscription. Quit the Nord app first; two VPNs on one Mac conflict.
+3. Build and install: `just install`. It runs the three commands below, with the
+   full path to `wglane` because `sudo` does not search `~/.cargo/bin`:
 
-## Set up
+   ```sh
+   cargo install --path crates/wglane-cli --locked   # wglane and wglane-helper
+   sudo "$(command -v wglane)" install-helper        # one time, asks for your password
+   wglane doctor                                     # what is still missing, and the fix
+   ```
 
-1. Prerequisites: macOS, [Tailscale](https://tailscale.com) (optional but the
-   point), Homebrew, Rust, and a NordVPN subscription.
-2. Create an access token: Nord account > Services > NordVPN > Access token.
-3. Build and install (the block under [Install](#install)), then run
-   `sudo wglane install-helper` once. It asks for your password once; every
-   later `up`/`down` is passwordless.
-4. Save the token: `mkdir -p ~/.config/wglane && (umask 077; pbpaste > ~/.config/wglane/token)`.
+   After this, `up` and `down` need no password.
+4. Create an access token and save it in the same step. Click path and
+   details: [docs/TOKEN.md](docs/TOKEN.md) (Nord Account > NordVPN > Advanced
+   settings > Get access token). Copy it, then:
+
+   ```sh
+   mkdir -p ~/.config/wglane && (umask 077; pbpaste > ~/.config/wglane/token)
+   ```
+
+   Or `export WGLANE_TOKEN=...` (the env var wins over the file). Never pass
+   the token as an argument.
 5. `wglane doctor` should print `ok` on every line.
 6. `wglane up US`, then `wglane status`: the exit IP is Nord's and `tailnet`
-   says `ok`. `wglane down` when done, and before a reboot.
+   says `ok`. Run `wglane down` when done. (`up` leaves the rendered key in a
+   root-only state directory until `down` removes it.)
 
 ## Quick use
 
 ```sh
-# Access token from Nord account > Access token. Never pass it as an argument.
-mkdir -p ~/.config/wglane && (umask 077; pbpaste > ~/.config/wglane/token)
-# or: export WGLANE_TOKEN=...   (the env var wins over the file)
-
+# Token saved as in "Install and set up" above.
 wglane up ZA        # connect (the config is generated or refreshed as needed)
 wglane status       # country, exit IP, tailnet check, bypass routes
 wglane down
 wglane tui          # dashboard: pick a country, connect, live latency
 wglane watch        # re-apply bypass routes when you change networks
 wglane doctor       # checks wg, tailscale, helper, sudoers, token, config dir
+wglane servers [CC] # list countries, or ranked servers in one country
+wglane gen ZA       # write the WireGuard config without connecting
+wglane completions zsh   # shell completions
+sudo "$(command -v wglane)" install-helper --uninstall   # remove the helper
 ```
 
 `wglane --help` and `wglane <command> --help` have examples for everything.
-`status` and `servers` take `--json`.
+`--json` works on every command, `-v`/`-vv`/`-vvv` add log output, and
+`--config-dir` (or `WGLANE_CONFIG_DIR`) moves the config directory.
 
 ## Troubleshooting
 
 - `doctor` names the missing piece and the fix. Start there.
 - Internet works but the tailnet is down: run `wglane status`. If bypass routes
-  read `0`, run `wglane down` then `wglane up <CC>` (a tunnel without its bypass
-  routes is removed automatically).
+  read `0`, check that `tailscale status` works and the `tailscale` CLI is on
+  your `PATH`, then run `wglane up <CC>`.
 - After switching Wi-Fi with no `wglane watch` running, routes point at the old
   gateway. Run `wglane watch` (leave it open) or `wglane up <CC>` again.
 - After upgrading `wireguard-tools`/`wireguard-go`: `sudo wglane install-helper`.
 
 ## Privilege model
 
-Bringing a tunnel up and editing routes needs root. wglane does not run as
-root. `sudo wglane install-helper` copies `wglane-helper` to the root-owned
-`/usr/local/libexec/wglane-helper` and adds a sudoers rule that lets you run
-only that binary without a password. The helper accepts four verbs (`up <CC>`,
-`down`, `active`, `bypass <gateway> <cidr>...`), takes no paths from the caller,
-renders the WireGuard config itself from three validated fields, refuses bypass
-routes unless the gateway is the real physical gateway, and keeps its state
-(including which `utunN` is wglane's) in a root-only directory
-(`/var/db/wglane`). Anything that can run commands as your user can use those
-verbs, so treat the helper as a capability of your account, not as isolation
-from it. Root runs no shell and no script: the helper drives the tunnel itself
-with just `wireguard-go` and `wg` plus `/sbin/ifconfig` and `/sbin/route`.
-`install-helper` copies `wg` and `wireguard-go` into root-owned
-`/usr/local/libexec/wglane/bin` and refuses to install unless `otool -L` shows
-each copied binary (and the helper) loads only `/usr/lib` and `/System/Library`
-libraries. Before every run the helper refuses either tool unless the file and
-every parent directory is root-owned, not group/other-writable and has no ACL.
-After upgrading `wireguard-tools` or `wireguard-go`, re-run
-`sudo wglane install-helper`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Bringing a tunnel up and editing routes needs root; wglane itself does not run
+as root. `sudo wglane install-helper` copies a small helper to a root-owned path
+and adds one sudoers rule that lets you run only that binary without a password.
+The helper has four fixed verbs, takes no paths from the caller, runs no shell,
+and refuses bypass routes unless the gateway is the real physical gateway. It
+needs `wg` and `wireguard-go` from Homebrew: `install-helper` copies them into a
+root-owned directory, so after upgrading either, re-run it. Anything that can run
+commands as your user can use the helper, so treat it as a capability of your
+account, not isolation from it. Full design:
+[ARCHITECTURE.md, "Privilege split"](docs/ARCHITECTURE.md#privilege-split) and
+"Trusted install" in the same section.
 
 ## Security model and known limits
 
@@ -140,7 +154,7 @@ wglane is pre-alpha and has not been audited. What it does not protect against:
   use the helper to send host traffic (`0.0.0.0/1` + `128.0.0.0/1`) to any
   WireGuard peer on the NordLynx port, with keys that process chooses.
   Endpoints are not limited to Nord servers.
-- `install-helper` trusts the `/opt/homebrew/bin` symlinks and the running
+- `install-helper` trusts the `/opt/homebrew/bin` and `/usr/local/bin` symlinks and the running
   executable (`current_exe`) at install time. If either was already replaced,
   root copies the replacement. `otool -L` does not see `dlopen`,
   `LC_DYLD_ENVIRONMENT` or `LC_LOAD_DYLINKER`, so the dependency check is a

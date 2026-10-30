@@ -9,7 +9,7 @@ filtered for a small CLI.
 
 | Rule | Here |
 |---|---|
-| Name a file after its primary item | `render.rs` holds `render_wg_conf`, `tunnel.rs` holds `WgQuick`. Also our parallel-work unit. |
+| Name a file after its primary item | `render.rs` holds `render_wg_conf`, `tunnel.rs` holds `WgGo`. |
 | No real code in non-leaf modules | `lib.rs` and `mod.rs` hold `mod` + `pub use` only (plus `cli`'s dispatch match). |
 | No glob imports | except `use super::*` in `mod tests`. |
 | Generics over `dyn` in libraries | ports are taken as `T: Port`. |
@@ -38,7 +38,5 @@ filtered for a small CLI.
 - Library errors: `wglane_core::Error` via `thiserror`; messages say what to
   do next. `color-eyre` only in binaries.
 - Secrets: never on argv, never in `Debug`, zeroized on drop, files mode 0600.
-- Every stub returns `Error::NotImplemented("...")` and carries
-  `// TODO(bead): <id>: <what>`.
 - `#[allow]` only narrowly, with `reason = "..."`.
 - Shortcuts with a known limit get `// shortcut: <limit>, <when to upgrade>`.
