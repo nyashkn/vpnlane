@@ -5,15 +5,28 @@ All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog
 ## [0.5.0](https://github.com/nyashkn/vpnlane/compare/v0.4.0...v0.5.0) (2026-10-30)
 
 
+This release renames the tool from wglane to vpnlane. It is a hard cut with no compatibility layer, so follow the upgrade steps below before you run the new binary.
+
 ### ⚠ BREAKING CHANGES
 
-* root-side paths renamed. Run `wglane down` with the old binary, then `sudo vpnlane install-helper`; it removes the old helper, tools and sudoers rule. See docs/UPGRADING.md.
-* hard cut, no compatibility layer. The binary is now `vpnlane` (and `vpnlane-helper`); the config dir is ~/.config/vpnlane (move ~/.config/wglane yourself); all WGLANE_* env vars are now VPNLANE_*; release archives are vpnlane-cli-<target>.tar.xz. Run `wglane down` before upgrading, remove ~/.cargo/bin/wglane*, then `sudo vpnlane install-helper`. Root paths (/usr/local/libexec/wglane*, /etc/sudoers.d/wglane, /var/db/wglane) are unchanged until a follow-up. See docs/UPGRADING.md.
+* The binary is now `vpnlane` (and `vpnlane-helper`). The config dir is `~/.config/vpnlane`; move `~/.config/wglane` yourself. All `WGLANE_*` env vars are now `VPNLANE_*`. Release archives are `vpnlane-cli-<target>.tar.xz`.
+* Root-side paths are renamed too. Installing the new helper removes the old helper, tools and sudoers rule.
+* To upgrade: run `wglane down` with the old binary, remove `~/.cargo/bin/wglane*`, then run `sudo vpnlane install-helper`. See docs/UPGRADING.md.
 
 ### What's New
 
-* migrate helper, sudoers and root state to vpnlane paths (R3) ([#41](https://github.com/nyashkn/vpnlane/issues/41)) ([5569031](https://github.com/nyashkn/vpnlane/commit/556903165ffa9695b4a5e131178a0751b86aad5f))
-* rename CLI to vpnlane (binary, config dir, env vars) ([#39](https://github.com/nyashkn/vpnlane/issues/39)) ([202b9a0](https://github.com/nyashkn/vpnlane/commit/202b9a057ffd6c7c4afef977e39b1f6ad7b64636))
+#### The CLI is now `vpnlane` ([#39](https://github.com/nyashkn/vpnlane/issues/39))
+
+The binary, config dir and env vars all used the name wglane. They now use vpnlane, as listed above.
+
+#### Helper, sudoers and root state move to vpnlane paths ([#41](https://github.com/nyashkn/vpnlane/issues/41))
+
+After the rename, the root-side files still used wglane paths. The helper, the sudoers rule and the root state now use vpnlane paths. `sudo vpnlane install-helper` removes the old ones.
+
+### Smaller changes
+
+* Docs now use the vpnlane URLs, the README is restructured, and the demo recordings are re-recorded ([#42](https://github.com/nyashkn/vpnlane/issues/42)).
+* The docs cover a `vl` alias command ([#42](https://github.com/nyashkn/vpnlane/issues/42)).
 
 ## [0.4.0](https://github.com/nyashkn/wglane/compare/v0.3.0...v0.4.0) (2026-10-30)
 
