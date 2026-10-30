@@ -1,11 +1,15 @@
 # wglane
 
-NordLynx (WireGuard) tunnels on macOS that leave Tailscale and Headscale working.
+Use NordVPN (NordLynx/WireGuard) on macOS without breaking Tailscale or
+Headscale. One command connects to a Nord country; your tailnet keeps working,
+and it keeps working when you change Wi-Fi. Rust CLI and TUI.
 
-> **Status: pre-alpha (v0.1 in progress).** `up`, `down`, `status`, `servers`,
-> `gen`, `doctor`, `watch`, `tui` and `install-helper` are implemented and unit
-> tested against fakes. It has not had a real-world soak: expect rough edges and
-> check `wglane doctor` first. macOS only. Not packaged yet; build from source.
+> **Status: pre-alpha.** Unit tested against fakes and smoke-tested by hand on
+> one Mac across four networks (home Wi-Fi, two phone hotspots). Not audited,
+> no long soak: expect rough edges and run `wglane doctor` first. macOS only.
+> Not packaged yet; build from source. **Known gap:** IPv6 is not tunnelled, so
+> on a dual-stack network IPv6 traffic bypasses the VPN (see
+> [Security model and known limits](#security-model-and-known-limits)).
 
 ## Why
 
@@ -22,6 +26,34 @@ keeps working; everything else exits through the VPN.
 wglane is not affiliated with Nord Security. It uses Nord's public API to
 fetch your WireGuard key and server list.
 
+## How it works
+
+```
+ you ── wglane up ZA ──┐
+                       ▼
+   ┌──────────────────────────────┐   unprivileged (your user)
+   │ wglane  (CLI / TUI / watch)  │   token ─▶ Nord API ─▶ za.conf (key + server)
+   └───────────────┬──────────────┘
+                   │ sudo, one rule, one binary
+                   ▼
+   ┌──────────────────────────────┐   root, no shell
+   │ wglane-helper                │   wireguard-go + wg + ifconfig + route
+   └───────────────┬──────────────┘
+                   ▼
+   routing table
+     0.0.0.0/1, 128.0.0.0/1 ──────────────▶ utunN ─▶ Nord (everything else)
+     Nord server /32      ─┐
+     Tailscale control /32 ├─ via your real gateway (en0), NOT the tunnel
+     every DERP relay /32 ─┘
+     100.64.0.0/10 ──────────────────────▶ Tailscale (unchanged)
+
+   wglane watch: Wi-Fi changes ─▶ re-point those host routes at the new gateway
+```
+
+The tunnel's own packets and Tailscale's underlay must skip the tunnel or the
+tailnet dies. That is the whole trick: host routes via the physical gateway,
+no `DNS =` line, and a watcher that keeps them correct as networks change.
+
 ## Install
 
 From source (no release is published yet):
@@ -32,6 +64,19 @@ cargo install --path crates/wglane-cli
 sudo wglane install-helper            # one time, see "Privilege model"
 wglane doctor                         # what is still missing, and the fix
 ```
+
+## Set up
+
+1. Prerequisites: macOS, [Tailscale](https://tailscale.com) (optional but the
+   point), Homebrew, Rust, and a NordVPN subscription.
+2. Create an access token: Nord account > Services > NordVPN > Access token.
+3. Build and install (the block under [Install](#install)), then run
+   `sudo wglane install-helper` once. It asks for your password once; every
+   later `up`/`down` is passwordless.
+4. Save the token: `mkdir -p ~/.config/wglane && (umask 077; pbpaste > ~/.config/wglane/token)`.
+5. `wglane doctor` should print `ok` on every line.
+6. `wglane up US`, then `wglane status`: the exit IP is Nord's and `tailnet`
+   says `ok`. `wglane down` when done, and before a reboot.
 
 ## Quick use
 
@@ -50,6 +95,16 @@ wglane doctor       # checks wg, tailscale, helper, sudoers, token, config dir
 
 `wglane --help` and `wglane <command> --help` have examples for everything.
 `status` and `servers` take `--json`.
+
+## Troubleshooting
+
+- `doctor` names the missing piece and the fix. Start there.
+- Internet works but the tailnet is down: run `wglane status`. If bypass routes
+  read `0`, run `wglane down` then `wglane up <CC>` (a tunnel without its bypass
+  routes is removed automatically).
+- After switching Wi-Fi with no `wglane watch` running, routes point at the old
+  gateway. Run `wglane watch` (leave it open) or `wglane up <CC>` again.
+- After upgrading `wireguard-tools`/`wireguard-go`: `sudo wglane install-helper`.
 
 ## Privilege model
 
@@ -77,6 +132,10 @@ After upgrading `wireguard-tools` or `wireguard-go`, re-run
 
 wglane is pre-alpha and has not been audited. What it does not protect against:
 
+- IPv6. The Nord config is IPv4-only and wglane adds no IPv6 default route, so
+  on a network that gives you IPv6 (some mobile hotspots) IPv6 traffic leaves
+  outside the VPN while IPv4 goes through Nord. `curl -6 ifconfig.me` shows it.
+  Not a kill switch either: if the tunnel drops, traffic is not blocked.
 - The sudo rule is a capability of your account. Any process running as you can
   use the helper to send host traffic (`0.0.0.0/1` + `128.0.0.0/1`) to any
   WireGuard peer on the NordLynx port, with keys that process chooses.
