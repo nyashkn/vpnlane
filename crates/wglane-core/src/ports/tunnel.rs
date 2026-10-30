@@ -4,7 +4,7 @@ use crate::Result;
 
 /// Brings WireGuard interfaces up and down.
 ///
-/// macOS: `wglane_macos::WgQuick` (as root, inside the helper) and
+/// macOS: `wglane_macos::WgGo` (as root, inside the helper) and
 /// `wglane_macos::HelperClient` (unprivileged, calls the helper).
 pub trait Tunnel {
     /// Brings up the tunnel described by the wg-quick config at `conf`.

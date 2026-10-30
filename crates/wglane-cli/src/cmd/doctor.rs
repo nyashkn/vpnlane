@@ -20,7 +20,7 @@ use crate::context::Context;
     long_about = "\
 Checks: wireguard-tools installed, tailscale installed, helper installed
 root-owned with its sudoers rule, root-owned tool directory
-(bash, wg-quick, wg, wireguard-go), token present with mode 600, config
+(wg, wireguard-go), token present with mode 600, config
 directory private to you.
 
 Every failed check prints the exact command to fix it.",
@@ -207,7 +207,7 @@ mod tests {
         let bin = d.join("bin");
         fs::create_dir(&bin).unwrap();
         assert_eq!(check_tools(&bin, &top, uid), fix, "empty");
-        for t in ["bash", "wg-quick", "wg", "wireguard-go"] {
+        for t in ["wg", "wireguard-go"] {
             fs::write(bin.join(t), t).unwrap();
         }
         assert_eq!(check_tools(&bin, &top, uid), Check::Pass);
