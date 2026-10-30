@@ -1,10 +1,7 @@
 # CLI demo -> docs/media/cli.gif (run via `just demo`). Edit commands freely.
 Source demos/settings.tape
 Output docs/media/cli.gif
-# Hidden start: re-exec the shell where $NOTUN (set by record.sh) hides the real wireguard run dir.
 Hide
-Type 'exec sandbox-exec -p "$NOTUN" bash' Enter
-Sleep 500ms
 Type "clear" Enter
 Show
 Type "vpnlane --help | head -16" Enter

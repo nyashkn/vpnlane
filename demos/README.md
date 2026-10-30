@@ -26,13 +26,14 @@ Setup: `brew install vhs` (pulls ttyd + ffmpeg), node (for the proxy), network a
 
 `record.sh` runs with an empty temp `HOME`, `VPNLANE_CONFIG_DIR=/tmp/vpnlane-demo`, prompt `$ `, a PATH without
 `tailscale`, and `RUST_LOG=error` for the CLI tape (the TUI logs to `<config dir>/tui.log`, so it needs none), and
-made-up presets in `config.toml`. For the TUI, `proxy-first-only.mjs`
-lets only the country-list request through so the exit-IP lookup fails and reads `unknown`; the server
-lookups fail too, so the palette's latency and load read `-` (the snapshots in the TUI tests show the bars).
+made-up presets in `config.toml`. For the TUI, `proxy-nord-only.mjs`
+tunnels only HTTPS to api.nordvpn.com (the country and server lists load for real, so the palette shows places)
+and refuses the plain-HTTP exit-IP lookup, so the exit reads `unknown`; latency and load may still read `-`
+(the snapshots in the TUI tests show the bars).
 `servers ZA` is piped through `awk` to drop the server IP column. The tunnel indicator and `doctor` reflect the
 recording machine's state. Review the frames before committing.
 
-The recording shell also runs under `sandbox-exec` with the wireguard run dir hidden (and a dummy mode-600
-token in the temp config dir), so the recorder's real tunnel never shows. The side effect is that `sudo` cannot
-run in there (macOS blocks setuid under sandbox-exec), so the TUI tunnel state reads `? unknown  the helper did not answer`
-instead of `down`. A true `down` needs a seam (e.g. an env override for the sudo path) in vpnlane-macos.
+The recording shows the real tunnel state through the real root helper (a read-only `status` query), with a dummy
+mode-600 token in the temp config dir. `record.sh` refuses to run unless `vpnlane status` reports `down`, so
+a live tunnel can never end up in a GIF; run `vpnlane down` first. `doctor` shows what the recording machine
+lacks (for example `tailscale`, which is kept off PATH on purpose).
