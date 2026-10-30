@@ -2,6 +2,13 @@
 
 All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.1.1](https://github.com/nyashkn/wglane/compare/v0.1.0...v0.1.1) (2026-10-30)
+
+
+### Fixes
+
+* **release:** upload to release-please's release, keep Cargo.lock in step, README install ([#14](https://github.com/nyashkn/wglane/issues/14)) ([7034d1d](https://github.com/nyashkn/wglane/commit/7034d1d84f7cbd970046c880a3c803b2f0db6ceb))
+
 ## [0.1.0](https://github.com/nyashkn/wglane/compare/v0.0.1...v0.1.0) (2026-10-30)
 
 First release. wglane connects a Mac to a NordLynx tunnel and keeps Tailscale working alongside it. Install it, run `wglane up <CC>` with a country code, and your tailnet stays reachable.
