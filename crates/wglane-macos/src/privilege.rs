@@ -125,6 +125,51 @@ pub(crate) fn trusted_tool(
     Ok(canon)
 }
 
+/// Fails unless each helper tool (bash, wg-quick, wg, wireguard-go) in `dir` is
+/// a root-owned regular file under a trusted chain: the helper's run-time check.
+pub fn check_tool_dir(dir: &Path, top: &Path, owner: u32) -> Result<()> {
+    let dir = fs::canonicalize(dir).map_err(|e| {
+        Error::io(
+            format!(
+                "finding {} (run `sudo wglane install-helper`)",
+                dir.display()
+            ),
+            e,
+        )
+    })?;
+    TOOLS
+        .iter()
+        .try_for_each(|t| trusted_tool(&dir.join(t), &dir, top, owner).map(drop))
+}
+
+/// Refuses a bash older than 4 (wg-quick needs it). The version comes from the
+/// Homebrew Cellar path (`.../Cellar/bash/<ver>/...`), never by running the
+/// user-writable binary as root.
+fn require_bash4(bash: &Path) -> Result<()> {
+    let fix = "run `brew install bash` as your user, then retry";
+    let canon = fs::canonicalize(bash)
+        .map_err(|e| Error::io(format!("resolving {}", bash.display()), e))?;
+    let parts: Vec<_> = canon
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect();
+    let major = parts
+        .windows(3)
+        .find(|w| w[0] == "Cellar" && w[1] == "bash")
+        .and_then(|w| w[2].split('.').next()?.parse::<u32>().ok());
+    match major {
+        Some(m) if m >= 4 => Ok(()),
+        Some(m) => Err(invalid(format!(
+            "{} is bash {m}; wg-quick needs bash 4 or newer: {fix}",
+            canon.display()
+        ))),
+        None => Err(invalid(format!(
+            "cannot tell the version of {} (not a Homebrew Cellar bash); wg-quick needs bash 4 or newer: {fix}",
+            canon.display()
+        ))),
+    }
+}
+
 /// Where [`install_helper`] writes. Production values come from [`Layout::system`];
 /// tests point it into a temp dir.
 struct Layout {
@@ -226,6 +271,12 @@ fn install_at<R: CommandRunner>(runner: &R, l: &Layout, user: &str, source: &Pat
                 })
         })
         .collect::<Result<Vec<_>>>()?;
+    require_bash4(
+        &sources[TOOLS
+            .iter()
+            .position(|t| *t == "bash")
+            .expect("bash is a tool")],
+    )?;
     let dir = l
         .helper
         .parent()
@@ -373,6 +424,12 @@ mod tests {
         for tool in TOOLS {
             fs::write(brew.join(tool), tool).unwrap();
         }
+        // bash is a Homebrew-style symlink into the Cellar, as on a real Mac.
+        let bin = t.path().join("Cellar/bash/5.2.37/bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("bash"), "bash").unwrap();
+        fs::remove_file(brew.join("bash")).unwrap();
+        std::os::unix::fs::symlink(bin.join("bash"), brew.join("bash")).unwrap();
         let l = Layout {
             helper: dir.join("wglane-helper"),
             sudoers: sudoers_d.join("wglane"),
@@ -475,6 +532,47 @@ mod tests {
         let err = install_at(&r, &l, "kn", &src).unwrap_err().to_string();
         assert!(err.contains("wg-quick not found"), "{err}");
         assert!(r.calls().is_empty() && !l.helper.exists() && !l.tools.exists());
+    }
+
+    #[test]
+    fn old_or_unknown_bash_touches_nothing() {
+        for ver in ["3.2.57", ""] {
+            let (t, l, src) = fixture();
+            let target = if ver.is_empty() {
+                t.path().join("plain-bash")
+            } else {
+                let b = t.path().join(format!("Cellar/bash/{ver}/bin"));
+                fs::create_dir_all(&b).unwrap();
+                b.join("bash")
+            };
+            fs::write(&target, "bash").unwrap();
+            let link = l.tool_sources[0].join("bash");
+            fs::remove_file(&link).unwrap();
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let r = FakeRunner::new();
+            let err = install_at(&r, &l, "kn", &src).unwrap_err();
+            assert!(err.to_string().contains("bash 4"), "{err}");
+            assert!(r.calls().is_empty() && !l.helper.exists() && !l.tools.exists());
+        }
+    }
+
+    #[test]
+    fn check_tool_dir_needs_every_tool_trusted() {
+        let (t, l, src) = fixture();
+        let top = fs::canonicalize(t.path()).unwrap();
+        let uid = l.owner_uid;
+        assert!(check_tool_dir(&l.tools, &top, uid).is_err(), "missing dir");
+        install_at(&FakeRunner::new(), &l, "kn", &src).unwrap();
+        check_tool_dir(&l.tools, &top, uid).unwrap();
+        assert!(
+            check_tool_dir(&l.tools, &top, uid + 1).is_err(),
+            "wrong owner"
+        );
+        fs::remove_file(l.tools.join("wg")).unwrap();
+        assert!(
+            check_tool_dir(&l.tools, &top, uid).is_err(),
+            "one tool missing"
+        );
     }
 
     #[test]
