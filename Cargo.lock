@@ -2792,6 +2792,8 @@ dependencies = [
  "color-eyre",
  "serde_json",
  "wglane-cli",
+ "wglane-core",
+ "wglane-nord",
 ]
 
 [[package]]
