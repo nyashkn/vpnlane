@@ -2,6 +2,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, ErrorKind};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 use wglane_core::{Error, Result};
 
@@ -13,6 +14,10 @@ pub const SUDOERS_PATH: &str = "/etc/sudoers.d/wglane";
 
 const CHOWN: &str = "/usr/sbin/chown";
 const VISUDO: &str = "/usr/sbin/visudo";
+const OTOOL: &str = "/usr/bin/otool";
+const LS: &str = "/bin/ls";
+/// The only places a root-run binary may load libraries from (SIP-protected).
+const SYSTEM_LIBS: [&str; 2] = ["/usr/lib/", "/System/Library/"];
 
 fn invalid(msg: impl Into<String>) -> Error {
     Error::io(
@@ -88,15 +93,69 @@ fn require_trusted_chain(
     Ok(())
 }
 
+/// `ls -le` shows an ACL entry as an indented `N: user:... allow ...` line.
+fn listing_has_acl(ls: &str) -> bool {
+    ls.lines().any(|l| {
+        l.trim_start()
+            .split_once(": ")
+            .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    })
+}
+
+/// Fails if `path` or any ancestor up to `top` has an extended ACL: an allow
+/// ACE can grant write access that the mode bits do not show. Fails closed if
+/// `ls` cannot be run.
+fn require_no_acl(path: &Path, top: &Path) -> Result<()> {
+    let mut chain = Vec::new();
+    for p in path.ancestors() {
+        chain.push(p);
+        if p == top {
+            break;
+        }
+    }
+    let out = Command::new(LS)
+        .arg("-lde")
+        .args(&chain)
+        .env_clear()
+        .output()
+        .map_err(|e| Error::io(format!("running {LS}"), e))?;
+    if !out.status.success() {
+        return Err(invalid(format!(
+            "{LS} failed checking ACLs on {}",
+            path.display()
+        )));
+    }
+    if listing_has_acl(&String::from_utf8_lossy(&out.stdout)) {
+        return Err(invalid(format!(
+            "{} or a parent directory has an ACL; run `sudo chmod -N` on it",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Run-time check before root executes `path`: it must resolve (symlinks
 /// followed) to a regular file inside `tool_dir`, and the file and all its
-/// ancestors up to `top` must be owned by `owner` and not g/o-writable.
-/// Returns the canonical path.
+/// ancestors up to `top` must be owned by `owner`, not g/o-writable and free
+/// of ACLs. Returns the canonical path.
 pub(crate) fn trusted_tool(
     path: &Path,
     tool_dir: &Path,
     top: &Path,
     owner: u32,
+) -> Result<PathBuf> {
+    let canon = trusted_tool_with(path, tool_dir, top, owner, lstat)?;
+    require_no_acl(&canon, top)?;
+    Ok(canon)
+}
+
+/// [`trusted_tool`] without the ACL check, with `stat` as the seam.
+fn trusted_tool_with(
+    path: &Path,
+    tool_dir: &Path,
+    top: &Path,
+    owner: u32,
+    stat: impl Fn(&Path) -> io::Result<(u32, u32)>,
 ) -> Result<PathBuf> {
     let canon = fs::canonicalize(path).map_err(|e| {
         Error::io(
@@ -115,8 +174,14 @@ pub(crate) fn trusted_tool(
             tool_dir.display()
         )));
     }
-    require_trusted_chain(&canon, top, owner, lstat)?;
-    if !fs::symlink_metadata(&canon).is_ok_and(|m| m.is_file()) {
+    require_trusted_chain(&canon, top, owner, &stat)?;
+    // S_IFMT == S_IFREG
+    if stat(&canon)
+        .map_err(|e| Error::io(format!("stat {}", canon.display()), e))?
+        .1
+        & 0o170_000
+        != 0o100_000
+    {
         return Err(invalid(format!(
             "{} is not a regular file",
             canon.display()
@@ -125,7 +190,7 @@ pub(crate) fn trusted_tool(
     Ok(canon)
 }
 
-/// Fails unless each helper tool (bash, wg-quick, wg, wireguard-go) in `dir` is
+/// Fails unless each helper tool (wg, wireguard-go) in `dir` is
 /// a root-owned regular file under a trusted chain: the helper's run-time check.
 pub fn check_tool_dir(dir: &Path, top: &Path, owner: u32) -> Result<()> {
     let dir = fs::canonicalize(dir).map_err(|e| {
@@ -142,32 +207,37 @@ pub fn check_tool_dir(dir: &Path, top: &Path, owner: u32) -> Result<()> {
         .try_for_each(|t| trusted_tool(&dir.join(t), &dir, top, owner).map(drop))
 }
 
-/// Refuses a bash older than 4 (wg-quick needs it). The version comes from the
-/// Homebrew Cellar path (`.../Cellar/bash/<ver>/...`), never by running the
-/// user-writable binary as root.
-fn require_bash4(bash: &Path) -> Result<()> {
-    let fix = "run `brew install bash` as your user, then retry";
-    let canon = fs::canonicalize(bash)
-        .map_err(|e| Error::io(format!("resolving {}", bash.display()), e))?;
-    let parts: Vec<_> = canon
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect();
-    let major = parts
-        .windows(3)
-        .find(|w| w[0] == "Cellar" && w[1] == "bash")
-        .and_then(|w| w[2].split('.').next()?.parse::<u32>().ok());
-    match major {
-        Some(m) if m >= 4 => Ok(()),
-        Some(m) => Err(invalid(format!(
-            "{} is bash {m}; wg-quick needs bash 4 or newer: {fix}",
-            canon.display()
-        ))),
-        None => Err(invalid(format!(
-            "cannot tell the version of {} (not a Homebrew Cellar bash); wg-quick needs bash 4 or newer: {fix}",
-            canon.display()
-        ))),
+/// Fails unless `otool -L` output (`otool_l`) for `name` lists only libraries
+/// under [`SYSTEM_LIBS`]. Anything else (`@rpath`, Homebrew, `..` tricks) is a
+/// library a non-root user could replace, and root would load it.
+fn check_dependencies(name: &str, otool_l: &str) -> Result<()> {
+    let mut headers = 0;
+    for line in otool_l.lines() {
+        if !line.starts_with(char::is_whitespace) {
+            // "<file>:" (one per architecture of a fat binary)
+            headers += usize::from(line.ends_with(':'));
+            continue;
+        }
+        let dep = line.trim().split(" (").next().unwrap_or_default();
+        let clean = Path::new(dep)
+            .components()
+            .all(|c| !matches!(c, Component::ParentDir));
+        if !clean || !SYSTEM_LIBS.iter().any(|p| dep.starts_with(p)) {
+            return Err(invalid(format!(
+                "{name} loads {dep}, which is outside /usr/lib and /System/Library; refusing to run it as root"
+            )));
+        }
     }
+    if headers == 0 {
+        return Err(invalid(format!("unexpected `otool -L` output for {name}")));
+    }
+    Ok(())
+}
+
+/// Runs `otool -L` on `path` and applies [`check_dependencies`].
+fn verify_dependencies<R: CommandRunner>(runner: &R, path: &Path) -> Result<()> {
+    let out = runner.run_ok(OTOOL, &["-L", &path.to_string_lossy()])?;
+    check_dependencies(&path.display().to_string(), &out.stdout)
 }
 
 /// Where [`install_helper`] writes. Production values come from [`Layout::system`];
@@ -210,11 +280,13 @@ fn require_root() -> Result<()> {
 }
 
 /// One-time install, run via `sudo wglane install-helper`: copy the helper to
-/// [`crate::HELPER_PATH`] root:wheel 0755, copy `bash`, `wg-quick`, `wg` and
-/// `wireguard-go` from Homebrew into root:wheel [`TOOL_DIR`], and write [`SUDOERS_PATH`] 0440 for
+/// [`crate::HELPER_PATH`] root:wheel 0755, copy `wg` and `wireguard-go` from
+/// Homebrew into root:wheel [`TOOL_DIR`], and write [`SUDOERS_PATH`] 0440 for
 /// `user` after `visudo -cf` validates it.
 ///
-/// Refuses unless the effective uid is 0. Safe to re-run.
+/// Every copied binary must pass `otool -L` loading only system libraries
+/// (checked on the copy, before it is renamed into place). Refuses unless the
+/// effective uid is 0. Safe to re-run.
 pub fn install_helper<R: CommandRunner>(
     runner: &R,
     user: &str,
@@ -265,18 +337,12 @@ fn install_at<R: CommandRunner>(runner: &R, l: &Layout, user: &str, source: &Pat
                 .find(|p| p.is_file())
                 .ok_or_else(|| {
                     invalid(format!(
-                        "{t} not found in {:?}: brew install wireguard-tools bash",
+                        "{t} not found in {:?}: brew install wireguard-tools wireguard-go",
                         l.tool_sources
                     ))
                 })
         })
         .collect::<Result<Vec<_>>>()?;
-    require_bash4(
-        &sources[TOOLS
-            .iter()
-            .position(|t| *t == "bash")
-            .expect("bash is a tool")],
-    )?;
     let dir = l
         .helper
         .parent()
@@ -287,6 +353,7 @@ fn install_at<R: CommandRunner>(runner: &R, l: &Layout, user: &str, source: &Pat
         let canon =
             fs::canonicalize(d).map_err(|e| Error::io(format!("resolving {}", d.display()), e))?;
         require_trusted_chain(&canon, &l.top, l.owner_uid, lstat)?;
+        require_no_acl(&canon, &l.top)?;
     }
 
     // Tools first, so a half-finished install never leaves a sudoers rule without them.
@@ -296,6 +363,9 @@ fn install_at<R: CommandRunner>(runner: &R, l: &Layout, user: &str, source: &Pat
         let mut src =
             File::open(src).map_err(|e| Error::io(format!("opening {}", src.display()), e))?;
         write_new(&tmp, 0o755, |f| io::copy(&mut src, f).map(drop))?;
+        verify_dependencies(runner, &tmp).inspect_err(|_| {
+            let _ = fs::remove_file(&tmp);
+        })?;
         finish(runner, &tmp, &dst)?;
     }
 
@@ -304,6 +374,9 @@ fn install_at<R: CommandRunner>(runner: &R, l: &Layout, user: &str, source: &Pat
     let mut src =
         File::open(source).map_err(|e| Error::io(format!("opening {}", source.display()), e))?;
     write_new(&tmp, 0o755, |dst| io::copy(&mut src, dst).map(drop))?;
+    verify_dependencies(runner, &tmp).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })?;
     finish(runner, &tmp, &l.helper)?;
 
     // Sudoers: the temp name contains `.`, so sudo ignores it until the rename.
@@ -361,6 +434,38 @@ mod tests {
     use super::*;
     use crate::CommandOutput;
     use crate::testing::FakeRunner;
+
+    const GOOD_DEPS: &str = "/x/tool:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)\n\t/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation (compatibility version 150.0.0)\n";
+    const HOMEBREW_DEPS: &str = "/x/tool:\n\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0)\n\t/opt/homebrew/opt/gettext/lib/libintl.8.dylib (compatibility version 12.0.0)\n";
+
+    /// [`FakeRunner`] whose `otool -L` prints `otool`.
+    struct Fake {
+        inner: FakeRunner,
+        otool: &'static str,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            Self::printing(GOOD_DEPS)
+        }
+
+        fn printing(otool: &'static str) -> Self {
+            Self {
+                inner: FakeRunner::new(),
+                otool,
+            }
+        }
+    }
+
+    impl CommandRunner for Fake {
+        fn run(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
+            let mut out = self.inner.run(program, args)?;
+            if program == OTOOL && out.success() {
+                out.stdout = self.otool.into();
+            }
+            Ok(out)
+        }
+    }
 
     #[test]
     fn rule_snapshot() {
@@ -424,12 +529,6 @@ mod tests {
         for tool in TOOLS {
             fs::write(brew.join(tool), tool).unwrap();
         }
-        // bash is a Homebrew-style symlink into the Cellar, as on a real Mac.
-        let bin = t.path().join("Cellar/bash/5.2.37/bin");
-        fs::create_dir_all(&bin).unwrap();
-        fs::write(bin.join("bash"), "bash").unwrap();
-        fs::remove_file(brew.join("bash")).unwrap();
-        std::os::unix::fs::symlink(bin.join("bash"), brew.join("bash")).unwrap();
         let l = Layout {
             helper: dir.join("wglane-helper"),
             sudoers: sudoers_d.join("wglane"),
@@ -444,9 +543,9 @@ mod tests {
     #[test]
     fn install_copies_validates_then_renames() {
         let (_t, l, src) = fixture();
-        let r = FakeRunner::new();
+        let r = Fake::new();
         install_at(&r, &l, "kn", &src).unwrap();
-        let calls = r.calls();
+        let calls = r.inner.calls();
         let progs: Vec<_> = calls
             .iter()
             .map(|c| (c[0].as_str(), c[1].as_str()))
@@ -454,10 +553,12 @@ mod tests {
         assert_eq!(
             progs,
             [
+                // Each binary is checked as copied, then handed to root, in this order.
+                (OTOOL, "-L"),
                 (CHOWN, "root:wheel"),
+                (OTOOL, "-L"),
                 (CHOWN, "root:wheel"),
-                (CHOWN, "root:wheel"),
-                (CHOWN, "root:wheel"),
+                (OTOOL, "-L"),
                 (CHOWN, "root:wheel"),
                 (VISUDO, "-cf"),
                 (CHOWN, "root:wheel")
@@ -485,11 +586,11 @@ mod tests {
     #[test]
     fn visudo_failure_installs_no_rule() {
         let (_t, l, src) = fixture();
-        let r = FakeRunner::new();
-        for _ in 0..5 {
-            r.push_stdout("");
+        let r = Fake::new();
+        for _ in 0..6 {
+            r.inner.push_stdout("");
         }
-        r.push(CommandOutput {
+        r.inner.push(CommandOutput {
             code: Some(1),
             stderr: "syntax error".into(),
             ..Default::default()
@@ -505,55 +606,91 @@ mod tests {
     #[test]
     fn bad_user_touches_nothing() {
         let (_t, l, src) = fixture();
-        let r = FakeRunner::new();
+        let r = Fake::new();
         assert!(install_at(&r, &l, "bad user", &src).is_err());
-        assert!(r.calls().is_empty() && !l.helper.exists());
+        assert!(r.inner.calls().is_empty() && !l.helper.exists());
     }
 
     #[test]
     fn refuses_foreign_owned_or_writable_dir() {
         let (_t, mut l, src) = fixture();
         l.owner_uid += 1;
-        assert!(install_at(&FakeRunner::new(), &l, "kn", &src).is_err());
+        assert!(install_at(&Fake::new(), &l, "kn", &src).is_err());
         l.owner_uid -= 1;
         fs::set_permissions(
             l.helper.parent().unwrap(),
             fs::Permissions::from_mode(0o777),
         )
         .unwrap();
-        assert!(install_at(&FakeRunner::new(), &l, "kn", &src).is_err());
+        assert!(install_at(&Fake::new(), &l, "kn", &src).is_err());
     }
 
     #[test]
     fn missing_tool_touches_nothing() {
         let (_t, l, src) = fixture();
-        fs::remove_file(l.tool_sources[0].join("wg-quick")).unwrap();
-        let r = FakeRunner::new();
+        fs::remove_file(l.tool_sources[0].join("wireguard-go")).unwrap();
+        let r = Fake::new();
         let err = install_at(&r, &l, "kn", &src).unwrap_err().to_string();
-        assert!(err.contains("wg-quick not found"), "{err}");
-        assert!(r.calls().is_empty() && !l.helper.exists() && !l.tools.exists());
+        assert!(err.contains("wireguard-go not found"), "{err}");
+        assert!(r.inner.calls().is_empty() && !l.helper.exists() && !l.tools.exists());
     }
 
     #[test]
-    fn old_or_unknown_bash_touches_nothing() {
-        for ver in ["3.2.57", ""] {
-            let (t, l, src) = fixture();
-            let target = if ver.is_empty() {
-                t.path().join("plain-bash")
-            } else {
-                let b = t.path().join(format!("Cellar/bash/{ver}/bin"));
-                fs::create_dir_all(&b).unwrap();
-                b.join("bash")
-            };
-            fs::write(&target, "bash").unwrap();
-            let link = l.tool_sources[0].join("bash");
-            fs::remove_file(&link).unwrap();
-            std::os::unix::fs::symlink(&target, &link).unwrap();
-            let r = FakeRunner::new();
-            let err = install_at(&r, &l, "kn", &src).unwrap_err();
-            assert!(err.to_string().contains("bash 4"), "{err}");
-            assert!(r.calls().is_empty() && !l.helper.exists() && !l.tools.exists());
+    fn dependency_check_table() {
+        let ok = |t: &str| check_dependencies("t", t).is_ok();
+        assert!(ok(GOOD_DEPS));
+        // Fat binary: one header per architecture.
+        assert!(ok(
+            "/x (architecture x86_64):\n\t/usr/lib/a.dylib (c)\n/x (architecture arm64):\n\t/usr/lib/a.dylib (c)\n"
+        ));
+        assert!(ok("/x:\n"), "statically linked");
+        for bad in [
+            HOMEBREW_DEPS,
+            "/x:\n\t@rpath/libfoo.dylib (c)\n",
+            "/x:\n\t@loader_path/libfoo.dylib (c)\n",
+            "/x:\n\t@executable_path/../lib/libfoo.dylib (c)\n",
+            "/x:\n\t/usr/local/lib/libfoo.dylib (c)\n",
+            "/x:\n\t/usr/lib/../../opt/homebrew/lib/libfoo.dylib (c)\n",
+            "/x:\n\t/usr/libexec/evil.dylib (c)\n",
+            "/x:\n\t/System/Libraryx/evil.dylib (c)\n",
+            "/x:\n\t/usr/lib/libSystem.B.dylib (c)\n\t/tmp/evil.dylib (c)\n",
+            "",
+            "not otool output",
+        ] {
+            assert!(!ok(bad), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn dependency_outside_system_libs_installs_nothing() {
+        // The finding: a Homebrew dylib (a user-writable path) reachable from a root-run binary.
+        let (_t, l, src) = fixture();
+        let r = Fake::printing(HOMEBREW_DEPS);
+        let err = install_at(&r, &l, "kn", &src).unwrap_err().to_string();
+        assert!(err.contains("/opt/homebrew/opt/gettext"), "{err}");
+        assert!(!l.sudoers.exists() && !l.helper.exists());
+        assert!(
+            fs::read_dir(&l.tools).unwrap().next().is_none(),
+            "no copy left behind"
+        );
+        assert_eq!(r.inner.calls().len(), 1, "stops at the first bad binary");
+    }
+
+    #[test]
+    fn failing_otool_on_the_helper_binary_writes_no_sudoers() {
+        let (_t, l, src) = fixture();
+        let r = Fake::new();
+        // Both tools pass (otool, chown each); the helper's otool (5th call) fails.
+        for _ in 0..4 {
+            r.inner.push_stdout("");
+        }
+        r.inner.push(CommandOutput {
+            code: Some(1),
+            stderr: "boom".into(),
+            ..Default::default()
+        });
+        assert!(install_at(&r, &l, "kn", &src).is_err());
+        assert!(!l.sudoers.exists() && !l.helper.exists());
     }
 
     #[test]
@@ -562,7 +699,7 @@ mod tests {
         let top = fs::canonicalize(t.path()).unwrap();
         let uid = l.owner_uid;
         assert!(check_tool_dir(&l.tools, &top, uid).is_err(), "missing dir");
-        install_at(&FakeRunner::new(), &l, "kn", &src).unwrap();
+        install_at(&Fake::new(), &l, "kn", &src).unwrap();
         check_tool_dir(&l.tools, &top, uid).unwrap();
         assert!(
             check_tool_dir(&l.tools, &top, uid + 1).is_err(),
@@ -584,7 +721,7 @@ mod tests {
         fs::set_permissions(&mid, fs::Permissions::from_mode(0o775)).unwrap();
         l.helper = mid.join("libexec/wglane-helper");
         l.tools = mid.join("libexec/wglane/bin");
-        let err = install_at(&FakeRunner::new(), &l, "kn", &src).unwrap_err();
+        let err = install_at(&Fake::new(), &l, "kn", &src).unwrap_err();
         assert!(err.to_string().contains("mid"), "{err}");
     }
 
@@ -656,9 +793,80 @@ mod tests {
     }
 
     #[test]
+    fn trusted_tool_refuses_a_file_owned_by_another_uid_when_its_dirs_are_fine() {
+        let t = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(t.path()).unwrap();
+        let uid = fs::metadata(&top).unwrap().uid();
+        let tools = top.join("bin");
+        fs::create_dir(&tools).unwrap();
+        let tool = tools.join("wg");
+        fs::write(&tool, "x").unwrap();
+        // Everything is `uid`'s except the file itself.
+        let stat = |p: &Path| lstat(p).map(|(u, m)| (if p == tool { uid + 1 } else { u }, m));
+        let err = trusted_tool_with(&tool, &tools, &top, uid, stat).unwrap_err();
+        assert!(err.to_string().contains("wg"), "{err}");
+        assert!(trusted_tool_with(&tool, &tools, &top, uid, lstat).is_ok());
+    }
+
+    #[test]
+    fn trusted_tool_refuses_non_regular_files() {
+        let t = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(t.path()).unwrap();
+        let uid = fs::metadata(&top).unwrap().uid();
+        let tools = top.join("bin");
+        fs::create_dir_all(tools.join("sub")).unwrap();
+        assert!(trusted_tool(&tools.join("sub"), &tools, &top, uid).is_err());
+    }
+
+    #[test]
+    fn acl_listing_parser() {
+        let plain = "-rwxr-xr-x  1 root  wheel  100 Oct 30 12:00 /a/wg\n";
+        let acl =
+            "-rwxr-xr-x+ 1 root  wheel  100 Oct 30 12:00 /a/wg\n 0: user:evil allow write,delete\n";
+        assert!(!listing_has_acl(plain));
+        assert!(listing_has_acl(acl));
+        assert!(!listing_has_acl(
+            "drwxr-xr-x  2 u g 64 Oct 30 12:00 /a/b: 1: x\n"
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn trusted_tool_refuses_an_extended_acl_on_the_file_or_a_parent() {
+        let t = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(t.path()).unwrap();
+        let uid = fs::metadata(&top).unwrap().uid();
+        let tools = top.join("bin");
+        fs::create_dir(&tools).unwrap();
+        let tool = tools.join("wg");
+        fs::write(&tool, "x").unwrap();
+        assert!(trusted_tool(&tool, &tools, &top, uid).is_ok());
+        // An ACE granting write on the directory: the mode bits still read 0755.
+        let ace = "everyone allow add_file,delete_child";
+        let chmod = |path: &Path| {
+            Command::new("/bin/chmod")
+                .args(["+a", ace])
+                .arg(path)
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(chmod(&tools));
+        let err = trusted_tool(&tool, &tools, &top, uid).unwrap_err();
+        assert!(err.to_string().contains("ACL"), "{err}");
+        Command::new("/bin/chmod")
+            .arg("-N")
+            .arg(&tools)
+            .status()
+            .unwrap();
+        assert!(chmod(&tool));
+        assert!(trusted_tool(&tool, &tools, &top, uid).is_err());
+    }
+
+    #[test]
     fn uninstall_removes_both_and_is_idempotent() {
         let (_t, l, src) = fixture();
-        install_at(&FakeRunner::new(), &l, "kn", &src).unwrap();
+        install_at(&Fake::new(), &l, "kn", &src).unwrap();
         uninstall_at(&l).unwrap();
         uninstall_at(&l).unwrap();
         assert!(!l.helper.exists() && !l.sudoers.exists() && !l.tools.exists());

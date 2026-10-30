@@ -3,7 +3,7 @@
 //! Every external program runs through [`CommandRunner`], so tests use
 //! [`testing::FakeRunner`] and never touch the real network stack.
 //!
-//! Privilege split: [`WgQuick`] and [`RouteTable`] run as root inside the
+//! Privilege split: [`WgGo`] and [`RouteTable`] run as root inside the
 //! `wglane-helper` binary; the unprivileged CLI uses [`HelperClient`], which
 //! implements the same ports by calling `sudo -n wglane-helper <verb>`.
 
@@ -28,5 +28,5 @@ pub use privilege::{
 };
 pub use probe::TailscalePing;
 pub use routes::RouteTable;
-pub use tunnel::WgQuick;
+pub use tunnel::WgGo;
 pub use watcher::RouteMonitor;

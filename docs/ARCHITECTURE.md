@@ -48,7 +48,7 @@ Dependency rules (the compiler enforces direction; review enforces the rest):
 | `ServerCatalog` | `wglane_nord::NordApi` | `FakeCatalog` |
 | `TokenSource` | `wglane_nord::{EnvToken, FileToken, TokenChain}` | `FakeToken` |
 | `ExitIpProbe` | `wglane_nord::NordApi` | `FakeExitIp` |
-| `Tunnel` | `wglane_macos::WgQuick` (root, in helper), `HelperClient` (CLI) | `FakeTunnel` |
+| `Tunnel` | `wglane_macos::WgGo` (root, in helper), `HelperClient` (CLI) | `FakeTunnel` |
 | `RouteBypass` | `wglane_macos::RouteTable` (root, in helper), `HelperClient` (CLI) | `FakeRoutes` |
 | `BypassProvider` | `wglane_macos::{TailscaleBypass, StaticBypass}` | `FakeBypassProvider` |
 | `NetworkWatcher` | `wglane_macos::RouteMonitor` | `FakeWatcher` |
@@ -75,17 +75,31 @@ CLI cannot read it). The count is 0 when no tunnel is active.
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
 by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
 (`crates/wglane-macos/src/bin/wglane-helper.rs`) runs as root and uses
-`WgQuick` + `RouteTable` with `SystemRunner`. Verbs are fixed: `up <cc>`,
-`down`, `bypass <gw> <cidr>...`. The helper takes no paths from the caller and
-validates every argument with the core parsers. `install-helper` copies it to a
-root-owned path; a sudoers rule on a user-writable binary would be a root
-exploit. The same rule covers what root executes: `install-helper` copies
-`bash`, `wg-quick`, `wg` and `wireguard-go` from Homebrew into root:wheel
-`/usr/local/libexec/wglane/bin` (refuses if any is missing, and if any ancestor
-of the helper or tool dir is not root-owned and g/o-unwritable). `RootRunner`
-resolves only there, re-verifies the canonical file and every ancestor at each
-call, runs `bash wg-quick` explicitly and sets `PATH` to that dir plus system
-dirs. Upgrading wireguard-tools or bash requires re-running `install-helper`.
+`WgGo` + `RouteTable` with a `RootRunner`. Verbs are fixed: `up <cc>`,
+`down`, `active`, `bypass <gw> <cidr>...`. The helper takes no paths from the
+caller and validates every argument with the core parsers. `install-helper`
+copies it to a root-owned path; a sudoers rule on a user-writable binary would
+be a root exploit. The same rule covers what root executes. Root never runs a
+shell or a script and never loads a library outside `/usr/lib` and
+`/System/Library`: `WgGo` starts `wireguard-go utun` (it reports the interface
+via `WG_TUN_NAME_FILE`), runs `wg setconf utunN /dev/stdin` with the rendered
+config minus its `Address` line, then `ifconfig` (address, `up`) and `route`
+(endpoint host route via the physical gateway, then `0.0.0.0/1` and
+`128.0.0.0/1` via the interface). `down` deletes those routes and the
+interface's control socket, which ends `wireguard-go`. Which `utunN` is
+wglane's is recorded in the root-only `/var/db/wglane/tunnels`; `active` (a
+helper verb, because that dir is private) lists only those, so the user's
+other tunnels are never counted or touched. `install-helper` copies `wg` and
+`wireguard-go` from Homebrew into root:wheel `/usr/local/libexec/wglane/bin`
+and refuses to install unless `otool -L` on each copy (and on the helper) lists
+only `/usr/lib/` and `/System/Library/` paths (no `@rpath`, no `..`), or if
+any ancestor of the helper or tool dir is not root-owned, g/o-unwritable and
+ACL-free. `RootRunner` resolves `wg` and `wireguard-go` only there and
+re-verifies the canonical file and every ancestor on every exec; `ifconfig`,
+`route` and `netstat` are fixed `/sbin` and `/usr/sbin` paths; `PATH` is system
+dirs only. Upgrading wireguard-tools or wireguard-go requires re-running
+`install-helper`. Limits: IPv4 endpoints and the full IPv4 tunnel only; two
+simultaneous `up` calls share one name file, so run one at a time.
 This verb set is the future daemon socket protocol.
 
 ## File ownership map
@@ -107,7 +121,7 @@ lives in `bd`; `// TODO(bead): <id>: <what>` markers, if any, point at it
 | nord | `src/api.rs` | HTTP calls |
 | macos | `src/command.rs`, `src/testing.rs` | `CommandRunner`, `FakeRunner` |
 | macos | `src/conf_store.rs` | config files on disk |
-| macos | `src/tunnel.rs` | `WgQuick` |
+| macos | `src/tunnel.rs` | `WgGo` |
 | macos | `src/routes.rs` | `RouteTable` |
 | macos | `src/bypass.rs` | Tailscale + static bypass |
 | macos | `src/watcher.rs` | `RouteMonitor` |
@@ -147,7 +161,7 @@ owner of that subcommand should touch `about`.
   sudoers rule. Accept new snapshots with `INSTA_UPDATE=always just test` and
   review the `.snap` diff.
 - Nord responses come from `crates/wglane-nord/fixtures/` (synthetic).
-- No network, no root, no real `wg-quick`/`route` in tests. Only
+- No network, no root, no real `wireguard-go`/`route` in tests. Only
   `SystemRunner`'s own tests spawn a process (`/bin/sh`).
 - `cargo test` (nextest is not assumed).
 

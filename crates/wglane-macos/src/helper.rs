@@ -5,7 +5,7 @@ use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::str::FromStr;
 
 use ipnet::IpNet;
@@ -18,7 +18,8 @@ use zeroize::Zeroizing;
 
 use crate::privilege::trusted_tool;
 use crate::routes::{check_dest, is_bad_bypass};
-use crate::{CommandOutput, CommandRunner, RouteTable, WgQuick};
+use crate::tunnel::{NAME_FILE, WG_RUN_DIR};
+use crate::{CommandOutput, CommandRunner, RouteTable, WgGo};
 
 /// Root-owned install location of `wglane-helper` (never the user-writable
 /// Homebrew copy: a sudoers rule on a user-writable binary is a root exploit).
@@ -28,17 +29,17 @@ pub const HELPER_PATH: &str = "/usr/local/libexec/wglane-helper";
 /// and its bypass-route record. Nothing in it is ever taken from the caller.
 pub const STATE_DIR: &str = "/var/db/wglane";
 
-/// Root-owned copies of `bash`, `wg-quick`, `wg` and `wireguard-go`, put there
-/// by `install-helper`. Homebrew's own copies are user-writable, so the helper
-/// never runs, sources or searches them.
+/// Root-owned copies of `wg` and `wireguard-go`, put there by `install-helper`
+/// after checking they load only system libraries. Homebrew's own copies are
+/// user-writable, so the helper never runs them.
 pub const TOOL_DIR: &str = "/usr/local/libexec/wglane/bin";
-/// What `install-helper` copies into [`TOOL_DIR`]: wg-quick needs bash 4+.
-pub(crate) const TOOLS: [&str; 4] = ["bash", "wg-quick", "wg", "wireguard-go"];
+/// What `install-helper` copies into [`TOOL_DIR`]: the only non-system
+/// programs root ever runs.
+pub(crate) const TOOLS: [&str; 2] = ["wg", "wireguard-go"];
 
 const SUDO: &str = "/usr/bin/sudo";
 /// The only `PATH` programs run by the helper see; the caller's is discarded.
-/// [`TOOL_DIR`] first, then system dirs only.
-const ROOT_PATH: &str = "/usr/local/libexec/wglane/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+const ROOT_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 const BYPASS_STATE: &str = "bypass.json";
 /// A rendered config is ~300 bytes; anything near this is not one.
 const MAX_STDIN: usize = 1024;
@@ -50,12 +51,15 @@ const MAX_CIDRS: usize = 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelperVerb {
     /// `up <CC>` + stdin: render a config from the stdin fields into the
-    /// root-owned dir and wg-quick up that copy.
+    /// root-owned dir and bring that tunnel up.
     Up,
     /// `down`: tear down every wglane tunnel and its bypass routes.
     Down,
     /// `bypass <gateway> <cidr>...`: (re)install bypass routes.
     Bypass,
+    /// `active`: print the lowercase country code of each running wglane
+    /// tunnel, one per line (the state dir is private to root).
+    Active,
 }
 
 impl HelperVerb {
@@ -65,11 +69,12 @@ impl HelperVerb {
             Self::Up => "up",
             Self::Down => "down",
             Self::Bypass => "bypass",
+            Self::Active => "active",
         }
     }
 
     fn from_arg(arg: &str) -> Option<Self> {
-        [Self::Up, Self::Down, Self::Bypass]
+        [Self::Up, Self::Down, Self::Bypass, Self::Active]
             .into_iter()
             .find(|v| v.as_str() == arg)
     }
@@ -231,7 +236,7 @@ fn parse_cidr(s: &str) -> Result<IpNet, HelperError> {
     Ok(net.trunc())
 }
 
-fn is_cc_stem(s: &str) -> bool {
+pub(crate) fn is_cc_stem(s: &str) -> bool {
     s.len() == 2 && s.bytes().all(|b| b.is_ascii_lowercase())
 }
 
@@ -244,25 +249,12 @@ fn is_cc_stem(s: &str) -> bool {
 #[derive(Debug)]
 pub struct HelperClient<R> {
     runner: R,
-    /// Where wg-quick records active tunnels; `None` is the system default.
-    run_dir: Option<PathBuf>,
 }
 
 impl<R: CommandRunner> HelperClient<R> {
     /// Uses `runner` to call `sudo`.
     pub fn new(runner: R) -> Self {
-        Self {
-            runner,
-            run_dir: None,
-        }
-    }
-
-    /// Like [`new`](Self::new) but reads active tunnels from `run_dir` (tests).
-    pub fn with_run_dir(runner: R, run_dir: impl Into<PathBuf>) -> Self {
-        Self {
-            runner,
-            run_dir: Some(run_dir.into()),
-        }
+        Self { runner }
     }
 
     fn call(&self, args: &[&str], stdin: &[u8]) -> Result<CommandOutput> {
@@ -315,19 +307,17 @@ impl<R: CommandRunner> Tunnel for HelperClient<R> {
         Ok(())
     }
 
-    /// Only wglane's own tunnels (`<cc>` interfaces): `up`/`down`/`status`
-    /// must never see, or claim to have stopped, the user's other WireGuard
-    /// tunnels. `STATE_DIR` is 0700 root, so the name is the only evidence
-    /// available without sudo; the helper's `down` still checks its confs.
+    /// Only wglane's own tunnels, as the helper records them: `up`/`down`/
+    /// `status` must never see, or claim to have stopped, the user's other
+    /// WireGuard tunnels. The state dir is private to root, hence a helper verb.
     fn active(&self) -> Result<Vec<String>> {
-        // /var/run/wireguard is world-readable: no sudo.
-        let quick = match &self.run_dir {
-            Some(dir) => WgQuick::with_run_dir(&self.runner, dir),
-            None => WgQuick::new(&self.runner),
-        };
-        let mut names = quick.active()?;
-        names.retain(|n| is_cc_stem(n));
-        Ok(names)
+        let out = self.call(&[HelperVerb::Active.as_str()], &[])?;
+        Ok(out
+            .stdout
+            .lines()
+            .filter(|l| is_cc_stem(l))
+            .map(str::to_owned)
+            .collect())
     }
 }
 
@@ -395,7 +385,7 @@ impl fmt::Display for HelperError {
         match self {
             Self::Usage(m) => write!(
                 f,
-                "{m}\nusage: wglane-helper up <CC> < fields | down | bypass <gateway> <cidr>..."
+                "{m}\nusage: wglane-helper up <CC> < fields | down | active | bypass <gateway> <cidr>..."
             ),
             Self::Run(e) => write!(f, "{e}"),
         }
@@ -431,6 +421,12 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
             },
             Some(HelperVerb::Down) if rest.is_empty() => self.down().map(|()| String::new()),
             Some(HelperVerb::Down) => Err(HelperError::usage("down takes no arguments")),
+            Some(HelperVerb::Active) if rest.is_empty() => {
+                let mut names = self.tunnel.active()?;
+                names.sort();
+                Ok(names.iter().flat_map(|n| [n.as_str(), "\n"]).collect())
+            }
+            Some(HelperVerb::Active) => Err(HelperError::usage("active takes no arguments")),
             Some(HelperVerb::Bypass) => match rest {
                 [gateway, cidrs @ ..] if !cidrs.is_empty() && cidrs.len() <= MAX_CIDRS => {
                     let cidrs: BypassSet = cidrs
@@ -479,7 +475,6 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
             }
         };
         if self.dir_exists()? {
-            let active = self.tunnel.active()?;
             let entries = fs::read_dir(&self.state_dir)
                 .map_err(|e| Error::io(format!("reading {}", self.state_dir.display()), e))?;
             for entry in entries.flatten() {
@@ -488,11 +483,10 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
                 let path = entry.path();
                 if name.ends_with(".conf.tmp") {
                     note(rm(&path));
-                } else if let Some(stem) = name.strip_suffix(".conf").filter(|s| is_cc_stem(s)) {
+                } else if name.strip_suffix(".conf").is_some_and(is_cc_stem) {
                     // Keep the file if teardown failed, so a retry can still find it.
-                    if active.iter().any(|a| a == stem)
-                        && let Err(e) = self.tunnel.down(&path)
-                    {
+                    // Teardown of a country with no running tunnel is a no-op.
+                    if let Err(e) = self.tunnel.down(&path) {
                         note(Err(e));
                         continue;
                     }
@@ -585,7 +579,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
     }
 }
 
-fn rm(path: &Path) -> Result<()> {
+pub(crate) fn rm(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Err(e) if e.kind() != io::ErrorKind::NotFound => {
             Err(Error::io(format!("removing {}", path.display()), e))
@@ -596,7 +590,7 @@ fn rm(path: &Path) -> Result<()> {
 
 /// Writes `body` to `path` via `<path>.tmp` (`O_EXCL`, so a planted symlink is
 /// refused), mode 0600, then renames over `path`.
-fn write_private(path: &Path, body: &[u8]) -> Result<()> {
+pub(crate) fn write_private(path: &Path, body: &[u8]) -> Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
@@ -615,27 +609,37 @@ fn write_private(path: &Path, body: &[u8]) -> Result<()> {
 }
 
 /// Runs only the few programs the helper needs, with a fixed `PATH` and
-/// nothing else in the environment. `wg-quick` and its `bash` come only from
-/// [`TOOL_DIR`], and only if the file and every ancestor is root-owned and not
-/// group/world-writable at the moment of the call.
-struct RootRunner;
+/// nothing else in the environment. `wg` and `wireguard-go` come only from
+/// `tool_dir`, and only if the file and every ancestor up to `top` is owned by
+/// `owner` (root), not group/world-writable and free of ACLs at the moment of
+/// each call. The rest are absolute system paths.
+struct RootRunner {
+    tool_dir: PathBuf,
+    top: PathBuf,
+    owner: u32,
+}
 
 impl RootRunner {
-    /// The argv prefix (program, then fixed leading args) for `program`.
-    /// `trust` turns a candidate path into a verified one or refuses it.
-    fn resolve(
-        program: &str,
-        tool_dir: &Path,
-        trust: impl Fn(&Path) -> Result<PathBuf>,
-    ) -> Result<Vec<PathBuf>> {
+    fn system() -> Self {
+        Self {
+            tool_dir: TOOL_DIR.into(),
+            top: "/".into(),
+            owner: 0,
+        }
+    }
+
+    /// The verified path to run for `program`, or a refusal.
+    fn resolve(&self, program: &str) -> Result<PathBuf> {
         match program {
-            // Explicit `bash wg-quick` so the script's `#!/usr/bin/env bash` is never consulted.
-            "wg-quick" => ["bash", "wg-quick"]
-                .iter()
-                .map(|t| trust(&tool_dir.join(t)))
-                .collect(),
-            "route" => Ok(vec!["/sbin/route".into()]),
-            "netstat" => Ok(vec!["/usr/sbin/netstat".into()]),
+            "wg" | "wireguard-go" => trusted_tool(
+                &self.tool_dir.join(program),
+                &self.tool_dir,
+                &self.top,
+                self.owner,
+            ),
+            "ifconfig" => Ok("/sbin/ifconfig".into()),
+            "route" => Ok("/sbin/route".into()),
+            "netstat" => Ok("/usr/sbin/netstat".into()),
             other => Err(Error::Command {
                 program: other.to_owned(),
                 status: "refused".into(),
@@ -643,26 +647,53 @@ impl RootRunner {
             }),
         }
     }
-}
 
-impl CommandRunner for RootRunner {
-    fn run(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
-        let tool_dir = Path::new(TOOL_DIR);
-        let prog = Self::resolve(program, tool_dir, |p| {
-            trusted_tool(p, tool_dir, Path::new("/"), 0)
-        })?;
-        let out = Command::new(&prog[0])
-            .args(&prog[1..])
-            .args(args)
-            .env_clear()
-            .env("PATH", ROOT_PATH)
-            .output()
-            .map_err(|e| Error::io(format!("running `{}`", prog[0].display()), e))?;
+    fn exec(&self, program: &str, args: &[&str], stdin: Option<&[u8]>) -> Result<CommandOutput> {
+        let path = self.resolve(program)?;
+        let ctx = || format!("running `{}`", path.display());
+        let mut cmd = Command::new(&path);
+        cmd.args(args).env_clear().env("PATH", ROOT_PATH);
+        if program == "wireguard-go" {
+            // Where it reports the utunN it created; the tunnel code reads it back.
+            cmd.env("WG_TUN_NAME_FILE", Path::new(WG_RUN_DIR).join(NAME_FILE));
+        }
+        let out = match stdin {
+            None => cmd.output(),
+            Some(bytes) => {
+                let mut child = cmd
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|e| Error::io(ctx(), e))?;
+                if let Some(mut pipe) = child.stdin.take() {
+                    // A child that exits early closes the pipe; its status explains why.
+                    match pipe.write_all(bytes) {
+                        Err(e) if e.kind() != io::ErrorKind::BrokenPipe => {
+                            return Err(Error::io(ctx(), e));
+                        }
+                        _ => {}
+                    }
+                }
+                child.wait_with_output()
+            }
+        }
+        .map_err(|e| Error::io(ctx(), e))?;
         Ok(CommandOutput {
             code: out.status.code(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         })
+    }
+}
+
+impl CommandRunner for RootRunner {
+    fn run(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
+        self.exec(program, args, None)
+    }
+
+    fn run_with_stdin(&self, program: &str, args: &[&str], stdin: &[u8]) -> Result<CommandOutput> {
+        self.exec(program, args, Some(stdin))
     }
 }
 
@@ -675,8 +706,8 @@ pub fn helper_main() -> ExitCode {
     }
     let args: Vec<OsString> = std::env::args_os().skip(1).collect();
     let helper = Helper {
-        tunnel: WgQuick::new(RootRunner),
-        routes: RouteTable::new(RootRunner),
+        tunnel: WgGo::new(RootRunner::system(), STATE_DIR),
+        routes: RouteTable::new(RootRunner::system()),
         state_dir: PathBuf::from(STATE_DIR),
         owner: 0,
     };
@@ -1092,47 +1123,167 @@ mod tests {
         assert_eq!(nets, ["5.6.7.8/32", "9.9.9.9/32"]);
     }
 
+    /// A real [`RootRunner`] over a temp "root" owned by the current user:
+    /// the same `trusted_tool` wiring as production, with `wg` and
+    /// `wireguard-go` as scripts that print their argv, stdin and environment.
+    fn runner_fixture() -> (tempfile::TempDir, RootRunner) {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let top = fs::canonicalize(t.path()).unwrap();
+        let tool_dir = top.join("bin");
+        fs::create_dir(&tool_dir).unwrap();
+        for tool in TOOLS {
+            let p = tool_dir.join(tool);
+            fs::write(&p, "#!/bin/sh\necho \"$0:$*\"\n/usr/bin/env\ncat\n").unwrap();
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let owner = fs::metadata(&top).unwrap().uid();
+        (
+            t,
+            RootRunner {
+                tool_dir,
+                top,
+                owner,
+            },
+        )
+    }
+
     #[test]
-    fn root_runner_resolves_wg_quick_only_inside_the_tool_dir() {
-        let dir = Path::new(TOOL_DIR);
-        let trust = |p: &Path| Ok(p.to_path_buf());
-        assert_eq!(
-            RootRunner::resolve("route", dir, trust).unwrap(),
-            [Path::new("/sbin/route")]
+    fn root_runner_runs_trusted_tools_with_a_clean_environment() {
+        let (_t, r) = runner_fixture();
+        let out = r
+            .run_with_stdin("wg", &["setconf", "utun7"], b"stdin-text")
+            .unwrap();
+        assert!(out.success(), "{out:?}");
+        let wg = r.tool_dir.join("wg");
+        assert!(
+            out.stdout
+                .starts_with(&format!("{}:setconf utun7\n", wg.display())),
+            "{}",
+            out.stdout
         );
-        assert_eq!(
-            RootRunner::resolve("wg-quick", dir, trust).unwrap(),
-            [
-                Path::new("/usr/local/libexec/wglane/bin/bash"),
-                Path::new("/usr/local/libexec/wglane/bin/wg-quick")
-            ]
+        assert!(out.stdout.ends_with("stdin-text"), "{}", out.stdout);
+        let env = r.run("wireguard-go", &["utun"]).unwrap().stdout;
+        assert!(env.contains(&format!("PATH={ROOT_PATH}\n")), "{env}");
+        assert!(
+            env.contains("WG_TUN_NAME_FILE=/var/run/wireguard/wglane.name\n"),
+            "{env}"
         );
-        // A refusal by the trust check is final: no fallback to another location.
-        let refuse = |p: &Path| {
-            Err(Error::io(
-                format!("untrusted {}", p.display()),
-                io::ErrorKind::PermissionDenied.into(),
-            ))
-        };
-        assert!(RootRunner::resolve("wg-quick", dir, refuse).is_err());
-        for bad in ["sh", "/bin/sh", "./wg-quick", "wg-quick ", "rm", "bash"] {
+        // Nothing inherited from the caller (cargo sets many of these).
+        assert!(!env.contains("CARGO") && !env.contains("HOME="), "{env}");
+        // Only wireguard-go gets the name file variable.
+        assert!(
+            !r.run("wg", &[])
+                .unwrap()
+                .stdout
+                .contains("WG_TUN_NAME_FILE")
+        );
+    }
+
+    #[test]
+    fn root_runner_rechecks_every_tool_on_every_exec() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_t, mut r) = runner_fixture();
+        for tool in TOOLS {
+            assert!(r.run(tool, &[]).is_ok(), "{tool}");
+            let p = r.tool_dir.join(tool);
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o775)).unwrap();
+            let err = r.run(tool, &[]).unwrap_err().to_string();
+            assert!(err.contains("not group/world-writable"), "{tool}: {err}");
             assert!(
-                RootRunner::resolve(bad, dir, trust).is_err(),
-                "resolved {bad:?}"
+                r.run_with_stdin(tool, &[], b"x").is_err(),
+                "{tool} via stdin"
             );
+            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(r.run(tool, &[]).is_ok(), "{tool} restored");
+        }
+        // A tool swapped for a symlink out of the tool dir is refused.
+        let wg = r.tool_dir.join("wg");
+        fs::remove_file(&wg).unwrap();
+        std::os::unix::fs::symlink("/bin/echo", &wg).unwrap();
+        assert!(
+            r.run("wg", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("outside")
+        );
+        fs::remove_file(&wg).unwrap();
+        assert!(r.run("wg", &[]).is_err(), "missing");
+        // Wrong owner.
+        r.owner += 1;
+        assert!(r.run("wireguard-go", &[]).is_err());
+    }
+
+    #[test]
+    fn root_runner_resolves_system_tools_by_absolute_path_and_nothing_else() {
+        let (_t, r) = runner_fixture();
+        for (prog, path) in [
+            ("ifconfig", "/sbin/ifconfig"),
+            ("route", "/sbin/route"),
+            ("netstat", "/usr/sbin/netstat"),
+        ] {
+            assert_eq!(r.resolve(prog).unwrap(), Path::new(path));
+        }
+        for bad in [
+            "sh",
+            "/bin/sh",
+            "bash",
+            "wg-quick",
+            "./wg",
+            "wg ",
+            "rm",
+            "ls",
+            "/sbin/route",
+            "",
+            "WG",
+            "../wg",
+        ] {
+            assert!(r.resolve(bad).is_err(), "resolved {bad:?}");
         }
     }
 
     #[test]
-    fn root_path_has_no_user_writable_entries() {
-        assert!(ROOT_PATH.starts_with(TOOL_DIR));
-        for entry in ROOT_PATH.split(':').skip(1) {
+    fn production_runner_points_at_the_root_owned_tool_dir() {
+        let r = RootRunner::system();
+        assert_eq!(
+            (r.tool_dir.as_path(), r.top.as_path(), r.owner),
+            (
+                Path::new("/usr/local/libexec/wglane/bin"),
+                Path::new("/"),
+                0
+            )
+        );
+        assert_eq!(TOOLS, ["wg", "wireguard-go"]);
+    }
+
+    #[test]
+    fn root_path_is_system_dirs_only() {
+        for entry in ROOT_PATH.split(':') {
             assert!(
                 ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].contains(&entry),
                 "{entry}"
             );
         }
-        assert!(!ROOT_PATH.contains("homebrew") && !ROOT_PATH.contains("/usr/local/bin"));
+    }
+
+    #[test]
+    fn root_code_never_names_bash_wg_quick_or_a_shell() {
+        // Everything before each file's first `#[cfg(test)]` is code root can run.
+        for (file, src) in [
+            ("helper.rs", include_str!("helper.rs")),
+            ("tunnel.rs", include_str!("tunnel.rs")),
+            ("privilege.rs", include_str!("privilege.rs")),
+            ("routes.rs", include_str!("routes.rs")),
+            ("command.rs", include_str!("command.rs")),
+            ("bin/wglane-helper.rs", include_str!("bin/wglane-helper.rs")),
+        ] {
+            let code = src.split("#[cfg(test)]").next().unwrap().to_lowercase();
+            for word in [
+                "bash", "wg-quick", "wg_quick", "wgquick", "/bin/sh", "/bin/zsh",
+            ] {
+                assert!(!code.contains(word), "{file} mentions {word}");
+            }
+        }
     }
 
     // ---- client ----
@@ -1240,22 +1391,37 @@ mod tests {
     }
 
     #[test]
-    fn client_active_lists_only_wglane_tunnels() {
-        let run = tempfile::tempdir().unwrap();
-        let client = HelperClient::with_run_dir(FakeRunner::new(), run.path());
-        for name in [
-            "home.name",
-            "work-vpn.name",
-            "US.name",
-            "za.name",
-            "se.name",
-        ] {
-            fs::write(run.path().join(name), "utun4").unwrap();
-        }
+    fn client_active_asks_the_helper_and_keeps_only_country_stems() {
+        let client = HelperClient::new(FakeRunner::new());
+        client.runner.push_stdout("se\nza\nhome\nUS\n\nwork-vpn\n");
         assert_eq!(client.active().unwrap(), ["se", "za"]);
-        fs::remove_file(run.path().join("za.name")).unwrap();
-        fs::remove_file(run.path().join("se.name")).unwrap();
-        assert!(client.active().unwrap().is_empty(), "foreign tunnels only");
+        assert_eq!(
+            client.runner.calls(),
+            [vec![SUDO, "-n", HELPER_PATH, "active"]]
+        );
+        // Without the helper there is no list to trust.
+        let failing = FakeRunner::new();
+        failing.push(CommandOutput {
+            code: Some(1),
+            stderr: "sudo: a password is required".into(),
+            ..Default::default()
+        });
+        assert!(HelperClient::new(failing).active().is_err());
+    }
+
+    #[test]
+    fn helper_active_verb_lists_only_what_the_tunnel_reports() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = helper(dir.path());
+        assert_eq!(run(&h, &["active"], "").unwrap(), "");
+        *h.tunnel.up.borrow_mut() = vec!["za".into(), "se".into()];
+        assert_eq!(run(&h, &["active"], "").unwrap(), "se\nza\n");
+        assert!(
+            run(&h, &["active", "x"], "")
+                .unwrap_err()
+                .contains("usage:")
+        );
+        assert!(!h.state_dir.exists(), "reading must not create state");
     }
 
     #[test]

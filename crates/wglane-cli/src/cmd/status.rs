@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use color_eyre::Result;
 use wglane_core::ports::{ExitIpProbe, TailnetProbe, Tunnel};
 use wglane_core::{TailnetHealth, TunnelStatus};
-use wglane_macos::{SystemRunner, TailscalePing, WgQuick};
+use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
 use wglane_nord::NordApi;
 
 use crate::context::Context;
@@ -29,7 +29,7 @@ pub(crate) struct Args {}
 pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
     let runner = SystemRunner;
     let status = gather(
-        &WgQuick::new(runner),
+        &HelperClient::new(runner),
         &NordApi::new(),
         &TailscalePing::new(runner),
         ctx.recorded_routes(),

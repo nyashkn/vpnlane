@@ -12,9 +12,10 @@ use crate::context::Context;
     about = "One-time setup: install the root helper for passwordless switching",
     long_about = "\
 Run once with sudo. Copies wglane-helper to a root-owned path
-(/usr/local/libexec/wglane-helper), copies bash, wg-quick, wg and
-wireguard-go from Homebrew into root-owned /usr/local/libexec/wglane/bin
-(re-run after upgrading wireguard-tools), and adds a sudoers rule allowing
+(/usr/local/libexec/wglane-helper), copies wg and wireguard-go from
+Homebrew into root-owned /usr/local/libexec/wglane/bin, refusing any that
+load libraries outside /usr/lib and /System/Library (re-run after upgrading
+wireguard-tools or wireguard-go), and adds a sudoers rule allowing
 only the helper. Afterwards `up`, `down` and `watch` never prompt for a
 password. The helper accepts only fixed verbs with validated arguments.",
     after_help = "\
