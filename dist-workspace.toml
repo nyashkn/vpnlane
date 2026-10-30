@@ -18,3 +18,7 @@ cargo-dist-version = "0.32.0"
 dist = true
 # release-please creates the GitHub Release when its PR merges; dist only uploads to it.
 create-release = false
+
+# GitHub is retiring macOS 14 runners (brownouts cancel the aarch64 job); pin the Apple silicon build to macos-15.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
