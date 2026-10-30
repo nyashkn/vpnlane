@@ -2,6 +2,20 @@
 
 All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.2.0](https://github.com/nyashkn/wglane/compare/v0.1.1...v0.2.0) (2026-10-30)
+
+
+### What's New
+
+* **tui:** continent tree, state banner, help overlay, NO_COLOR ([#20](https://github.com/nyashkn/wglane/issues/20)) ([1759cc5](https://github.com/nyashkn/wglane/commit/1759cc5d08e2ccf8d9d9e50e5b3e1c8e4534b60c))
+* **tui:** country search + fix latency graph ([#18](https://github.com/nyashkn/wglane/issues/18)) ([8cdafbe](https://github.com/nyashkn/wglane/commit/8cdafbe3e489fd80a99c1598bf753ae1b6620e71))
+
+
+### Fixes
+
+* **macos:** verify IPv6 block routes with netstat, recover stranded ones ([#16](https://github.com/nyashkn/wglane/issues/16)) ([156e7bc](https://github.com/nyashkn/wglane/commit/156e7bc8c9065210dc2c4c20ffdbe9da599b64a2))
+* **tui:** auto-scale latency graph to the visible window ([#21](https://github.com/nyashkn/wglane/issues/21)) ([adbb5ce](https://github.com/nyashkn/wglane/commit/adbb5ce95dee35151df35afdbc92f3a06e567d4d))
+
 ## [0.1.1](https://github.com/nyashkn/wglane/compare/v0.1.0...v0.1.1) (2026-10-30)
 
 A small release that fixes how wglane is published. The command itself does not change.
