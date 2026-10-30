@@ -16,3 +16,5 @@ targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 cargo-dist-version = "0.32.0"
 # publish = false (workspace-wide) hides binaries from dist; opt packages back in.
 dist = true
+# release-please creates the GitHub Release when its PR merges; dist only uploads to it.
+create-release = false
