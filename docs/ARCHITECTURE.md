@@ -100,8 +100,15 @@ names only the helper and has no argument list.
 3. `ifconfig` (address, `up`).
 4. `route`: endpoint host route via the physical gateway, then `0.0.0.0/1`
    and `128.0.0.0/1` via the interface.
+5. `route add -inet6 -net <prefix> ::1 -reject` for `2000::/3`, `64:ff9b::/96`
+   and `64:ff9b:1::/48` (NAT64): IPv6 is rejected while a tunnel is up. `route`
+   exits 0 even when the kernel refuses, so each add is checked with
+   `route -n get -inet6` (destination, mask, gateway `::1`, `REJECT` flag) and a
+   failed check fails `up`. The routes are shared; later tunnels find them in
+   place.
 
-`down` deletes those routes and the interface's control socket, which ends
+`down` deletes those routes (the v6 blocks with the last tunnel, or when `prune`
+drops the last dead record, and only after the same check shows they are ours) and the interface's control socket, which ends
 `wireguard-go`.
 
 **Which tunnel is ours.** Recorded in the root-only `/var/db/wglane/tunnels`
@@ -121,8 +128,10 @@ canonical file and every ancestor on every exec; `ifconfig`, `route` and
 `netstat` are fixed `/sbin` and `/usr/sbin` paths; `PATH` is system dirs only.
 Upgrading wireguard-tools or wireguard-go requires re-running `install-helper`.
 
-**Limits.** IPv4 endpoints and the IPv4 tunnel only (IPv6 is not tunnelled, see
-the README).
+**Limits.** IPv4 endpoints and the IPv4 tunnel only. IPv6 is not tunnelled: it
+is rejected on a best-effort basis (interface-bound sockets can bypass unscoped
+routes; not a kill switch). Tailscale's IPv6 underlay may fall back to
+IPv4/DERP, which have bypass routes; this is unverified. See the README.
 
 ### Network change
 

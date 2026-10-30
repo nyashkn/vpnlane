@@ -20,8 +20,8 @@ All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog
   rule for passwordless `up`/`down`.
 - `wglane completions` for shell completions; man pages via `cargo xtask man`.
 - Global `--json`, `-v` and `--config-dir` / `WGLANE_CONFIG_DIR`.
+- While a tunnel is up, global IPv6 (`2000::/3`) and the NAT64 prefixes are rejected, best effort (not a kill switch), so IPv6 does not leak outside the VPN.
 
 ### Known issues
 
-- IPv6 is not tunnelled: on a dual-stack network IPv6 traffic bypasses the VPN.
-  There is no kill switch.
+- IPv6 is not tunnelled (rejected best effort while up). There is no kill switch.

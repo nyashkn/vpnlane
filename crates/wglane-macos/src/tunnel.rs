@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs::{self, DirBuilder};
 use std::io::{self, Read as _};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,6 +30,12 @@ const STATE_FILE: &str = "tunnels";
 const MAX_CONF_BYTES: u64 = 4096;
 /// A full tunnel as two half-routes, so the physical default route survives.
 const SPLIT_ROUTES: [&str; 2] = ["0.0.0.0/1", "128.0.0.0/1"];
+/// The tunnel is IPv4-only, so while it is up these IPv6 prefixes are rejected and
+/// apps fall back to IPv4: global unicast, and the NAT64 prefixes DNS64 can
+/// synthesize AAAA into on 464XLAT hotspots. `::1`, link-local, multicast and
+/// Tailscale's `fd7a::/48` have more specific routes and stay reachable.
+/// Best effort, not a kill switch.
+const V6_BLOCKS: [(&str, u8); 3] = [("2000::", 3), ("64:ff9b::", 96), ("64:ff9b:1::", 48)];
 
 /// [`Tunnel`] that drives `wireguard-go` and `wg` directly (no helper script, no
 /// shell). Must run as root, so in production it is used only inside
@@ -276,6 +282,10 @@ impl<R: CommandRunner> WgGo<R> {
         if state.len() == before {
             return Ok(());
         }
+        // The last tunnel died: do not leave IPv6 dead behind it.
+        if state.is_empty() {
+            self.del_blocks()?;
+        }
         self.save(state)
     }
 
@@ -297,6 +307,61 @@ impl<R: CommandRunner> WgGo<R> {
                 "wireguard-go reported interface {name:?}"
             )))
         }
+    }
+
+    /// True only if `route get` shows exactly our block: same destination and mask,
+    /// gateway `::1`, REJECT flag. `route` exits 0 even when the kernel refuses a
+    /// change, so exit codes prove nothing; an unknown route ("not in table") or
+    /// someone else's is not ours.
+    fn v6_block_is_ours(&self, addr: &str, len: u8) -> Result<bool> {
+        let out = self.runner.run("route", &["-n", "get", "-inet6", addr])?;
+        let (mut dest, mut mask, mut gw, mut reject) = (None, None, None, false);
+        for line in out.stdout.lines() {
+            let Some((k, v)) = line.split_once(':') else {
+                continue;
+            };
+            let v = v.trim();
+            match k.trim() {
+                "destination" => dest = v.parse::<Ipv6Addr>().ok(),
+                "mask" => mask = v.parse::<Ipv6Addr>().ok(),
+                "gateway" => gw = v.parse::<Ipv6Addr>().ok(),
+                "flags" => reject = v.trim_matches(['<', '>']).split(',').any(|f| f == "REJECT"),
+                _ => {}
+            }
+        }
+        let want = Some(Ipv6Addr::from(u128::MAX << (128 - u32::from(len))));
+        Ok(dest == addr.parse().ok() && mask == want && gw == Some(Ipv6Addr::LOCALHOST) && reject)
+    }
+
+    fn add_blocks(&self) -> Result<()> {
+        for (addr, len) in V6_BLOCKS {
+            if self.v6_block_is_ours(addr, len)? {
+                continue;
+            }
+            let net = format!("{addr}/{len}");
+            self.runner.run_ok(
+                "route",
+                &["-q", "-n", "add", "-inet6", "-net", &net, "::1", "-reject"],
+            )?;
+            if !self.v6_block_is_ours(addr, len)? {
+                return Err(Error::Api(format!(
+                    "IPv6 block route {net} was not installed"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Deletes only routes that verify as ours; a user's or another VPN's is left alone.
+    fn del_blocks(&self) -> Result<()> {
+        for (addr, len) in V6_BLOCKS {
+            if self.v6_block_is_ours(addr, len)? {
+                let net = format!("{addr}/{len}");
+                self.runner
+                    .run("route", &["-q", "-n", "delete", "-inet6", "-net", &net])?;
+            }
+        }
+        Ok(())
     }
 
     fn configure(
@@ -344,6 +409,7 @@ impl<R: CommandRunner> WgGo<R> {
                 &["-q", "-n", "add", "-inet", net, "-interface", utun],
             )?;
         }
+        self.add_blocks()?;
         Ok(())
     }
 
@@ -373,6 +439,10 @@ impl<R: CommandRunner> WgGo<R> {
         if let Some(ip) = entry.endpoint {
             self.runner
                 .run("route", &["-q", "-n", "delete", "-inet", &ip.to_string()])?;
+        }
+        // The v6 blocks are shared by all tunnels: the last one takes them down.
+        if state.len() == 1 {
+            self.del_blocks()?;
         }
         rm(&self.sock(&entry.utun))?;
         state.remove(cc);
@@ -482,9 +552,58 @@ default            192.0.2.1          UGScg                 en0
         run_dir: PathBuf,
         /// Programs (by name) that fail with exit 1.
         failing: RefCell<Vec<&'static str>>,
+        /// The kernel silently refuses every v6 add (`route` still exits 0).
+        fail_v6: std::cell::Cell<bool>,
+        /// How many `wireguard-go` have started (utun7, utun8, ...).
+        started: std::cell::Cell<u32>,
+        /// Fake IPv6 table: addr -> (prefix len, gateway, flags).
+        v6: RefCell<std::collections::BTreeMap<String, (u8, String, String)>>,
     }
 
     impl Sim {
+        /// Plays `route` for IPv6: like the real one it exits 0 even when it refuses.
+        fn route_v6(&self, args: &[&str]) -> CommandOutput {
+            let ok = |stdout: String, stderr: &str| CommandOutput {
+                code: Some(0),
+                stdout,
+                stderr: stderr.into(),
+            };
+            let mut t = self.v6.borrow_mut();
+            if args.contains(&"get") {
+                let addr = *args.last().unwrap();
+                return match t.get(addr) {
+                    Some((len, gw, flags)) => ok(
+                        format!(
+                            "   route to: {addr}\ndestination: {addr}\n       mask: {}\n    gateway: {gw}\n  interface: lo0\n      flags: <{flags}>\n",
+                            Ipv6Addr::from(u128::MAX << (128 - u32::from(*len)))
+                        ),
+                        "",
+                    ),
+                    None => ok(
+                        String::new(),
+                        "route: writing to routing socket: not in table\n",
+                    ),
+                };
+            }
+            let net = args[args.iter().position(|a| *a == "-net").unwrap() + 1];
+            let (addr, len) = net.split_once('/').unwrap();
+            if args.contains(&"delete") {
+                t.remove(addr);
+            } else if self.fail_v6.get() || t.contains_key(addr) {
+                return ok(String::new(), "route: writing to routing socket: refused\n");
+            } else {
+                t.insert(
+                    addr.into(),
+                    (
+                        len.parse().unwrap(),
+                        "::1".into(),
+                        "UP,GATEWAY,REJECT,DONE,STATIC".into(),
+                    ),
+                );
+            }
+            ok(String::new(), "")
+        }
+
         fn finish(&self, program: &str, mut out: CommandOutput) -> CommandOutput {
             if self.failing.borrow().contains(&program) {
                 out.code = Some(1);
@@ -497,8 +616,14 @@ default            192.0.2.1          UGScg                 en0
     impl CommandRunner for Sim {
         fn run(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
             if program == "wireguard-go" {
-                fs::write(self.run_dir.join(NAME_FILE), "utun7\n").unwrap();
-                fs::write(self.run_dir.join("utun7.sock"), "").unwrap();
+                let n = self.started.get();
+                self.started.set(n + 1);
+                fs::write(self.run_dir.join(NAME_FILE), format!("utun{}\n", 7 + n)).unwrap();
+                fs::write(self.run_dir.join(format!("utun{}.sock", 7 + n)), "").unwrap();
+            }
+            if program == "route" && args.contains(&"-inet6") {
+                self.inner.note(program, args);
+                return Ok(self.route_v6(args));
             }
             Ok(self.finish(program, self.inner.run(program, args)?))
         }
@@ -528,6 +653,9 @@ default            192.0.2.1          UGScg                 en0
                 inner: FakeRunner::new(),
                 run_dir: run.clone(),
                 failing: RefCell::default(),
+                fail_v6: std::cell::Cell::default(),
+                v6: RefCell::default(),
+                started: std::cell::Cell::default(),
             };
             sim.inner.push_stdout(netstat);
             let conf = state.join("za.conf");
@@ -543,6 +671,18 @@ default            192.0.2.1          UGScg                 en0
 
         fn calls(&self) -> Vec<Vec<String>> {
             self.engine.runner.inner.calls()
+        }
+
+        /// Calls that are not the read-only `route get` verification.
+        fn changes(&self) -> Vec<Vec<String>> {
+            self.calls()
+                .into_iter()
+                .filter(|c| !c.contains(&"get".to_owned()))
+                .collect()
+        }
+
+        fn v6_routes(&self) -> Vec<String> {
+            self.engine.runner.v6.borrow().keys().cloned().collect()
         }
 
         fn state_file(&self) -> String {
@@ -632,6 +772,37 @@ default            192.0.2.1          UGScg                 en0
                     "-interface",
                     "utun7"
                 ]),
+                argv(&["route", "-n", "get", "-inet6", "2000::"]),
+                argv(&[
+                    "route", "-q", "-n", "add", "-inet6", "-net", "2000::/3", "::1", "-reject"
+                ]),
+                argv(&["route", "-n", "get", "-inet6", "2000::"]),
+                argv(&["route", "-n", "get", "-inet6", "64:ff9b::"]),
+                argv(&[
+                    "route",
+                    "-q",
+                    "-n",
+                    "add",
+                    "-inet6",
+                    "-net",
+                    "64:ff9b::/96",
+                    "::1",
+                    "-reject"
+                ]),
+                argv(&["route", "-n", "get", "-inet6", "64:ff9b::"]),
+                argv(&["route", "-n", "get", "-inet6", "64:ff9b:1::"]),
+                argv(&[
+                    "route",
+                    "-q",
+                    "-n",
+                    "add",
+                    "-inet6",
+                    "-net",
+                    "64:ff9b:1::/48",
+                    "::1",
+                    "-reject"
+                ]),
+                argv(&["route", "-n", "get", "-inet6", "64:ff9b:1::"]),
             ]
         );
         let m = fs::metadata(f.engine.run_dir.join("utun7.sock")).unwrap();
@@ -702,6 +873,28 @@ default            192.0.2.1          UGScg                 en0
                     "utun7"
                 ]),
                 argv(&["route", "-q", "-n", "delete", "-inet", EP]),
+                argv(&["route", "-n", "get", "-inet6", "2000::"]),
+                argv(&["route", "-q", "-n", "delete", "-inet6", "-net", "2000::/3"]),
+                argv(&["route", "-n", "get", "-inet6", "64:ff9b::"]),
+                argv(&[
+                    "route",
+                    "-q",
+                    "-n",
+                    "delete",
+                    "-inet6",
+                    "-net",
+                    "64:ff9b::/96"
+                ]),
+                argv(&["route", "-n", "get", "-inet6", "64:ff9b:1::"]),
+                argv(&[
+                    "route",
+                    "-q",
+                    "-n",
+                    "delete",
+                    "-inet6",
+                    "-net",
+                    "64:ff9b:1::/48"
+                ]),
             ]
         );
         assert!(
@@ -739,7 +932,7 @@ default            192.0.2.1          UGScg                 en0
         assert_eq!(f.state_file(), "", "record dropped");
         record_again(f);
         f.engine.down(&f.conf).unwrap();
-        assert_eq!(f.calls().len(), 0, "ran {:?}", f.calls());
+        assert_eq!(f.changes().len(), 0, "ran {:?}", f.calls());
         assert!(sock.exists(), "foreign socket removed");
         assert_eq!(f.state_file(), "");
     }
@@ -783,14 +976,14 @@ default            192.0.2.1          UGScg                 en0
         )
         .unwrap();
         f.engine.down(&f.conf).unwrap();
-        assert_eq!(f.calls().len(), 0);
+        assert_eq!(f.changes().len(), 0);
         assert!(f.engine.run_dir.join("utun7.sock").exists());
         assert_eq!(f.state_file(), "");
         // Socket missing entirely.
         fs::remove_file(f.engine.run_dir.join("utun7.sock")).unwrap();
         record(&f, &format!("1:1:{BOOT}"));
         f.engine.down(&f.conf).unwrap();
-        assert_eq!(f.calls().len(), 0);
+        assert_eq!(f.changes().len(), 0);
         assert_eq!(f.state_file(), "");
     }
 
@@ -817,8 +1010,11 @@ default            192.0.2.1          UGScg                 en0
         let calls = f.calls();
         assert_eq!(calls[before][..2], ["route", "-q"]);
         assert_eq!(calls[before][3], "delete");
-        assert_eq!(calls[before + 3], argv(&["netstat", "-rn", "-f", "inet"]));
-        assert_eq!(calls[before + 4], argv(&["wireguard-go", "utun"]));
+        assert_eq!(
+            calls[before + 3 + 6],
+            argv(&["netstat", "-rn", "-f", "inet"])
+        );
+        assert_eq!(calls[before + 3 + 7], argv(&["wireguard-go", "utun"]));
         assert_eq!(f.state_file().lines().count(), 1);
     }
 
@@ -830,8 +1026,15 @@ default            192.0.2.1          UGScg                 en0
         let err = f.engine.up(&f.conf).unwrap_err().to_string();
         assert!(err.contains("ifconfig"), "{err}");
         let calls = f.calls();
+        // Failed before the v6 add: nothing v6 is added or deleted, only verified.
+        assert!(
+            f.changes()
+                .iter()
+                .all(|c| !c.contains(&"-inet6".to_owned())),
+            "{calls:?}"
+        );
         assert_eq!(
-            calls.last().unwrap(),
+            f.changes().last().unwrap(),
             &argv(&[
                 "route",
                 "-q",
@@ -864,6 +1067,108 @@ default            192.0.2.1          UGScg                 en0
             g.calls()
         );
         assert_eq!(g.state_file(), "");
+    }
+
+    #[test]
+    fn a_refused_v6_add_fails_up_and_removes_the_tunnel() {
+        // `route` exits 0 but the kernel refused: only the get can tell.
+        let f = Fixture::new();
+        f.engine.runner.fail_v6.set(true);
+        let err = f.engine.up(&f.conf).unwrap_err().to_string();
+        assert!(err.contains("2000::/3"), "{err}");
+        let calls = f.calls();
+        assert!(calls.contains(&argv(&[
+            "route", "-q", "-n", "add", "-inet6", "-net", "2000::/3", "::1", "-reject"
+        ])));
+        assert!(calls.contains(&argv(&[
+            "route",
+            "-q",
+            "-n",
+            "delete",
+            "-inet",
+            "0.0.0.0/1",
+            "-interface",
+            "utun7"
+        ])));
+        assert!(calls.contains(&argv(&["route", "-q", "-n", "delete", "-inet", EP])));
+        assert!(
+            f.changes()
+                .iter()
+                .all(|c| !c.contains(&"delete".to_owned()) || !c.contains(&"-inet6".to_owned()))
+        );
+        assert_eq!(f.state_file(), "");
+        assert!(!f.engine.run_dir.join("utun7.sock").exists());
+    }
+
+    #[test]
+    fn up_blocks_all_prefixes_and_down_removes_them() {
+        let f = Fixture::new();
+        f.engine.up(&f.conf).unwrap();
+        assert_eq!(f.v6_routes(), ["2000::", "64:ff9b:1::", "64:ff9b::"]);
+        f.engine.down(&f.conf).unwrap();
+        assert_eq!(f.v6_routes().len(), 0);
+    }
+
+    #[test]
+    fn a_foreign_route_is_never_deleted_or_adopted() {
+        let f = Fixture::new();
+        // Someone else's reject for 2000::/3 (other mask semantics: /16, other gateway).
+        for (len, gw) in [(16, "::1"), (3, "fe80::1")] {
+            f.engine.runner.v6.borrow_mut().insert(
+                "2000::".into(),
+                (len, gw.into(), "UP,GATEWAY,REJECT".into()),
+            );
+            assert!(f.engine.up(&f.conf).is_err(), "adopted a foreign route");
+            assert!(
+                !f.changes()
+                    .iter()
+                    .any(|c| c.contains(&"delete".to_owned()) && c.contains(&"-inet6".to_owned())),
+                "{:?}",
+                f.calls()
+            );
+            assert_eq!(
+                f.engine.runner.v6.borrow()["2000::"].0,
+                len,
+                "foreign route touched"
+            );
+        }
+        // And the same through down: a recorded tunnel does not delete a route that is not ours.
+        let g = Fixture::new();
+        g.engine.up(&g.conf).unwrap();
+        g.engine.runner.v6.borrow_mut().get_mut("2000::").unwrap().1 = "fe80::1".into();
+        g.engine.down(&g.conf).unwrap();
+        assert_eq!(g.v6_routes(), ["2000::"], "only the foreign one is left");
+    }
+
+    #[test]
+    fn two_tunnels_share_the_blocks() {
+        let f = Fixture::new();
+        f.engine.up(&f.conf).unwrap();
+        let zb = f.engine.state_dir.join("de.conf");
+        fs::write(&zb, conf_text(EP)).unwrap();
+        let before = f.calls().len();
+        f.engine.runner.inner.push_stdout(NETSTAT);
+        f.engine.up(&zb).unwrap();
+        assert!(
+            !f.calls()[before..]
+                .iter()
+                .any(|c| c.contains(&"-inet6".to_owned()) && c.contains(&"add".to_owned())),
+            "second up re-added"
+        );
+        f.engine.down(&f.conf).unwrap();
+        assert_eq!(f.v6_routes().len(), 3, "first down leaves the blocks");
+        f.engine.down(&zb).unwrap();
+        assert_eq!(f.v6_routes().len(), 0, "last down removes them");
+    }
+
+    #[test]
+    fn a_dead_last_tunnel_pruned_takes_the_blocks_with_it() {
+        let f = Fixture::new();
+        f.engine.up(&f.conf).unwrap();
+        fs::remove_file(f.engine.run_dir.join("utun7.sock")).unwrap(); // wireguard-go died
+        assert_eq!(f.engine.active().unwrap().len(), 0);
+        assert_eq!(f.v6_routes().len(), 0);
+        assert_eq!(f.state_file(), "");
     }
 
     #[test]
