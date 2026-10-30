@@ -2,6 +2,7 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: "render_sized(&s, 70, 12).backend()"
 ---
+"● up  KE  301 ms ▁▁█▁▁▁▁▁▁▁▁▁  exit 203.0.113.7                       "
 "┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
 "│> ▸ Africa (1)         ││tunnel   ● up  KE                          │"
 "│  ▸ Europe (1)         ││exit ip  203.0.113.7                       │"
@@ -9,7 +10,6 @@ expression: "render_sized(&s, 70, 12).backend()"
 "│                       ││latency  301 ms  min 300  max 900          │"
 "│                       ││                    █                      │"
 "│                       ││▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂█▂▂▂▂▂▂▂▂▂             │"
-"│                       ││                                           │"
 "│                       ││                                           │"
 "│                       ││                                           │"
 "└───────────────────────┘└───────────────────────────────────────────┘"

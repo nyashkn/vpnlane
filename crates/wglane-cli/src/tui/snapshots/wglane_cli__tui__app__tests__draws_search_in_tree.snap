@@ -2,13 +2,13 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: render(&s).backend()
 ---
+"· checking...                                                         "
 "┌ search: an_ ──────────┐┌ stats ────────────────────────────────────┐"
 "│  ▾ Europe (2)         ││tunnel   · checking...                     │"
 "│>     FR  France       ││exit ip  unknown                           │"
 "│      DE  Germany      ││tailnet  unknown                           │"
 "│  ▾ Asia (1)           ││latency  -                                 │"
 "│      JP  Japan        ││                                           │"
-"│                       ││                                           │"
 "│                       ││                                           │"
 "└───────────────────────┘└───────────────────────────────────────────┘"
 "type to filter  enter keep  esc clear  up/down select                 "

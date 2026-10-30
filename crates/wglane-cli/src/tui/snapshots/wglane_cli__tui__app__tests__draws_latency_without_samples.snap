@@ -2,12 +2,12 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: "render_sized(&loaded(), 70, 12).backend()"
 ---
+"· checking...                                                         "
 "┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
 "│> ▸ Africa (1)         ││tunnel   · checking...                     │"
 "│  ▸ Europe (1)         ││exit ip  unknown                           │"
 "│  ▸ North America (1)  ││tailnet  unknown                           │"
 "│                       ││latency  -                                 │"
-"│                       ││                                           │"
 "│                       ││                                           │"
 "│                       ││                                           │"
 "│                       ││                                           │"

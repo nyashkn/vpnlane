@@ -2,12 +2,12 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: render(&s).backend()
 ---
+"· checking...                                                         "
 "┌ search: za_ ──────────┐┌ stats ────────────────────────────────────┐"
 "│  ▾ Africa (1)         ││tunnel   · checking...                     │"
 "│>     ZA  South Africa ││exit ip  unknown                           │"
 "│                       ││tailnet  unknown                           │"
 "│                       ││latency  -                                 │"
-"│                       ││                                           │"
 "│                       ││                                           │"
 "│                       ││                                           │"
 "└───────────────────────┘└───────────────────────────────────────────┘"

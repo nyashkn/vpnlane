@@ -2,6 +2,7 @@
 source: crates/wglane-cli/src/tui/app.rs
 expression: "render(&up(loaded(), &[], 30)).backend()"
 ---
+"○ down                                                                "
 "┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
 "│> ▸ Africa (1)         ││tunnel   ○ down                            │"
 "│  ▸ Europe (1)         ││exit ip  203.0.113.7                       │"
@@ -9,6 +10,5 @@ expression: "render(&up(loaded(), &[], 30)).backend()"
 "│                       ││latency  30 ms  min 30  max 30             │"
 "│                       ││                                           │"
 "│                       ││▂                                          │"
-"│                       ││                                           │"
 "└───────────────────────┘└───────────────────────────────────────────┘"
 "? help  enter connect  d disconnect  / search  q quit                 "
