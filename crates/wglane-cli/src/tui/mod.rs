@@ -3,18 +3,18 @@
 //! and the effects that touch the system.
 
 mod app;
+mod continent;
 
 use std::collections::VecDeque;
 use std::time::Duration;
 
 use color_eyre::Result;
 use ratatui::crossterm::event::{self, Event as Term, KeyEventKind};
-use wglane_core::ports::{ExitIpProbe, ServerCatalog, TailnetProbe, Tunnel};
-use wglane_core::{TailnetHealth, TunnelStatus};
+use wglane_core::ports::ServerCatalog;
 use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
 use wglane_nord::NordApi;
 
-use crate::cmd::{down, up};
+use crate::cmd::{down, status, up};
 use crate::context::Context;
 use app::{Effect, Event, State};
 
@@ -25,7 +25,14 @@ const TICK: Duration = Duration::from_secs(2);
 pub(crate) fn run(ctx: &Context) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = (|| -> Result<()> {
-        let mut state = State::default();
+        // https://no-color.org: any non-empty value. Handled here, not by
+        // crossterm: under NO_COLOR it turns each color change into an empty
+        // SGR (a full reset), which drops bold and reverse mid-row.
+        let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+        let mut state = State {
+            no_color,
+            ..State::default()
+        };
         let mut effects: VecDeque<Effect> = app::init().into();
         loop {
             // Draw before blocking effects so "connecting..." is on screen.
@@ -58,7 +65,16 @@ fn execute(effect: Effect, ctx: &Context) -> Event {
         Effect::LoadCountries => {
             Event::Countries(NordApi::new().countries().map_err(|e| e.to_string()))
         }
-        Effect::Refresh => Event::Status(probe(ctx)),
+        Effect::Refresh => {
+            let runner = SystemRunner;
+            let (st, known) = status::gather(
+                &HelperClient::new(runner),
+                &NordApi::new(),
+                &TailscalePing::new(runner),
+                ctx.recorded_routes(),
+            );
+            Event::Status(st, known)
+        }
         Effect::Connect(cc) => Event::Finished(
             up::connect_real(ctx, cc)
                 .map(drop)
@@ -69,20 +85,5 @@ fn execute(effect: Effect, ctx: &Context) -> Event {
                 .map(drop)
                 .map_err(|e| e.to_string()),
         ),
-    }
-}
-
-/// Reads tunnel state without sudo. A failing probe is a field value, not an error.
-fn probe(ctx: &Context) -> TunnelStatus {
-    let runner = SystemRunner;
-    TunnelStatus {
-        active: HelperClient::new(runner).active().unwrap_or_default(),
-        exit_ip: NordApi::new().exit_ip().ok(),
-        tailnet: TailscalePing::new(runner).tailnet().unwrap_or_else(|e| {
-            TailnetHealth::Unreachable {
-                reason: e.to_string(),
-            }
-        }),
-        bypass_routes: ctx.recorded_routes(),
     }
 }

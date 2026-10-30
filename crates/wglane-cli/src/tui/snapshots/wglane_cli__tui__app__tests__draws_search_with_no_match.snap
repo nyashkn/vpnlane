@@ -3,7 +3,7 @@ source: crates/wglane-cli/src/tui/app.rs
 expression: render(&s).backend()
 ---
 "┌ search: zzz_ ─────────┐┌ stats ────────────────────────────────────┐"
-"│no match               ││tunnel   unknown                           │"
+"│  no match (esc clears)││tunnel   · checking...                     │"
 "│                       ││exit ip  unknown                           │"
 "│                       ││tailnet  unknown                           │"
 "│                       ││latency  -                                 │"
