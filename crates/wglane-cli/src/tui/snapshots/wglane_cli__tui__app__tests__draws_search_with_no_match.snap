@@ -1,0 +1,14 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: render(&s).backend()
+---
+"┌ search: zzz_ ─────────┐┌ stats ────────────────────────────────────┐"
+"│no match               ││tunnel   unknown                           │"
+"│                       ││exit ip  unknown                           │"
+"│                       ││tailnet  unknown                           │"
+"│                       ││latency                                    │"
+"│                       ││                                           │"
+"│                       ││                                           │"
+"│                       ││                                           │"
+"└───────────────────────┘└───────────────────────────────────────────┘"
+"type to filter  enter keep  esc clear  up/down select                 "
