@@ -6,7 +6,7 @@ expression: render(&s).backend()
 "│ZA  South Africa       ││tunnel   unknown                           │"
 "│                       ││exit ip  unknown                           │"
 "│                       ││tailnet  unknown                           │"
-"│                       ││latency                                    │"
+"│                       ││latency  -                                 │"
 "│                       ││                                           │"
 "│                       ││                                           │"
 "│                       ││                                           │"

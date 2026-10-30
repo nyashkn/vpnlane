@@ -8,6 +8,10 @@ use wglane_core::{Country, CountryCode, TailnetHealth, TunnelStatus};
 
 /// Latency samples kept for the sparkline.
 const HISTORY: usize = 60;
+/// Height of the latency graph in rows.
+const SPARK_ROWS: u16 = 4;
+/// Smallest scale ceiling in ms: a healthy link draws short bars, not full height.
+const SPARK_FLOOR_MS: u64 = 500;
 
 /// A tunnel change in flight (the UI is blocked on it).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -196,9 +200,19 @@ pub(crate) fn draw(s: &State, frame: &mut Frame) {
     let card = Block::bordered().title(" stats ");
     let inner = card.inner(right);
     frame.render_widget(card, right);
-    let [text, spark] = Layout::vertical([Constraint::Length(4), Constraint::Min(1)]).areas(inner);
+    let [text, spark, _] = Layout::vertical([
+        Constraint::Length(4),
+        Constraint::Length(SPARK_ROWS),
+        Constraint::Min(0),
+    ])
+    .areas(inner);
     frame.render_widget(Paragraph::new(stats_lines(s)), text);
-    frame.render_widget(Sparkline::default().data(&s.latency), spark);
+    // Sparkline scales to the data max when none is set, so one sample (or a
+    // flat series) filled the whole panel. Floor the scale and keep only the
+    // newest samples that fit the width.
+    let shown = &s.latency[s.latency.len().saturating_sub(usize::from(spark.width))..];
+    let ceiling = shown.iter().copied().max().unwrap_or(0).max(SPARK_FLOOR_MS);
+    frame.render_widget(Sparkline::default().data(shown).max(ceiling), spark);
 
     let hints = if s.searching {
         "type to filter  enter keep  esc clear  up/down select"
@@ -238,8 +252,15 @@ fn stats_lines(s: &State) -> Vec<Line<'static>> {
         Line::from(format!("tunnel   {tunnel}")),
         Line::from(format!("exit ip  {exit}")),
         Line::from(format!("tailnet  {tailnet}")),
-        Line::from("latency"),
+        Line::from(latency_label(&s.latency)),
     ]
+}
+
+fn latency_label(samples: &[u64]) -> String {
+    match (samples.last(), samples.iter().min(), samples.iter().max()) {
+        (Some(now), Some(lo), Some(hi)) => format!("latency  {now} ms  min {lo}  max {hi}"),
+        _ => "latency  -".into(),
+    }
 }
 
 #[cfg(test)]
@@ -525,10 +546,42 @@ mod tests {
         insta::assert_snapshot!(render(&s).backend());
     }
 
-    fn render(s: &State) -> Terminal<TestBackend> {
-        let mut t = Terminal::new(TestBackend::new(70, 10)).unwrap();
+    fn render_sized(s: &State, w: u16, h: u16) -> Terminal<TestBackend> {
+        let mut t = Terminal::new(TestBackend::new(w, h)).unwrap();
         t.draw(|f| draw(s, f)).unwrap();
         t
+    }
+
+    fn render(s: &State) -> Terminal<TestBackend> {
+        render_sized(s, 70, 10)
+    }
+
+    fn with_latency(samples: impl IntoIterator<Item = u64>) -> State {
+        samples.into_iter().fold(loaded(), |s, ms| {
+            update(s, Event::Status(status(&["ke"], reachable(ms)))).0
+        })
+    }
+
+    #[test]
+    fn draws_latency_without_samples() {
+        insta::assert_snapshot!(render_sized(&loaded(), 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_with_one_sample() {
+        insta::assert_snapshot!(render_sized(&with_latency([286]), 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_with_variance() {
+        let s = with_latency((0..30).map(|i| 280 + (i * 7) % 23));
+        insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    #[test]
+    fn draws_latency_in_a_narrow_panel() {
+        let s = with_latency((0..30).map(|i| 20 + (i * 13) % 90));
+        insta::assert_snapshot!(render_sized(&s, 40, 12).backend());
     }
 
     #[test]

@@ -1,0 +1,16 @@
+---
+source: crates/wglane-cli/src/tui/app.rs
+expression: "render_sized(&s, 40, 12).backend()"
+---
+"┌ servers ───┐┌ stats ─────────────────┐"
+"│DE  Germany ││tunnel   up (KE)        │"
+"│US  United S││exit ip  203.0.113.7    │"
+"│ZA  South Af││tailnet  ok (nas, 37 ms)│"
+"│            ││latency  37 ms  min 20  │"
+"│            ││                        │"
+"│            ││                        │"
+"│            ││                        │"
+"│            ││▆▁▂▃▃▄▅▆▁▂▃▃▄▅▆▁▂▃▃▄▅▆▁▂│"
+"│            ││                        │"
+"└────────────┘└────────────────────────┘"
+"/ search  esc clear  enter connect  d di"
