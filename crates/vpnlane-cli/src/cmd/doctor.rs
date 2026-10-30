@@ -7,6 +7,7 @@ use std::path::Path;
 use color_eyre::Result;
 use serde_json::json;
 use vpnlane_core::Error;
+use vpnlane_core::brand::{LEGACY_BIN, LEGACY_HELPER_PATH, LEGACY_SUDOERS_PATH};
 use vpnlane_core::ports::{TokenSource, UdpProbe};
 use vpnlane_macos::{
     CommandRunner, HELPER_PATH, SUDOERS_PATH, SystemRunner, TOOL_DIR, UdpSend, check_tool_dir,
@@ -58,7 +59,7 @@ fn fail(fix: impl Into<String>) -> Check {
 }
 
 pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
-    let rows = [
+    let mut rows = vec![
         (
             "wireguard-tools",
             check_program(&SystemRunner, "wg", "brew install wireguard-tools"),
@@ -81,6 +82,10 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
             check_udp(&UdpSend, ctx.conf_store().any_endpoint()),
         ),
     ];
+    let legacy = [LEGACY_SUDOERS_PATH, LEGACY_HELPER_PATH];
+    if let Some(c) = check_legacy(&legacy.map(Path::new)) {
+        rows.push(("legacy files", c));
+    }
     println!("{}", render(&rows, ctx.json)?);
     let failed = rows
         .iter()
@@ -126,6 +131,24 @@ fn check_sudoers(path: &Path) -> Check {
     } else {
         fail(concat!("sudo ", brand_name!(), " install-helper"))
     }
+}
+
+/// A warning (not a failure) if anything from the pre-rename root install
+/// remains: a stranded NOPASSWD rule and root helper that no longer get updates.
+/// Anything but "not found" counts as present.
+fn check_legacy(paths: &[&Path]) -> Option<Check> {
+    let left: Vec<_> = paths
+        .iter()
+        .filter(|p| !matches!(std::fs::symlink_metadata(p), Err(e) if e.kind() == std::io::ErrorKind::NotFound))
+        .map(|p| p.display().to_string())
+        .collect();
+    (!left.is_empty()).then(|| Check::Warn {
+        note: format!(
+            "old {LEGACY_BIN} install still present ({}): run `{}`",
+            left.join(", "),
+            vpnlane_core::brand::INSTALL_HINT
+        ),
+    })
 }
 
 fn check_token<T: TokenSource>(source: &T) -> Check {
@@ -392,5 +415,23 @@ mod tests {
         ];
         insta::assert_snapshot!(render(&rows, false).unwrap());
         insta::assert_snapshot!(render(&rows, true).unwrap());
+    }
+
+    #[test]
+    fn legacy_files_warn_only_when_present() {
+        let d = tmp("legacy");
+        let (a, b) = (d.join("rule"), d.join("helper"));
+        assert_eq!(check_legacy(&[&a, &b]), None);
+        fs::write(&a, "x").unwrap();
+        // A dangling symlink is still a leftover.
+        std::os::unix::fs::symlink(d.join("nowhere"), &b).unwrap();
+        let Some(Check::Warn { note }) = check_legacy(&[&a, &b]) else {
+            panic!("expected a warning")
+        };
+        assert!(
+            note.contains("install-helper") && note.contains("rule") && note.contains("helper"),
+            "{note}"
+        );
+        fs::remove_dir_all(&d).unwrap();
     }
 }

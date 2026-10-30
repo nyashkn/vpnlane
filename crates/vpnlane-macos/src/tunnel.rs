@@ -26,7 +26,7 @@ pub(crate) use vpnlane_core::brand::WG_NAME_FILE as NAME_FILE;
 /// `<cc> <utunN> <endpoint-ip|-> <dev>:<ino>:<boot>` line each (the control
 /// socket's identity and the boot it was made in). Only these are ever torn
 /// down, and only while that socket is still the same file.
-const STATE_FILE: &str = "tunnels";
+pub(crate) const STATE_FILE: &str = "tunnels";
 const MAX_CONF_BYTES: u64 = 4096;
 /// A full tunnel as two half-routes, so the physical default route survives.
 const SPLIT_ROUTES: [&str; 2] = ["0.0.0.0/1", "128.0.0.0/1"];

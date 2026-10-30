@@ -91,7 +91,7 @@ files; they are imported once and deleted.
 ### Privilege split
 
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
-by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
+by running `sudo -n /usr/local/libexec/vpnlane-helper <verb> <args>`. The helper
 (`vpnlane_macos::helper_main`, started by the thin
 `crates/vpnlane-cli/src/bin/vpnlane-helper.rs`) runs as root and uses `WgGo` +
 `RouteTable` with a `RootRunner`.
@@ -123,15 +123,23 @@ names only the helper and has no argument list.
 drops the last dead record, and only after the same check shows they are ours) and the interface's control socket, which ends
 `wireguard-go`.
 
-**Which tunnel is ours.** Recorded in the root-only `/var/db/wglane/tunnels`
+**Which tunnel is ours.** Recorded in the root-only `/var/db/vpnlane/tunnels`
 (`cc utunN endpoint dev:ino:boot`). `active` (a helper verb, because that dir
 is private) lists only those, so the user's other tunnels are never counted or
 touched. A record is trusted only while its control socket is the same file
 from the same boot.
 
+**Migration from `wglane`.** `install-helper` refuses (before any change) while
+an old tunnel may be up, installs and verifies the new layout, and only then
+removes the old helper, tools, sudoers rule and state dir, each only if `lstat`
+shows a root-owned regular file or directory of the expected name (a sudoers file
+must also equal the rule the old version generated for that user). No symlink is
+followed and nothing is deleted recursively. See `docs/UPGRADING.md`. The old
+names live in `core::brand::LEGACY_*` and are used only by that code and `doctor`.
+
 **Trusted install.** `install-helper` copies the helper, `wg` and
-`wireguard-go` into root:wheel paths (`/usr/local/libexec/wglane-helper`,
-`/usr/local/libexec/wglane/bin`) because a sudoers rule on a user-writable
+`wireguard-go` into root:wheel paths (`/usr/local/libexec/vpnlane-helper`,
+`/usr/local/libexec/vpnlane/bin`) because a sudoers rule on a user-writable
 binary would be a root exploit. It refuses to install unless `otool -L` on
 each copy lists only `/usr/lib/` and `/System/Library/` paths (no `@rpath`, no
 `..`), or if any ancestor is not root-owned, g/o-unwritable and ACL-free.
