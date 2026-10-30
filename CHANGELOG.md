@@ -2,6 +2,23 @@
 
 All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.3.0](https://github.com/nyashkn/wglane/compare/v0.2.0...v0.3.0) (2026-10-30)
+
+
+### What's New
+
+* city level in servers, ls, up and the TUI ([#26](https://github.com/nyashkn/wglane/issues/26)) ([b7a7e11](https://github.com/nyashkn/wglane/commit/b7a7e11508d480ba0c4f9db79989eb621132a70d))
+* config v2, one location value, preset overlays, state file ([#31](https://github.com/nyashkn/wglane/issues/31)) ([d65ce3a](https://github.com/nyashkn/wglane/commit/d65ce3a53cb04d36654d73b23d3540b673132d51))
+* leak check in status, stable status --json, doctor UDP 51820 check ([#23](https://github.com/nyashkn/wglane/issues/23)) ([91fe93f](https://github.com/nyashkn/wglane/commit/91fe93f900c9b41c20406d879a715e7e794756fc))
+* presets, named bundles of settings with preview and active tracking ([#27](https://github.com/nyashkn/wglane/issues/27)) ([81d9573](https://github.com/nyashkn/wglane/commit/81d95731e2f4cf42592f21862a14094f71a2eeb2))
+* saved settings in config.toml ([#24](https://github.com/nyashkn/wglane/issues/24)) ([589b63d](https://github.com/nyashkn/wglane/commit/589b63dbad450bfd9bb0c405ff0cb18f332d9ac3))
+* up --fastest, servers --probe, and a non-blocking dashboard worker ([#28](https://github.com/nyashkn/wglane/issues/28)) ([8bcbf66](https://github.com/nyashkn/wglane/commit/8bcbf66cbaf054aa780e6d72083070b3bb83d476))
+
+
+### Fixes
+
+* resolve presets before previewing, keep preset routes on refresh, scope default_city ([#29](https://github.com/nyashkn/wglane/issues/29)) ([4a38a40](https://github.com/nyashkn/wglane/commit/4a38a4015c88ff9c67650c69a7fe9ed46a933671))
+
 ## [0.2.0](https://github.com/nyashkn/wglane/compare/v0.1.1...v0.2.0) (2026-10-30)
 
 This release improves the `wglane tui` dashboard and fixes IPv6 block routes on macOS.
