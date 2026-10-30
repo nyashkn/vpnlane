@@ -30,6 +30,12 @@ keeps working; everything else exits through the VPN.
 wglane is not affiliated with Nord Security. It uses Nord's public API to
 fetch your WireGuard key and server list.
 
+## Demo
+
+![wglane CLI: help, doctor, servers](docs/media/cli.gif)
+
+![wglane TUI: scrolling the country list](docs/media/tui.gif)
+
 ## How it works
 
 ```
