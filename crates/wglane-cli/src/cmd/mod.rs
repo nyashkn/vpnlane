@@ -5,6 +5,7 @@ pub(crate) mod completions;
 pub(crate) mod config;
 pub(crate) mod doctor;
 pub(crate) mod down;
+pub(crate) mod fastest;
 pub(crate) mod gen_conf;
 pub(crate) mod install_helper;
 pub(crate) mod ls;
@@ -84,11 +85,12 @@ mod e2e {
             &FakeToken(Some("tok".into())),
             za,
             None,
+            None,
         )
         .unwrap();
         assert!(
             done.summary(za)
-                .ends_with("config regenerated, 2 bypass routes")
+                .ends_with("config regenerated, 2 bypass routes, server za3.nordvpn.com load 9%")
         );
         assert!(store.path(za).exists());
         assert_eq!(ctx.recorded_city("za").as_deref(), Some("Johannesburg"));
@@ -104,6 +106,7 @@ mod e2e {
                 &FakeToken(Some("tok".into())),
                 za,
                 city,
+                None,
             )
             .unwrap()
         };

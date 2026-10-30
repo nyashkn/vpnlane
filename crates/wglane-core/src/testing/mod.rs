@@ -6,6 +6,7 @@
 mod bypass_provider;
 mod health_probe;
 mod network_watcher;
+mod prober;
 mod route_bypass;
 mod server_catalog;
 mod token_source;
@@ -15,6 +16,7 @@ mod udp_probe;
 pub use bypass_provider::FakeBypassProvider;
 pub use health_probe::{FakeExitIp, FakeTailnet};
 pub use network_watcher::FakeWatcher;
+pub use prober::FakeProber;
 pub use route_bypass::FakeRoutes;
 pub use server_catalog::FakeCatalog;
 pub use token_source::FakeToken;

@@ -1,15 +1,16 @@
 //! `wglane up <CC>`: connect, regenerating the config if missing or stale.
 
 use std::cell::RefCell;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use color_eyre::Result;
 use color_eyre::eyre::eyre;
-use wglane_core::ports::{BypassProvider, RouteBypass, ServerCatalog, TokenSource, Tunnel};
+use wglane_core::ports::{BypassProvider, Prober, RouteBypass, ServerCatalog, TokenSource, Tunnel};
 use wglane_core::{
-    BypassSet, City, CountryCode, Error, MAX_BYPASS, Overrides, generate_config, is_stale,
-    render_wg_conf,
+    BypassSet, Choice, City, CountryCode, Error, FASTEST_CANDIDATES, MAX_BYPASS, Overrides, Pick,
+    generate_config, generate_config_by, is_stale, render_wg_conf,
 };
 use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
 use wglane_nord::NordApi;
@@ -24,6 +25,14 @@ Connect to the least-loaded NordLynx server in COUNTRY, or in one of its
 cities with --city (name or identifier; case and accents do not matter;
 `wglane ls COUNTRY` lists them). Changing between a city and the whole
 country regenerates the config.
+
+With --fastest (or `pick = \"fastest\"` in config.toml) the 10 least-loaded
+candidates are pinged at once (about 2 s at most) and the lowest round trip
+wins; ties go to the lower load, and if no server answers the least-loaded one
+is used and the summary says so. It always picks anew, so it regenerates the
+config even when a fresh one exists. While a wglane tunnel is up, pings are
+bound to the physical interface so they do not measure the tunnel's exit; if
+every ping fails while connected, run `wglane down` first.
 
 If the config for COUNTRY is missing or older than 7 days it is regenerated
 first (no separate `gen` step). An existing wglane tunnel is brought down.
@@ -48,6 +57,7 @@ Examples:
   wglane up us          case does not matter
   wglane up             use default_country from config.toml (or WGLANE_COUNTRY)
   wglane up US --city \"New York\"
+  wglane up DE --fastest          lowest latency among the least-loaded servers
   wglane up --preset work         apply [presets.work] from config.toml
   wglane up --preset work FR      the preset, but exit in France
   wglane -v up DE       show each step"
@@ -66,6 +76,11 @@ pub(crate) struct Args {
     /// explicit COUNTRY or --city overrides the preset's.
     #[arg(long, value_name = "NAME")]
     pub(crate) preset: Option<String>,
+
+    /// Pick the lowest-latency server among the least loaded, not just the
+    /// least loaded. Overrides `pick` in `config.toml` and in the preset.
+    #[arg(long)]
+    pub(crate) fastest: bool,
 }
 
 /// What `up` will do, from the arguments and the saved settings.
@@ -77,6 +92,8 @@ pub(crate) struct Plan {
     /// Config `bypass_extra` plus the preset's.
     bypass: BypassSet,
     preset: Option<String>,
+    /// `--fastest`, else the preset's `pick`, else the top-level `pick`.
+    pick: Pick,
 }
 
 /// Precedence: COUNTRY/--city > preset > `WGLANE_COUNTRY` > config file.
@@ -126,6 +143,11 @@ pub(crate) fn plan(ctx: &Context, args: &Args) -> Result<Plan> {
         city: req.city,
         bypass: req.bypass_extra.iter().copied().collect(),
         preset: args.preset.clone(),
+        pick: if args.fastest {
+            Pick::Fastest
+        } else {
+            req.pick
+        },
     })
 }
 
@@ -133,6 +155,10 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     let plan = plan(ctx, args)?;
     let cc = plan.cc;
     let helper = HelperClient::new(SystemRunner);
+    let prober = match plan.pick {
+        Pick::Fastest => Some(crate::cmd::fastest::real_prober(&helper)?),
+        Pick::LeastLoad => None,
+    };
     let done = connect_target(
         ctx,
         &helper,
@@ -141,6 +167,7 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
         &NordApi::new(),
         &ctx.token_source(),
         plan,
+        prober.as_ref().map(|p| p as &(dyn Prober + Sync)),
     )?;
     println!("{}", done.summary(cc));
     Ok(())
@@ -164,11 +191,16 @@ pub(crate) fn connect_real(
         (cc, city),
         &ctx.static_bypass()?,
         None,
+        None,
     )
 }
 
 /// Resolves the plan's city (the only network check of a preset's city, so
 /// it happens before any tunnel is touched), then connects.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "ports plus the target; a struct for two callers would only move the list"
+)]
 pub(crate) fn connect_target<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
     ctx: &Context,
     tunnel: &T,
@@ -177,6 +209,7 @@ pub(crate) fn connect_target<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: Tok
     catalog: &C,
     token: &S,
     plan: Plan,
+    prober: Option<&(dyn Prober + Sync)>,
 ) -> Result<Connected> {
     let city = plan
         .city
@@ -193,6 +226,7 @@ pub(crate) fn connect_target<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: Tok
         (plan.cc, city.as_ref()),
         &StaticBypass(plan.bypass),
         plan.preset.as_deref(),
+        prober,
     )
 }
 
@@ -211,6 +245,7 @@ fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
     (cc, city): (CountryCode, Option<&City>),
     extra: &StaticBypass,
     hint: Option<&str>,
+    prober: Option<&(dyn Prober + Sync)>,
 ) -> Result<Connected> {
     let done = connect_recorded(
         ctx,
@@ -221,6 +256,7 @@ fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
         token,
         cc,
         city,
+        prober,
     )?;
     crate::cmd::preset::settle(ctx, hint, cc, city.map(|c| c.name.as_str()), &extra.0)?;
     Ok(done)
@@ -251,22 +287,32 @@ pub(crate) fn connect_recorded<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: T
     token: &S,
     cc: CountryCode,
     city: Option<&City>,
+    prober: Option<&(dyn Prober + Sync)>,
 ) -> Result<Connected> {
     let store = ctx.conf_store();
     // The city is not part of the config's name: a cached config is reusable
     // only if it was generated for the same request (no city, or this city).
     let want = city.map(|c| c.name.as_str());
     let same = ctx.recorded_request(&cc.to_lowercase()).as_deref() == want;
-    let age = if same { store.age(cc)? } else { None };
+    // Choosing by latency means measuring now: never reuse a cached pick.
+    let age = if same && prober.is_none() {
+        store.age(cc)?
+    } else {
+        None
+    };
     let picked = RefCell::new(None);
-    let done = connect(tunnel, routes, providers, cc, store.dir(), age, || {
-        let (path, picked_city) =
-            regenerate(catalog, token, cc, city, |body| Ok(store.write(cc, body)?))?;
-        *picked.borrow_mut() = picked_city;
+    let mut done = connect(tunnel, routes, providers, cc, store.dir(), age, || {
+        let (path, choice) = regenerate(catalog, token, cc, city, prober, |body| {
+            Ok(store.write(cc, body)?)
+        })?;
+        *picked.borrow_mut() = Some(choice);
         Ok(path)
     })?;
     if done.regenerated {
-        ctx.record_city(&cc.to_lowercase(), want, picked.borrow().as_deref())?;
+        let choice = picked.into_inner();
+        let server_city = choice.as_ref().and_then(|c| c.server.city.as_deref());
+        ctx.record_city(&cc.to_lowercase(), want, server_city)?;
+        done.picked = choice;
     }
     ctx.record_routes(done.routes)?;
     Ok(done)
@@ -281,6 +327,8 @@ pub(crate) struct Connected {
     /// The tunnel for this country was already up and kept.
     already_up: bool,
     pub(crate) routes: usize,
+    /// The server a regenerated config points at, and how it was chosen.
+    picked: Option<Choice>,
 }
 
 impl Connected {
@@ -297,21 +345,47 @@ impl Connected {
         } else {
             ""
         };
-        format!("{verb} {cc}{regen}, {} bypass routes", self.routes)
+        format!(
+            "{verb} {cc}{regen}, {} bypass routes{}",
+            self.routes,
+            self.picked.as_ref().map_or_else(String::new, server_note)
+        )
     }
 }
 
+/// `, server za3.nordvpn.com load 9% latency 41 ms` for the summary line.
+fn server_note(c: &Choice) -> String {
+    let mut note = format!(", server {} load {}%", c.server.hostname, c.server.load);
+    if let Some(l) = c.latency {
+        let _ = write!(note, " latency {} ms", l.as_millis());
+    }
+    if c.fell_back {
+        note.push_str(" (no probe answered: picked the least loaded)");
+    }
+    note
+}
+
 /// Fetches a fresh config for `cc` (only `city` when given), hands the
-/// rendered body to `write`, and returns the path plus the picked server's city.
+/// rendered body to `write`, and returns the path plus the choice made. With a
+/// `prober` the fastest of the [`FASTEST_CANDIDATES`] least-loaded wins,
+/// else the least loaded.
 pub(crate) fn regenerate<C: ServerCatalog, T: TokenSource>(
     catalog: &C,
     token: &T,
     cc: CountryCode,
     city: Option<&City>,
+    prober: Option<&(dyn Prober + Sync)>,
     write: impl FnOnce(&str) -> Result<PathBuf>,
-) -> Result<(PathBuf, Option<String>)> {
-    let (conf, server) = generate_config(catalog, token, cc, city)?;
-    Ok((write(&render_wg_conf(&conf))?, server.city))
+) -> Result<(PathBuf, Choice)> {
+    let (conf, choice) = if let Some(p) = prober {
+        generate_config_by(catalog, token, cc, city, FASTEST_CANDIDATES, |servers| {
+            crate::cmd::fastest::choose(p, servers)
+        })?
+    } else {
+        let (conf, server) = generate_config(catalog, token, cc, city)?;
+        (conf, Choice::least_load(vec![server]))
+    };
+    Ok((write(&render_wg_conf(&conf))?, choice))
 }
 
 /// The whole `up` flow against ports. `conf_age` is `None` when the config is
@@ -377,6 +451,7 @@ pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
         switched_from,
         already_up,
         routes,
+        picked: None,
     })
 }
 
@@ -386,11 +461,12 @@ mod tests {
     use std::net::IpAddr;
 
     use wglane_core::testing::{
-        FakeBypassProvider, FakeCatalog, FakeRoutes, FakeToken, FakeTunnel,
+        FakeBypassProvider, FakeCatalog, FakeProber, FakeRoutes, FakeToken, FakeTunnel,
     };
     use wglane_core::{Error, MAX_CONF_AGE, PublicKey, Server};
 
     use super::*;
+    use crate::context::Context;
 
     const DIR: &str = "/cfg";
 
@@ -454,6 +530,7 @@ mod tests {
                         &catalog(),
                         &FakeToken(token.map(Into::into)),
                         cc(to),
+                        None,
                         None,
                         |body| {
                             assert!(body.contains("PrivateKey = priv"));
@@ -590,5 +667,79 @@ mod tests {
             "existing tunnel untouched, none brought up"
         );
         assert_eq!(rig.routes.apply_calls.get(), 0);
+    }
+
+    fn two_servers() -> FakeCatalog {
+        let srv = |h: &str, load, ip: &str| Server {
+            hostname: h.into(),
+            station: ip.parse().unwrap(),
+            load,
+            public_key: PublicKey("pk".into()),
+            country: cc("ZA"),
+            city: None,
+        };
+        FakeCatalog {
+            servers: [(
+                cc("ZA"),
+                vec![
+                    srv("za3.nordvpn.com", 9, "192.0.2.2"),
+                    srv("za9.nordvpn.com", 30, "192.0.2.9"),
+                ],
+            )]
+            .into(),
+            private_key: Some("priv".into()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fastest_beats_least_load_re_picks_every_time_and_reports_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = Context {
+            json: false,
+            verbose: 0,
+            config_dir: dir.path().to_owned(),
+        };
+        let rig = Rig::new(&[]);
+        let prober = FakeProber::with_ms(&[("192.0.2.2", 200), ("192.0.2.9", 15)]);
+        let go = |p: Option<&(dyn Prober + Sync)>| {
+            connect_recorded(
+                &ctx,
+                &rig.tunnel,
+                &rig.routes,
+                &[&bypass()],
+                &two_servers(),
+                &FakeToken(Some("tok".into())),
+                cc("ZA"),
+                None,
+                p,
+            )
+            .unwrap()
+            .summary(cc("ZA"))
+        };
+        let fast = go(Some(&prober));
+        assert!(
+            fast.ends_with("server za9.nordvpn.com load 30% latency 15 ms"),
+            "{fast}"
+        );
+        // A fresh config exists now, but --fastest measures again...
+        assert!(go(Some(&prober)).contains("regenerated"));
+        // ...while the default reuses it, and a regenerating default says the load.
+        assert!(!go(None).contains("regenerated"));
+    }
+
+    #[test]
+    fn fastest_with_no_answer_says_it_fell_back() {
+        let (_, choice) = regenerate(
+            &two_servers(),
+            &FakeToken(Some("tok".into())),
+            cc("ZA"),
+            None,
+            Some(&FakeProber::default()),
+            |_| Ok(PathBuf::from("/cfg/za.conf")),
+        )
+        .unwrap();
+        assert_eq!(choice.server.hostname, "za3.nordvpn.com");
+        assert!(server_note(&choice).ends_with("(no probe answered: picked the least loaded)"));
     }
 }

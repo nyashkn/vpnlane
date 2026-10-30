@@ -57,9 +57,17 @@ Errors appear in the bottom line, ahead of the key hints, starting with `error:`
 
 Color is limited to the 16 ANSI colors, so your terminal theme decides how they look. `NO_COLOR=1 wglane tui` turns color off; bold and reverse video still show state and the selected row (marked `>`).
 
+## Architecture
+
+`app.rs` keeps the state, the reducer (`update`: state + event to state + effects) and drawing; `mod.rs` owns the terminal and the event loop; `worker.rs` is a worker thread; `probe.rs` holds latency results and their ordering. The reducer stays pure. The loop never does I/O: it hands each `Effect` (load countries, refresh status, connect, disconnect, probe) to the worker over an `mpsc` channel and feeds each result back as an `Event`, so a connect shows `connecting...` while keys (move, search, toggle, help, quit) keep working. Effects run one at a time, in order. Keys that start another tunnel change are ignored while one runs, and ticks do not queue a second status refresh while one is pending.
+
+**Quitting during a connect or disconnect.** `q` always quits. The terminal is restored at once, then wglane prints `finishing the connect before exit...` and waits for that one change to finish (a tunnel is never abandoned half-built) and prints its error, if any. Effects still queued behind it are skipped. Quitting with nothing changing exits immediately; a read-only effect in flight (a status refresh, a probe) is dropped.
+
+**Latency probes.** `Event::StartProbe(servers)` opens a round: `probe_epoch` goes up, `probes` is reset to `Pending` for those servers, and `Effect::Probe` asks the worker to ping them concurrently. Each answer comes back as `Event::ProbeResult { epoch, key, latency_ms }` (`None` = no reply). A result whose `epoch` is not the current one is dropped, so a slow answer from the previous country cannot land in the new list. `probe::rank_with_probes(servers, probes)` gives the display order (answered by latency, load breaking ties; then failed; then not probed) and the `fastest` server, and `probe::cursor_after` keeps the cursor on the same server when that order changes. Probes are bound to the physical interface while a tunnel is up, as for `up --fastest`. The list does not show probes yet.
+
 ## Tests
 
-`app.rs` keeps the state, the reducer (`update`: state + event to state + effects) and drawing; `mod.rs` runs the terminal and the effects. The reducer is pure, so key handling is tested without a terminal. Drawing is snapshot-tested with ratatui's `TestBackend` and [insta](https://insta.rs): each state above, the help overlay, search in the tree, and a terminal that is too small.
+The reducer is pure, so key handling, probe rounds and epoch invalidation are tested without a terminal; `worker.rs` is tested with a fake executor and channels, no timing. Drawing is snapshot-tested with ratatui's `TestBackend` and [insta](https://insta.rs): each state above, the help overlay, search in the tree, and a terminal that is too small.
 
 ```sh
 cargo test -p wglane-cli tui            # run them

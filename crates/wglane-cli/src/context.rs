@@ -12,7 +12,7 @@ use wglane_nord::{EnvToken, FileToken, TokenChain};
 use crate::cli::GlobalArgs;
 
 /// Resolved global flags plus constructors for the adapters most commands need.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct Context {
     /// `--json` was passed.
     pub(crate) json: bool,

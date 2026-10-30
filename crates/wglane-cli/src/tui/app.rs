@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use ratatui::Frame;
 use ratatui::crossterm::event::KeyCode;
@@ -9,11 +9,12 @@ use ratatui::widgets::{
     Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Sparkline, SparklineBar,
 };
 use wglane_core::{
-    City, Country, CountryCode, DEFAULT_GRAPH_SAMPLES, TailnetHealth, TuiSettings, TunnelStatus,
-    fold,
+    City, Country, CountryCode, DEFAULT_GRAPH_SAMPLES, Server, TailnetHealth, TuiSettings,
+    TunnelStatus, fold,
 };
 
 use super::continent::{Continent, continent};
+use super::probe::{Probe, ServerKey, key as server_key};
 
 /// Height of the latency graph in rows.
 const SPARK_ROWS: u16 = 2;
@@ -140,6 +141,12 @@ pub(crate) struct State {
     /// Tailnet round trips in ms, oldest first.
     pub(crate) latency: Vec<u64>,
     pub(crate) busy: Option<Busy>,
+    /// A status refresh is queued or running (ticks do not pile up behind it).
+    pub(crate) refreshing: bool,
+    /// Latency results of the current probe round.
+    pub(crate) probes: HashMap<ServerKey, Probe>,
+    /// Counts probe rounds; results from an older round are dropped.
+    pub(crate) probe_epoch: u64,
     /// Bottom-line message (errors, results).
     pub(crate) message: String,
     /// `message` reports a failure.
@@ -160,6 +167,16 @@ pub(crate) enum Event {
     Status(TunnelStatus, bool, Option<String>),
     /// Connect/disconnect finished.
     Finished(Result<(), String>),
+    /// Start a new probe round over these servers (replaces the last round).
+    /// An empty list just ends the current one.
+    #[allow(dead_code, reason = "sent by the server-list redesign; reducer tested")]
+    StartProbe(Vec<Server>),
+    /// One server answered (`Some` ms) or did not (`None`), in round `epoch`.
+    ProbeResult {
+        epoch: u64,
+        key: ServerKey,
+        latency_ms: Option<u64>,
+    },
 }
 
 /// I/O the reducer asks the event loop to do.
@@ -170,6 +187,12 @@ pub(crate) enum Effect {
     /// Connect to the least-loaded server in the country, or in the city.
     Connect(CountryCode, Option<City>),
     Disconnect,
+    /// Ping the servers concurrently and send back one `ProbeResult` each, all
+    /// tagged with `epoch`.
+    Probe {
+        epoch: u64,
+        servers: Vec<Server>,
+    },
 }
 
 impl State {
@@ -445,7 +468,8 @@ pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
     match event {
         Event::Key(k) => on_key(&mut s, k, &mut effects),
         Event::Tick => {
-            if s.busy.is_none() {
+            if s.busy.is_none() && !s.refreshing {
+                s.refreshing = true;
                 effects.push(Effect::Refresh);
             }
         }
@@ -469,6 +493,7 @@ pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
                 }
             }
             s.status = Some(st);
+            s.refreshing = false;
             s.tunnel_known = known;
             s.place();
         }
@@ -482,7 +507,32 @@ pub(crate) fn update(mut s: State, event: Event) -> (State, Vec<Effect>) {
                 }
                 (_, Ok(())) => "disconnected".into(),
             };
+            s.refreshing = true;
             effects.push(Effect::Refresh);
+        }
+        Event::StartProbe(servers) => {
+            s.probe_epoch += 1;
+            s.probes = servers
+                .iter()
+                .map(|x| (server_key(x), Probe::Pending))
+                .collect();
+            if !servers.is_empty() {
+                effects.push(Effect::Probe {
+                    epoch: s.probe_epoch,
+                    servers,
+                });
+            }
+        }
+        Event::ProbeResult {
+            epoch,
+            key,
+            latency_ms,
+        } => {
+            // A late result from before a country change must not land.
+            if epoch == s.probe_epoch && s.probes.contains_key(&key) {
+                let probe = latency_ms.map_or(Probe::Failed, Probe::Latency);
+                s.probes.insert(key, probe);
+            }
         }
     }
     (s, effects)
@@ -2031,5 +2081,132 @@ mod tests {
         insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
         let (s, _) = key(s, KeyCode::Enter);
         insta::assert_snapshot!(render_sized(&s, 70, 12).backend());
+    }
+
+    fn srv(host: &str, load: u8) -> Server {
+        Server {
+            hostname: host.into(),
+            station: "203.0.113.1".parse().unwrap(),
+            load,
+            public_key: wglane_core::PublicKey(String::new()),
+            country: cc("DE"),
+            city: None,
+        }
+    }
+
+    fn result(epoch: u64, host: &str, ms: Option<u64>) -> Event {
+        Event::ProbeResult {
+            epoch,
+            key: host.into(),
+            latency_ms: ms,
+        }
+    }
+
+    #[test]
+    fn start_probe_opens_a_round_and_asks_the_worker() {
+        let servers = vec![srv("a", 1), srv("b", 2)];
+        let (s, fx) = update(State::default(), Event::StartProbe(servers.clone()));
+        assert_eq!(s.probe_epoch, 1);
+        assert_eq!(s.probes.len(), 2);
+        assert!(s.probes.values().all(|p| *p == Probe::Pending));
+        assert_eq!(fx, [Effect::Probe { epoch: 1, servers }]);
+    }
+
+    #[test]
+    fn results_stream_into_state() {
+        let (s, _) = update(
+            State::default(),
+            Event::StartProbe(vec![srv("a", 1), srv("b", 2)]),
+        );
+        let (s, fx) = update(s, result(1, "b", Some(42)));
+        assert_eq!(fx, Vec::new());
+        let (s, _) = update(s, result(1, "a", None));
+        assert_eq!(s.probes["b"], Probe::Latency(42));
+        assert_eq!(s.probes["a"], Probe::Failed);
+    }
+
+    #[test]
+    fn results_from_an_older_round_are_dropped() {
+        // Round 1 for one country, then the user moves on: round 2.
+        let (s, _) = update(State::default(), Event::StartProbe(vec![srv("de1", 1)]));
+        let (s, _) = update(s, Event::StartProbe(vec![srv("us1", 1), srv("us2", 2)]));
+        assert_eq!(s.probe_epoch, 2);
+        assert!(
+            !s.probes.contains_key("de1"),
+            "the old round's servers are gone"
+        );
+        // A late answer from round 1 changes nothing, even for a key shared by both rounds.
+        let before = s.clone();
+        let (s, _) = update(s, result(1, "de1", Some(5)));
+        let (s, _) = update(s, result(1, "us1", Some(5)));
+        assert_eq!(s, before);
+        let (s, _) = update(s, result(2, "us1", Some(70)));
+        assert_eq!(s.probes["us1"], Probe::Latency(70));
+        // An answer for a server that is not in this round is ignored too.
+        let (s, _) = update(s, result(2, "zz9", Some(1)));
+        assert!(!s.probes.contains_key("zz9"));
+    }
+
+    #[test]
+    fn an_empty_round_ends_the_last_one_without_work() {
+        let (s, _) = update(State::default(), Event::StartProbe(vec![srv("a", 1)]));
+        let (s, fx) = update(s, Event::StartProbe(vec![]));
+        assert_eq!((s.probe_epoch, s.probes.len(), fx), (2, 0, Vec::new()));
+        assert_eq!(update(s.clone(), result(1, "a", Some(1))).0, s);
+    }
+
+    #[test]
+    fn ticks_do_not_pile_up_refreshes() {
+        let (s, fx) = update(State::default(), Event::Tick);
+        assert_eq!(fx, [Effect::Refresh]);
+        // The first refresh has not answered yet: no second one.
+        let (s, fx) = update(s, Event::Tick);
+        assert_eq!(fx, Vec::new());
+        let (s, _) = update(s, Event::Status(status(&[], reachable(1)), true, None));
+        assert_eq!(update(s, Event::Tick).1, [Effect::Refresh]);
+    }
+
+    /// Connecting no longer blocks input: move, search and toggle all work
+    /// while the connect is in flight, and a second connect is still refused.
+    fn connecting_and_poking() -> State {
+        let (s, fx) = key(key(tree(), KeyCode::Char('G')).0, KeyCode::Enter);
+        assert_eq!(fx, [Effect::Connect(cc("US"), None)]);
+        assert!(s.busy.is_some());
+        let s = keys(s, &[KeyCode::Char('k'), KeyCode::Char('k')]);
+        let (s, fx) = key(s, KeyCode::Enter);
+        assert_eq!(fx, Vec::new(), "no second change while one is running");
+        searching_in(s, "fra")
+    }
+
+    #[test]
+    fn keys_still_work_while_connecting() {
+        let s = connecting_and_poking();
+        assert_eq!(s.query, "fra");
+        assert!(s.searching);
+        assert_eq!(s.busy, Some(Busy::Connecting(cc("US"), None)));
+        // The connect finishes behind the user's back; the screen follows.
+        let (s, fx) = update(s, Event::Finished(Ok(())));
+        assert_eq!(
+            (s.busy.clone(), s.message.as_str()),
+            (None, "connected to US")
+        );
+        assert_eq!(fx, [Effect::Refresh]);
+        assert_eq!(s.query, "fra", "the search survived");
+    }
+
+    #[test]
+    fn quitting_during_a_connect_keeps_the_change_pending_for_the_shell() {
+        // The reducer only records the intent. The shell sees `busy` still set,
+        // lets that one change finish, then exits (see `worker::shutdown`).
+        let (s, _) = key(key(tree(), KeyCode::Char('G')).0, KeyCode::Enter);
+        let (s, fx) = key(s, KeyCode::Char('q'));
+        assert!(s.should_quit);
+        assert_eq!(s.busy, Some(Busy::Connecting(cc("US"), None)));
+        assert_eq!(fx, Vec::new(), "quit starts no new work");
+    }
+
+    #[test]
+    fn draws_connecting_but_responsive() {
+        insta::assert_snapshot!(render_sized(&connecting_and_poking(), 70, 10).backend());
     }
 }
