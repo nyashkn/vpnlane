@@ -7,7 +7,7 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use ipnet::IpNet;
+use ipnet::{IpNet, Ipv6Net};
 use wglane_core::ports::{RouteBypass, Tunnel};
 use wglane_core::{Error, Result};
 use zeroize::Zeroizing;
@@ -111,6 +111,27 @@ struct Entry {
 }
 
 type State = BTreeMap<String, Entry>;
+
+/// Parses `netstat -rn -f inet6` rows (`Destination Gateway Flags Netif`): a block
+/// is ours iff destination is exactly that prefix (parsed, not compared as text,
+/// since netstat compresses addresses), gateway `::1`, flag `R`, netif `lo0`.
+fn v6_blocks_in(netstat: &str) -> [bool; 3] {
+    let mut ours = [false; 3];
+    for line in netstat.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if let [dest, gw, flags, netif, ..] = f[..]
+            && let Ok(net) = dest.parse::<Ipv6Net>()
+            && gw.parse::<Ipv6Addr>() == Ok(Ipv6Addr::LOCALHOST)
+            && flags.contains('R')
+            && netif == "lo0"
+        {
+            for (o, (addr, len)) in ours.iter_mut().zip(V6_BLOCKS) {
+                *o |= addr.parse().is_ok_and(|a| Ipv6Net::new(a, len) == Ok(net));
+            }
+        }
+    }
+    ours
+}
 
 fn valid_utun(s: &str) -> bool {
     s.strip_prefix("utun")
@@ -309,33 +330,18 @@ impl<R: CommandRunner> WgGo<R> {
         }
     }
 
-    /// True only if `route get` shows exactly our block: same destination and mask,
-    /// gateway `::1`, REJECT flag. `route` exits 0 even when the kernel refuses a
-    /// change, so exit codes prove nothing; an unknown route ("not in table") or
-    /// someone else's is not ours.
-    fn v6_block_is_ours(&self, addr: &str, len: u8) -> Result<bool> {
-        let out = self.runner.run("route", &["-n", "get", "-inet6", addr])?;
-        let (mut dest, mut mask, mut gw, mut reject) = (None, None, None, false);
-        for line in out.stdout.lines() {
-            let Some((k, v)) = line.split_once(':') else {
-                continue;
-            };
-            let v = v.trim();
-            match k.trim() {
-                "destination" => dest = v.parse::<Ipv6Addr>().ok(),
-                "mask" => mask = v.parse::<Ipv6Addr>().ok(),
-                "gateway" => gw = v.parse::<Ipv6Addr>().ok(),
-                "flags" => reject = v.trim_matches(['<', '>']).split(',').any(|f| f == "REJECT"),
-                _ => {}
-            }
-        }
-        let want = Some(Ipv6Addr::from(u128::MAX << (128 - u32::from(len))));
-        Ok(dest == addr.parse().ok() && mask == want && gw == Some(Ipv6Addr::LOCALHOST) && reject)
+    /// Which of `V6_BLOCKS` are installed by us right now, read from
+    /// `netstat -rn -f inet6`. `route` exits 0 even when the kernel refuses a change,
+    /// and `route get` cannot see reject routes, so the table is the only witness.
+    fn v6_blocks_ours(&self) -> Result<[bool; 3]> {
+        let out = self.runner.run_ok("netstat", &["-rn", "-f", "inet6"])?;
+        Ok(v6_blocks_in(&out.stdout))
     }
 
     fn add_blocks(&self) -> Result<()> {
-        for (addr, len) in V6_BLOCKS {
-            if self.v6_block_is_ours(addr, len)? {
+        let mut ours = self.v6_blocks_ours()?;
+        for (i, (addr, len)) in V6_BLOCKS.into_iter().enumerate() {
+            if ours[i] {
                 continue;
             }
             let net = format!("{addr}/{len}");
@@ -343,7 +349,8 @@ impl<R: CommandRunner> WgGo<R> {
                 "route",
                 &["-q", "-n", "add", "-inet6", "-net", &net, "::1", "-reject"],
             )?;
-            if !self.v6_block_is_ours(addr, len)? {
+            ours = self.v6_blocks_ours()?;
+            if !ours[i] {
                 return Err(Error::Api(format!(
                     "IPv6 block route {net} was not installed"
                 )));
@@ -354,8 +361,9 @@ impl<R: CommandRunner> WgGo<R> {
 
     /// Deletes only routes that verify as ours; a user's or another VPN's is left alone.
     fn del_blocks(&self) -> Result<()> {
-        for (addr, len) in V6_BLOCKS {
-            if self.v6_block_is_ours(addr, len)? {
+        let ours = self.v6_blocks_ours()?;
+        for ((addr, len), ours) in V6_BLOCKS.into_iter().zip(ours) {
+            if ours {
                 let net = format!("{addr}/{len}");
                 self.runner
                     .run("route", &["-q", "-n", "delete", "-inet6", "-net", &net])?;
@@ -419,6 +427,10 @@ impl<R: CommandRunner> WgGo<R> {
         let mut state = self.load()?;
         self.prune(&mut state)?;
         let Some(entry) = state.get(cc) else {
+            // No tunnel is left: also clears blocks a crashed `up` stranded.
+            if state.is_empty() {
+                self.del_blocks()?;
+            }
             return Ok(());
         };
         // A missing route is fine (the interface may already be gone), so statuses are ignored.
@@ -541,6 +553,20 @@ Internet:
 Destination        Gateway            Flags               Netif Expire
 default            192.0.2.1          UGScg                 en0
 ";
+    /// Verbatim from a Mac (macOS 27) with the block installed, minus the `2000::/3` row.
+    const REAL_V6_HEAD: &str = "Routing tables
+
+Internet6:
+Destination                             Gateway                                 Flags               Netif Expire
+default                                 fe80::%utun0                            UGcIg               utun0       
+default                                 fd7a:115c:a1e0::                        UGcIg              utun14       
+::1                                     ::1                                     UHL                   lo0       
+";
+    const REAL_V6_TAIL: &str = "fd7a:115c:a1e0::/48                     fe80::10e1:8f31:c6da:2c4a%utun14        Uc                 utun14       
+fe80::%lo0/64                           fe80::1%lo0                             UcI                   lo0       
+fe80::1%lo0                             link#1                                  UHLI                  lo0       
+";
+    const REAL_2000_ROW: &str = "2000::/3                                ::1                                     UGRSc                 lo0       \n";
     const EP: &str = "198.51.100.7";
     const GW: &str = "192.0.2.1";
     const BOOT: u64 = 1_761_800_000;
@@ -561,6 +587,21 @@ default            192.0.2.1          UGScg                 en0
     }
 
     impl Sim {
+        /// `netstat -rn -f inet6`: real rows from a Mac, plus our fake table.
+        fn netstat_v6(&self) -> CommandOutput {
+            let mut out = String::from(REAL_V6_HEAD);
+            for (addr, (len, gw, flags)) in self.v6.borrow().iter() {
+                let dest = format!("{addr}/{len}");
+                writeln!(out, "{dest:<39} {gw:<39} {flags:<19} {:>5}", "lo0").unwrap();
+            }
+            out.push_str(REAL_V6_TAIL);
+            CommandOutput {
+                code: Some(0),
+                stdout: out,
+                stderr: String::new(),
+            }
+        }
+
         /// Plays `route` for IPv6: like the real one it exits 0 even when it refuses.
         fn route_v6(&self, args: &[&str]) -> CommandOutput {
             let ok = |stdout: String, stderr: &str| CommandOutput {
@@ -569,22 +610,6 @@ default            192.0.2.1          UGScg                 en0
                 stderr: stderr.into(),
             };
             let mut t = self.v6.borrow_mut();
-            if args.contains(&"get") {
-                let addr = *args.last().unwrap();
-                return match t.get(addr) {
-                    Some((len, gw, flags)) => ok(
-                        format!(
-                            "   route to: {addr}\ndestination: {addr}\n       mask: {}\n    gateway: {gw}\n  interface: lo0\n      flags: <{flags}>\n",
-                            Ipv6Addr::from(u128::MAX << (128 - u32::from(*len)))
-                        ),
-                        "",
-                    ),
-                    None => ok(
-                        String::new(),
-                        "route: writing to routing socket: not in table\n",
-                    ),
-                };
-            }
             let net = args[args.iter().position(|a| *a == "-net").unwrap() + 1];
             let (addr, len) = net.split_once('/').unwrap();
             if args.contains(&"delete") {
@@ -594,11 +619,7 @@ default            192.0.2.1          UGScg                 en0
             } else {
                 t.insert(
                     addr.into(),
-                    (
-                        len.parse().unwrap(),
-                        "::1".into(),
-                        "UP,GATEWAY,REJECT,DONE,STATIC".into(),
-                    ),
+                    (len.parse().unwrap(), "::1".into(), "UGRSc".into()),
                 );
             }
             ok(String::new(), "")
@@ -620,6 +641,10 @@ default            192.0.2.1          UGScg                 en0
                 self.started.set(n + 1);
                 fs::write(self.run_dir.join(NAME_FILE), format!("utun{}\n", 7 + n)).unwrap();
                 fs::write(self.run_dir.join(format!("utun{}.sock", 7 + n)), "").unwrap();
+            }
+            if program == "netstat" && args.contains(&"inet6") {
+                self.inner.note(program, args);
+                return Ok(self.netstat_v6());
             }
             if program == "route" && args.contains(&"-inet6") {
                 self.inner.note(program, args);
@@ -677,7 +702,7 @@ default            192.0.2.1          UGScg                 en0
         fn changes(&self) -> Vec<Vec<String>> {
             self.calls()
                 .into_iter()
-                .filter(|c| !c.contains(&"get".to_owned()))
+                .filter(|c| c[0] != "netstat")
                 .collect()
         }
 
@@ -739,6 +764,8 @@ default            192.0.2.1          UGScg                 en0
         assert_eq!(
             f.calls(),
             [
+                // Nothing recorded: the recovery sweep looks for stranded blocks first.
+                argv(&["netstat", "-rn", "-f", "inet6"]),
                 argv(&["netstat", "-rn", "-f", "inet"]),
                 argv(&["wireguard-go", "utun"]),
                 argv(&["wg", "setconf", "utun7", "/dev/stdin"]),
@@ -772,12 +799,11 @@ default            192.0.2.1          UGScg                 en0
                     "-interface",
                     "utun7"
                 ]),
-                argv(&["route", "-n", "get", "-inet6", "2000::"]),
+                argv(&["netstat", "-rn", "-f", "inet6"]),
                 argv(&[
                     "route", "-q", "-n", "add", "-inet6", "-net", "2000::/3", "::1", "-reject"
                 ]),
-                argv(&["route", "-n", "get", "-inet6", "2000::"]),
-                argv(&["route", "-n", "get", "-inet6", "64:ff9b::"]),
+                argv(&["netstat", "-rn", "-f", "inet6"]),
                 argv(&[
                     "route",
                     "-q",
@@ -789,8 +815,7 @@ default            192.0.2.1          UGScg                 en0
                     "::1",
                     "-reject"
                 ]),
-                argv(&["route", "-n", "get", "-inet6", "64:ff9b::"]),
-                argv(&["route", "-n", "get", "-inet6", "64:ff9b:1::"]),
+                argv(&["netstat", "-rn", "-f", "inet6"]),
                 argv(&[
                     "route",
                     "-q",
@@ -802,7 +827,7 @@ default            192.0.2.1          UGScg                 en0
                     "::1",
                     "-reject"
                 ]),
-                argv(&["route", "-n", "get", "-inet6", "64:ff9b:1::"]),
+                argv(&["netstat", "-rn", "-f", "inet6"]),
             ]
         );
         let m = fs::metadata(f.engine.run_dir.join("utun7.sock")).unwrap();
@@ -873,9 +898,8 @@ default            192.0.2.1          UGScg                 en0
                     "utun7"
                 ]),
                 argv(&["route", "-q", "-n", "delete", "-inet", EP]),
-                argv(&["route", "-n", "get", "-inet6", "2000::"]),
+                argv(&["netstat", "-rn", "-f", "inet6"]),
                 argv(&["route", "-q", "-n", "delete", "-inet6", "-net", "2000::/3"]),
-                argv(&["route", "-n", "get", "-inet6", "64:ff9b::"]),
                 argv(&[
                     "route",
                     "-q",
@@ -885,7 +909,6 @@ default            192.0.2.1          UGScg                 en0
                     "-net",
                     "64:ff9b::/96"
                 ]),
-                argv(&["route", "-n", "get", "-inet6", "64:ff9b:1::"]),
                 argv(&[
                     "route",
                     "-q",
@@ -912,7 +935,7 @@ default            192.0.2.1          UGScg                 en0
         // Another tunnel on the machine, not ours.
         fs::write(f.engine.run_dir.join("utun3.sock"), "").unwrap();
         f.engine.down(&f.conf).unwrap();
-        assert_eq!(f.calls().len(), 0);
+        assert_eq!(f.changes().len(), 0);
         assert!(f.engine.run_dir.join("utun3.sock").exists());
         assert!(
             f.engine.active().unwrap().is_empty(),
@@ -1011,10 +1034,10 @@ default            192.0.2.1          UGScg                 en0
         assert_eq!(calls[before][..2], ["route", "-q"]);
         assert_eq!(calls[before][3], "delete");
         assert_eq!(
-            calls[before + 3 + 6],
+            calls[before + 3 + 4],
             argv(&["netstat", "-rn", "-f", "inet"])
         );
-        assert_eq!(calls[before + 3 + 7], argv(&["wireguard-go", "utun"]));
+        assert_eq!(calls[before + 3 + 5], argv(&["wireguard-go", "utun"]));
         assert_eq!(f.state_file().lines().count(), 1);
     }
 
@@ -1101,6 +1124,58 @@ default            192.0.2.1          UGScg                 en0
     }
 
     #[test]
+    fn netstat_parser_accepts_the_real_row_and_only_exactly_ours() {
+        let real = format!("{REAL_V6_HEAD}{REAL_2000_ROW}{REAL_V6_TAIL}");
+        assert_eq!(v6_blocks_in(&real), [true, false, false]);
+        assert_eq!(
+            v6_blocks_in(&format!("{REAL_V6_HEAD}{REAL_V6_TAIL}")),
+            [false; 3]
+        );
+        // Compressed or expanded spellings parse to the same prefix; other rows do not match.
+        let row = |d: &str, g: &str, fl: &str, nif: &str| format!("{d}  {g}  {fl}  {nif}\n");
+        assert_eq!(
+            v6_blocks_in(&row("64:ff9b:0:0:0:0::/96", "::1", "UGRSc", "lo0")),
+            [false, true, false]
+        );
+        assert_eq!(
+            v6_blocks_in(&row("64:ff9b:1::/48", "::1", "UGRSc", "lo0")),
+            [false, false, true]
+        );
+        for bad in [
+            row("2000::/4", "::1", "UGRSc", "lo0"),
+            row("2000::/3", "fe80::1", "UGRSc", "lo0"),
+            row("2000::/3", "::1", "UGSc", "lo0"),
+            row("2000::/3", "::1", "UGRSc", "utun3"),
+            row("2000::%lo0/3", "::1", "UGRSc", "lo0"),
+        ] {
+            assert_eq!(v6_blocks_in(&bad), [false; 3], "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_stranded_block_without_a_record_is_removed_by_down_and_by_up() {
+        for via_up in [false, true] {
+            let f = Fixture::new();
+            f.engine
+                .runner
+                .v6
+                .borrow_mut()
+                .insert("2000::".into(), (3, "::1".into(), "UGRSc".into()));
+            if via_up {
+                f.engine.runner.inner.push_stdout(NETSTAT);
+                f.engine.runner.fail_v6.set(false);
+                f.engine.up(&f.conf).unwrap();
+                assert_eq!(f.v6_routes().len(), 3, "up leaves its own blocks");
+                f.engine.down(&f.conf).unwrap();
+            } else {
+                f.engine.down(&f.conf).unwrap();
+            }
+            assert_eq!(f.v6_routes().len(), 0);
+            assert!(f.changes().iter().any(|c| c.contains(&"delete".to_owned()) && c.contains(&"2000::/3".to_owned())));
+        }
+    }
+
+    #[test]
     fn up_blocks_all_prefixes_and_down_removes_them() {
         let f = Fixture::new();
         f.engine.up(&f.conf).unwrap();
@@ -1114,10 +1189,11 @@ default            192.0.2.1          UGScg                 en0
         let f = Fixture::new();
         // Someone else's reject for 2000::/3 (other mask semantics: /16, other gateway).
         for (len, gw) in [(16, "::1"), (3, "fe80::1")] {
-            f.engine.runner.v6.borrow_mut().insert(
-                "2000::".into(),
-                (len, gw.into(), "UP,GATEWAY,REJECT".into()),
-            );
+            f.engine
+                .runner
+                .v6
+                .borrow_mut()
+                .insert("2000::".into(), (len, gw.into(), "UGRSc".into()));
             assert!(f.engine.up(&f.conf).is_err(), "adopted a foreign route");
             assert!(
                 !f.changes()
@@ -1176,7 +1252,7 @@ default            192.0.2.1          UGScg                 en0
         let f = Fixture::new();
         f.engine.runner.failing.borrow_mut().push("wireguard-go");
         assert!(f.engine.up(&f.conf).is_err());
-        assert_eq!(f.calls().len(), 2, "netstat, wireguard-go");
+        assert_eq!(f.calls().len(), 3, "netstat x2, wireguard-go");
         assert_eq!(f.state_file(), "");
     }
 
@@ -1184,7 +1260,7 @@ default            192.0.2.1          UGScg                 en0
     fn missing_gateway_starts_nothing() {
         let f = Fixture::with_netstat("Internet:\n");
         assert!(f.engine.up(&f.conf).is_err());
-        assert_eq!(f.calls().len(), 1, "only netstat");
+        assert_eq!(f.calls().len(), 2, "only netstat x2");
         assert_eq!(f.state_file(), "");
     }
 
@@ -1308,7 +1384,7 @@ default            192.0.2.1          UGScg                 en0
         fs::set_permissions(&f.engine.run_dir, fs::Permissions::from_mode(0o777)).unwrap();
         let err = f.engine.up(&f.conf).unwrap_err().to_string();
         assert!(err.contains("not writable by others"), "{err}");
-        assert_eq!(f.calls().len(), 1, "only netstat, no wireguard-go");
+        assert_eq!(f.calls().len(), 2, "only netstat x2, no wireguard-go");
         fs::set_permissions(&f.engine.run_dir, fs::Permissions::from_mode(0o755)).unwrap();
         f.engine.runner.inner.push_stdout(NETSTAT);
         f.engine.up(&f.conf).unwrap();
