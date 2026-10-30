@@ -19,4 +19,12 @@ mod tests {
         assert!(!is_stale(Some(MAX_CONF_AGE)));
         assert!(!is_stale(Some(Duration::ZERO)));
     }
+
+    // README, `up --help` and ARCHITECTURE promise 7 days: pin the literal.
+    #[test]
+    fn limit_is_seven_days() {
+        assert_eq!(MAX_CONF_AGE, Duration::from_hours(168));
+        assert!(!is_stale(Some(Duration::from_hours(6 * 24))));
+        assert!(is_stale(Some(Duration::from_hours(8 * 24))));
+    }
 }

@@ -244,12 +244,25 @@ fn is_cc_stem(s: &str) -> bool {
 #[derive(Debug)]
 pub struct HelperClient<R> {
     runner: R,
+    /// Where wg-quick records active tunnels; `None` is the system default.
+    run_dir: Option<PathBuf>,
 }
 
 impl<R: CommandRunner> HelperClient<R> {
     /// Uses `runner` to call `sudo`.
     pub fn new(runner: R) -> Self {
-        Self { runner }
+        Self {
+            runner,
+            run_dir: None,
+        }
+    }
+
+    /// Like [`new`](Self::new) but reads active tunnels from `run_dir` (tests).
+    pub fn with_run_dir(runner: R, run_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            runner,
+            run_dir: Some(run_dir.into()),
+        }
     }
 
     fn call(&self, args: &[&str], stdin: &[u8]) -> Result<CommandOutput> {
@@ -302,9 +315,19 @@ impl<R: CommandRunner> Tunnel for HelperClient<R> {
         Ok(())
     }
 
+    /// Only wglane's own tunnels (`<cc>` interfaces): `up`/`down`/`status`
+    /// must never see, or claim to have stopped, the user's other WireGuard
+    /// tunnels. `STATE_DIR` is 0700 root, so the name is the only evidence
+    /// available without sudo; the helper's `down` still checks its confs.
     fn active(&self) -> Result<Vec<String>> {
         // /var/run/wireguard is world-readable: no sudo.
-        WgQuick::new(&self.runner).active()
+        let quick = match &self.run_dir {
+            Some(dir) => WgQuick::with_run_dir(&self.runner, dir),
+            None => WgQuick::new(&self.runner),
+        };
+        let mut names = quick.active()?;
+        names.retain(|n| is_cc_stem(n));
+        Ok(names)
     }
 }
 
@@ -1217,6 +1240,25 @@ mod tests {
     }
 
     #[test]
+    fn client_active_lists_only_wglane_tunnels() {
+        let run = tempfile::tempdir().unwrap();
+        let client = HelperClient::with_run_dir(FakeRunner::new(), run.path());
+        for name in [
+            "home.name",
+            "work-vpn.name",
+            "US.name",
+            "za.name",
+            "se.name",
+        ] {
+            fs::write(run.path().join(name), "utun4").unwrap();
+        }
+        assert_eq!(client.active().unwrap(), ["se", "za"]);
+        fs::remove_file(run.path().join("za.name")).unwrap();
+        fs::remove_file(run.path().join("se.name")).unwrap();
+        assert!(client.active().unwrap().is_empty(), "foreign tunnels only");
+    }
+
+    #[test]
     fn client_clear_is_a_noop() {
         let client = HelperClient::new(FakeRunner::new());
         client.clear(&BypassSet::new()).unwrap();
@@ -1225,9 +1267,18 @@ mod tests {
 }
 
 /// Properties of the private validators that run as root.
+///
+/// Every property that only asserts inside an "accepted" branch has a
+/// `reaches_*` guard test that counts how often its generator gets there, so a
+/// property cannot silently go vacuous. To re-check a property by hand, put
+/// `prop_assert!(false)` inside its accepted branch: it must fail.
 #[cfg(test)]
 mod props {
+    use std::net::Ipv4Addr;
+
     use proptest::prelude::*;
+    use proptest::strategy::ValueTree;
+    use proptest::test_runner::TestRunner;
 
     use super::*;
 
@@ -1252,15 +1303,84 @@ mod props {
             .prop_map(|(a, c, b)| format!("{a}{c}{b}"))
     }
 
+    /// A valid key three times in four, junk otherwise.
+    fn key_or_junk() -> impl Strategy<Value = String> {
+        prop_oneof![3 => key(), 1 => "[ -~]{0,50}"]
+    }
+
+    /// Valid NordLynx endpoints (port 51820) mixed with wrong ports and junk.
+    fn endpoint() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => any::<u32>().prop_map(|n| format!("{}:51820", Ipv4Addr::from(n))),
+            1 => (any::<u32>(), any::<u16>()).prop_map(|(n, p)| format!("{}:{p}", Ipv4Addr::from(n))),
+            1 => "[ -~]{0,30}",
+        ]
+    }
+
+    fn fields() -> impl Strategy<Value = (String, String, String)> {
+        (key_or_junk(), key_or_junk(), endpoint())
+    }
+
+    fn wire((private, public, endpoint): &(String, String, String)) -> String {
+        format!("private_key={private}\npublic_key={public}\nendpoint={endpoint}\n")
+    }
+
+    /// Well-formed wire text, wire text with one char replaced, and noise.
+    fn wire_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => fields().prop_map(|f| wire(&f)),
+            1 => (fields(), any::<prop::sample::Index>(), any::<char>()).prop_map(|(f, at, c)| {
+                let mut chars: Vec<char> = wire(&f).chars().collect();
+                let at = at.index(chars.len());
+                chars[at] = c;
+                chars.into_iter().collect()
+            }),
+            1 => ".{0,200}",
+        ]
+    }
+
+    fn gateway_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => any::<IpAddr>().prop_map(|ip| ip.to_string()),
+            1 => "[0-9a-f:.]{0,20}",
+        ]
+    }
+
+    fn cidr_text() -> impl Strategy<Value = String> {
+        prop_oneof![
+            2 => (any::<u32>(), 0u8..=32).prop_map(|(n, p)| format!("{}/{p}", Ipv4Addr::from(n))),
+            1 => (any::<u128>(), 0u8..=128).prop_map(|(n, p)| format!("{}/{p}", std::net::Ipv6Addr::from(n))),
+            1 => "[0-9a-f:./]{0,45}",
+        ]
+    }
+
+    /// At least `min` of 256 generated values must satisfy `hit`.
+    fn assert_reaches<S: Strategy>(strategy: S, min: usize, hit: impl Fn(S::Value) -> bool) {
+        let mut runner = TestRunner::deterministic();
+        let n = (0..256)
+            .filter(|_| hit(strategy.new_tree(&mut runner).unwrap().current()))
+            .count();
+        assert!(
+            n >= min,
+            "accepted branch reached {n}/256 times, want >= {min}"
+        );
+    }
+
+    #[test]
+    fn reaches_accepted_branches() {
+        assert_reaches(fields(), 32, |(a, b, c)| UpRequest::new(&a, &b, &c).is_ok());
+        assert_reaches(wire_text(), 32, |t| UpRequest::from_wire(&t).is_ok());
+        assert_reaches(gateway_text(), 64, |s| parse_gateway(&s).is_ok());
+        assert_reaches(cidr_text(), 64, |s| parse_cidr(&s).is_ok());
+    }
+
     proptest! {
         #![proptest_config(cfg())]
 
         // Accepted fields only ever fill the template's three value slots.
         #[test]
-        fn accepted_request_renders_only_the_template(
-            private in key(), public in key(), ip in any::<u32>(), port in any::<u16>(),
-        ) {
-            let endpoint = format!("{}:{port}", std::net::Ipv4Addr::from(ip));
+        fn accepted_request_renders_only_the_template(f in fields()) {
+            let (private, public, endpoint) = f;
             let Ok(req) = UpRequest::new(&private, &public, &endpoint) else { return Ok(()) };
             let base = UpRequest::new(PRIV, PUB, "192.0.2.10:51820").unwrap().render();
             let want = base
@@ -1272,7 +1392,7 @@ mod props {
 
         // Arbitrary stdin: acceptance means the text is exactly our own wire format.
         #[test]
-        fn from_wire_accepts_only_canonical_text(text in ".{0,200}") {
+        fn from_wire_accepts_only_canonical_text(text in wire_text()) {
             if let Ok(req) = UpRequest::from_wire(&text) {
                 prop_assert_eq!(&**req.to_wire(), text.as_str());
             }
@@ -1280,10 +1400,8 @@ mod props {
 
         // Structured near-misses of the wire format are refused or round-trip.
         #[test]
-        fn from_wire_mutated_fields(
-            private in "[ -~]{0,50}", public in "[ -~]{0,50}", endpoint in "[ -~]{0,30}",
-        ) {
-            let text = format!("private_key={private}\npublic_key={public}\nendpoint={endpoint}\n");
+        fn from_wire_mutated_fields(f in fields()) {
+            let text = wire(&f);
             if let Ok(req) = UpRequest::from_wire(&text) {
                 prop_assert_eq!(&**req.to_wire(), text.as_str());
             }
@@ -1319,25 +1437,30 @@ mod props {
         }
 
         #[test]
-        fn gateway_is_canonical_unicast(s in "[0-9a-f:.]{0,20}") {
+        fn gateway_is_canonical_unicast(s in gateway_text()) {
             if let Ok(ip) = parse_gateway(&s) {
                 prop_assert!(!ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast());
                 prop_assert_eq!(s.parse::<IpAddr>().unwrap().to_canonical(), ip);
             }
         }
 
-        // Whatever the input, an accepted CIDR is a canonical, specific unicast network.
+        // Whatever the input, an accepted CIDR is a canonical, specific unicast
+        // network. Checked against the documented minimums, not `is_bad_bypass`.
         #[test]
-        fn cidr_result_is_truncated_and_specific(s in "[0-9a-f:./]{0,45}") {
+        fn cidr_result_is_truncated_and_specific(s in cidr_text()) {
             if let Ok(net) = parse_cidr(&s) {
                 prop_assert_eq!(net, net.trunc());
-                prop_assert!(!is_bad_bypass(&net));
+                let min = if net.addr().is_ipv4() { 8 } else { 16 };
+                prop_assert!(net.prefix_len() >= min, "{net}");
+                let ip = net.addr();
+                prop_assert!(!ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast());
+                prop_assert!(ip != IpAddr::V4(Ipv4Addr::BROADCAST));
             }
         }
 
         #[test]
         fn cidr_never_yields_an_unspecified_network(a in any::<u32>(), p in 0u8..=32) {
-            let s = format!("{}/{p}", std::net::Ipv4Addr::from(a));
+            let s = format!("{}/{p}", Ipv4Addr::from(a));
             if let Ok(net) = parse_cidr(&s) {
                 prop_assert!(!net.addr().is_unspecified() && net.prefix_len() >= 8);
             }

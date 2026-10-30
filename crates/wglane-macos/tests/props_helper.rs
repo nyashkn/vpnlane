@@ -120,6 +120,24 @@ fn station() -> impl Strategy<Value = IpAddr> {
     ]
 }
 
+/// Valid configs, valid configs with one char replaced, and noise.
+fn conf_like() -> impl Strategy<Value = String> {
+    let valid = || {
+        (wg_key(), wg_key(), 0x0100_0000u32..0xdf00_0000)
+            .prop_map(|(k, p, n)| conf_text(&k, &p, IpAddr::V4(Ipv4Addr::from(n))))
+    };
+    prop_oneof![
+        2 => valid(),
+        1 => (valid(), any::<prop::sample::Index>(), any::<char>()).prop_map(|(t, at, c)| {
+            let mut chars: Vec<char> = t.chars().collect();
+            let at = at.index(chars.len());
+            chars[at] = c;
+            chars.into_iter().collect()
+        }),
+        1 => ".{0,400}",
+    ]
+}
+
 fn conf_text(private: &str, public: &str, ip: IpAddr) -> String {
     let server = Server {
         hostname: "h.invalid".into(),
@@ -347,10 +365,17 @@ proptest! {
 
     // (2) Arbitrary conf-file text: acceptance implies byte-exact template.
     #[test]
-    fn arbitrary_text_is_never_accepted_unless_template(text in ".{0,400}") {
-        let (res, _) = run_up("us", &text);
+    // Re-check by hand: `prop_assert!(false)` in the `is_ok` branch must fail.
+    fn arbitrary_text_is_never_accepted_unless_template(text in conf_like()) {
+        let (res, rec) = run_up("us", &text);
         if res.is_ok() {
             prop_assert!(!BANNED.iter().any(|b| text.contains(b)));
+            // The one accepted shape is the template over the fields sent on.
+            let stdins = rec.stdins.borrow();
+            let wire = std::str::from_utf8(&stdins[0]).expect("utf-8 wire");
+            let f: Vec<&str> = wire.lines().map(|l| l.split_once('=').expect("name=value").1).collect();
+            let endpoint: SocketAddr = f[2].parse().expect("endpoint");
+            prop_assert_eq!(conf_text(f[0], f[1], endpoint.ip()), text);
         }
     }
 
@@ -410,6 +435,22 @@ proptest! {
             (g, w) => prop_assert!(false, "got {g:?}, wanted {w:?}"),
         }
     }
+}
+
+// Guard: the property above must keep reaching its accepted branch.
+#[test]
+fn conf_like_reaches_the_accepted_branch() {
+    use proptest::strategy::ValueTree;
+    let mut runner = proptest::test_runner::TestRunner::deterministic();
+    let strategy = conf_like();
+    let n = (0..256)
+        .filter(|_| {
+            run_up("us", &strategy.new_tree(&mut runner).unwrap().current())
+                .0
+                .is_ok()
+        })
+        .count();
+    assert!(n >= 64, "accepted branch reached {n}/256 times");
 }
 
 const KEY_A: &str = "U1lOVEhFVElDLVBSSVZBVEUtS0VZLU5PVC1SRUFMMDE=";

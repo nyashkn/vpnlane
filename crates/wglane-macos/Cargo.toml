@@ -21,6 +21,7 @@ path = "src/bin/wglane-helper.rs"
 ipnet.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 wglane-core.workspace = true
 zeroize.workspace = true
 

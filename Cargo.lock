@@ -2716,6 +2716,7 @@ dependencies = [
  "rustix",
  "serde_json",
  "tempfile",
+ "tracing",
  "wglane-core",
  "zeroize",
 ]
