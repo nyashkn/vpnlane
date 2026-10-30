@@ -1,5 +1,5 @@
 use crate::ports::{ServerCatalog, TokenSource};
-use crate::{City, CountryCode, Error, Result, Server, TunnelConfig, rank_by_load};
+use crate::{Choice, City, CountryCode, Error, Result, Server, TunnelConfig, rank_by_load};
 
 /// How many recommended servers to rank; the provider's nearest few.
 const CANDIDATES: usize = 5;
@@ -16,17 +16,41 @@ pub fn generate_config<C: ServerCatalog, T: TokenSource>(
     country: CountryCode,
     city: Option<&City>,
 ) -> Result<(TunnelConfig, Server)> {
+    let (conf, choice) = generate_config_by(
+        catalog,
+        token,
+        country,
+        city,
+        CANDIDATES,
+        Choice::least_load,
+    )?;
+    Ok((conf, choice.server))
+}
+
+/// Like [`generate_config`], but fetches `limit` candidates and lets `choose`
+/// pick among them. `choose` gets a non-empty list, least loaded first.
+///
+/// # Errors
+/// As [`generate_config`].
+pub fn generate_config_by<C: ServerCatalog, T: TokenSource>(
+    catalog: &C,
+    token: &T,
+    country: CountryCode,
+    city: Option<&City>,
+    limit: usize,
+    choose: impl FnOnce(Vec<Server>) -> Choice,
+) -> Result<(TunnelConfig, Choice)> {
     let token = token.token()?.ok_or_else(|| Error::TokenMissing {
         hint: token.describe(),
     })?;
     let key = catalog.private_key(&token)?;
-    let mut servers = catalog.recommended(country, city, CANDIDATES)?;
+    let mut servers = catalog.recommended(country, city, limit)?;
     rank_by_load(&mut servers);
     if servers.is_empty() {
         return Err(Error::NoServers(country));
     }
-    let best = servers.remove(0);
-    Ok((TunnelConfig::nordlynx(key, &best), best))
+    let choice = choose(servers);
+    Ok((TunnelConfig::nordlynx(key, &choice.server), choice))
 }
 
 #[cfg(test)]

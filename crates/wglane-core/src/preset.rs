@@ -29,7 +29,7 @@ pub struct Preset {
     /// City in `country`; needs `country`. Checked against the network at apply time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub city: Option<String>,
-    /// Server selection rule (reserved: no effect yet, like the top-level `pick`).
+    /// Server selection rule for this preset (`up --preset` honors it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pick: Option<Pick>,
     /// CIDRs that skip the tunnel, added to the base `bypass_extra`.
@@ -68,7 +68,7 @@ pub type ActiveState = EffectiveRequest;
 
 impl EffectiveRequest {
     /// True when both ask for the same connection: country, city (ignoring
-    /// case and accents) and bypass set. `pick` is left out: it has no effect yet.
+    /// case and accents) and bypass set. `pick` is left out: it chooses a server, not a destination.
     pub fn same_connection(&self, other: &Self) -> bool {
         let city = |r: &Self| r.city.as_deref().map(fold);
         let nets = |r: &Self| r.bypass_extra.iter().copied().collect::<BTreeSet<_>>();

@@ -98,7 +98,7 @@ fn show(e: &Effective, json: bool) -> Result<String> {
         opt(e.default_city.value.clone()),
         &e.default_city.source,
     );
-    row("pick (reserved)", e.pick.value.to_string(), &e.pick.source);
+    row("pick", e.pick.value.to_string(), &e.pick.source);
     let extra = &e.bypass_extra.value;
     let v = if extra.is_empty() {
         "[]".to_owned()

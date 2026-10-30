@@ -95,6 +95,7 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
                 country: None,
                 city: None,
                 preset: Some(name.clone()),
+                fastest: false,
             },
         )?,
     }
@@ -436,6 +437,7 @@ mod tests {
                 country: country.map(cc),
                 city: city.map(Into::into),
                 preset: preset.map(Into::into),
+                fastest: false,
             };
             up::connect_target(
                 &ctx,
@@ -445,6 +447,7 @@ mod tests {
                 &catalog(),
                 &FakeToken(Some("tok".into())),
                 up::plan(&ctx, &args)?,
+                None,
             )
         }
     }

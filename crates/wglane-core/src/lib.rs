@@ -7,6 +7,7 @@ mod bypass;
 mod config;
 mod country;
 mod error;
+mod fastest;
 mod generate;
 pub mod ports;
 mod preset;
@@ -27,7 +28,8 @@ pub use config::{
 };
 pub use country::{City, Country, CountryCode, fold};
 pub use error::{Error, Result};
-pub use generate::generate_config;
+pub use fastest::{Choice, FASTEST_CANDIDATES, PROBE_TIMEOUT, pick_fastest};
+pub use generate::{generate_config, generate_config_by};
 pub use preset::{
     ActiveState, ChangeLine, EffectiveRequest, KEYED_PRESETS, MAX_PRESET_LABEL, MAX_PRESET_NAME,
     NamedPreset, Preset, describe_change,

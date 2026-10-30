@@ -4,7 +4,7 @@ expression: "show(&eff(\"\", Overrides::default()), false).unwrap()"
 ---
 default_country        (unset)          default
 default_city           (unset)          default
-pick (reserved)        least-load       default
+pick                   least-load       default
 bypass_extra           []               default
 exit_ip_check          true             default
 tui.start_expanded     false            default

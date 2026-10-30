@@ -57,6 +57,7 @@ Dependency rules (the compiler enforces direction; review enforces the rest):
 | `NetworkWatcher` | `wglane_macos::RouteMonitor` | `FakeWatcher` |
 | `TailnetProbe` | `wglane_macos::TailscalePing` | `FakeTailnet` |
 | `UdpProbe` | `wglane_macos::UdpSend` | `FakeUdp` |
+| `Prober` | `wglane_macos::PingProbe` (system `ping`, bound to the physical interface while a tunnel is up) | `FakeProber` |
 
 External programs in `wglane-macos` run through `CommandRunner`
 (`SystemRunner` in production, `wglane_macos::testing::FakeRunner` in tests),
@@ -156,6 +157,7 @@ One concern per file, so changes stay local.
 | core | `src/country.rs`, `secret.rs`, `server.rs`, `bypass.rs`, `status.rs`, `tunnel_config.rs` | domain types |
 | core | `src/render.rs` (+ `snapshots/`) | `render_wg_conf` |
 | core | `src/stale.rs`, `src/rank.rs` | `is_stale`, `rank_by_load` |
+| core | `src/fastest.rs` | `pick_fastest`, `Choice` (pure choice by measured latency) |
 | core | `src/generate.rs` | `generate_config` use case |
 | core | `src/ports/<port>.rs` + `src/testing/<port>.rs` | one port and its fake |
 | core | `src/error.rs` | error enum (append variants; shared, keep edits small) |
@@ -170,12 +172,15 @@ One concern per file, so changes stay local.
 | macos | `src/watcher.rs` | `RouteMonitor` |
 | macos | `src/probe.rs` | `TailscalePing` |
 | macos | `src/udp_probe.rs` | `UdpSend` |
+| macos | `src/ping_probe.rs` | `PingProbe`, `physical_interface` |
 | macos | `src/helper.rs` | `HelperClient`, `HelperVerb`, root-side `Helper` + `RootRunner` + `helper_main` |
 | macos | `src/privilege.rs` | sudoers, install, trusted-path checks (runs as root) |
 | cli | `src/bin/wglane-helper.rs` | entry shim: calls `helper_main` |
 | cli | `src/cmd/<name>.rs` | one subcommand: args, help, run |
 | cli | `src/cmd/completions.rs` | completions |
+| cli | `src/cmd/fastest.rs` | concurrent probing, probe scope (physical interface while a tunnel is up) |
 | cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop, state + drawing |
+| cli | `src/tui/worker.rs`, `src/tui/probe.rs` | effect worker thread; probe results and their ordering |
 | cli | `src/cli.rs`, `src/lib.rs`, `src/context.rs` | wiring |
 | xtask | `src/main.rs` | completions, man, release |
 

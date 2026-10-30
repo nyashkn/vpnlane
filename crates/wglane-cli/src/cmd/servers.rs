@@ -4,7 +4,9 @@ use std::fmt::Write as _;
 
 use color_eyre::Result;
 use serde_json::json;
-use wglane_core::ports::ServerCatalog;
+use std::time::Duration;
+
+use wglane_core::ports::{Prober, ServerCatalog, Tunnel};
 use wglane_core::{City, CountryCode, Server, rank_by_load};
 use wglane_nord::NordApi;
 
@@ -17,12 +19,16 @@ use crate::context::Context;
 Without COUNTRY: every country the provider serves.
 With COUNTRY: its WireGuard servers with their city, least loaded first (ties
 keep Nord's distance order). --city keeps one city (name or identifier; case
-and accents do not matter); `wglane ls COUNTRY` lists the cities.",
+and accents do not matter); `wglane ls COUNTRY` lists the cities.
+--probe pings each listed server at once (about 2 s at most) and adds a PING
+column; `-` means no reply. While a wglane tunnel is up the pings are bound to
+the physical interface, so they measure the path without the tunnel.",
     after_help = "\
 Examples:
   wglane servers
   wglane servers ZA
-  wglane servers US --city \"New York\" --limit 10 --json"
+  wglane servers US --city \"New York\" --limit 10 --json
+  wglane servers DE --probe --limit 10"
 )]
 pub(crate) struct Args {
     /// Country to list servers for; omit to list countries.
@@ -35,11 +41,31 @@ pub(crate) struct Args {
     /// How many servers to show.
     #[arg(long, default_value_t = 5)]
     pub(crate) limit: usize,
+
+    /// Ping each listed server and show the round trip next to the load.
+    #[arg(long, requires = "country")]
+    pub(crate) probe: bool,
 }
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     // No token needed: both endpoints are public.
-    let out = render(&NordApi::new(), args, ctx.json)?;
+    let prober = if args.probe {
+        // shortcut: if the helper cannot say (not installed), no wglane tunnel
+        // can be up, so probe unbound; revisit if tunnels get another owner.
+        let helper = wglane_macos::HelperClient::new(wglane_macos::SystemRunner);
+        Some(match helper.active() {
+            Ok(_) => crate::cmd::fastest::real_prober(&helper)?,
+            Err(_) => wglane_macos::PingProbe::new(wglane_macos::SystemRunner, None),
+        })
+    } else {
+        None
+    };
+    let out = render(
+        &NordApi::new(),
+        args,
+        ctx.json,
+        prober.as_ref().map(|p| p as &(dyn Prober + Sync)),
+    )?;
     println!("{out}");
     Ok(())
 }
@@ -76,7 +102,12 @@ pub(crate) fn resolve_city<C: ServerCatalog>(
 }
 
 /// The command's stdout, without the trailing newline.
-fn render<C: ServerCatalog>(catalog: &C, args: &Args, json: bool) -> Result<String> {
+fn render<C: ServerCatalog>(
+    catalog: &C,
+    args: &Args,
+    json: bool,
+    prober: Option<&(dyn Prober + Sync)>,
+) -> Result<String> {
     let Some(cc) = args.country else {
         return countries_listing(catalog, json);
     };
@@ -87,11 +118,18 @@ fn render<C: ServerCatalog>(catalog: &C, args: &Args, json: bool) -> Result<Stri
         .transpose()?;
     let mut servers = catalog.recommended(cc, city.as_ref(), args.limit)?;
     rank_by_load(&mut servers);
+    let pings = prober.map(|p| crate::cmd::fastest::probe_all(p, &servers, |_, _| {}));
+    let ping_of = |i: usize| pings.as_ref().and_then(|p| p[i]);
     if json {
         let v: Vec<_> = servers
             .iter()
-            .map(|s| {
-                json!({ "hostname": s.hostname, "city": s.city, "load": s.load, "ip": s.station })
+            .enumerate()
+            .map(|(i, s)| {
+                let mut o = json!({ "hostname": s.hostname, "city": s.city, "load": s.load, "ip": s.station });
+                if pings.is_some() {
+                    o["latency_ms"] = json!(ping_of(i).map(|d| d.as_millis()));
+                }
+                o
             })
             .collect();
         return Ok(serde_json::to_string_pretty(&v)?);
@@ -104,16 +142,24 @@ fn render<C: ServerCatalog>(catalog: &C, args: &Args, json: bool) -> Result<Stri
         width(&|s| s.hostname.len(), 4),
         width(&|s| city_of(s).chars().count(), 4),
     );
-    let mut out = format!("{:<hw$}  {:<cw$}  LOAD  IP", "HOST", "CITY");
-    for s in &servers {
+    let ping_col = |d: Option<Duration>| d.map_or("-".into(), |d| format!("{} ms", d.as_millis()));
+    let mut out = format!("{:<hw$}  {:<cw$}  LOAD  ", "HOST", "CITY");
+    if pings.is_some() {
+        out.push_str("PING    ");
+    }
+    out.push_str("IP");
+    for (i, s) in servers.iter().enumerate() {
         let load = format!("{}%", s.load);
         let _ = write!(
             out,
-            "\n{:<hw$}  {:<cw$}  {load:<4}  {}",
+            "\n{:<hw$}  {:<cw$}  {load:<4}  ",
             s.hostname,
-            city_of(s),
-            s.station
+            city_of(s)
         );
+        if pings.is_some() {
+            let _ = write!(out, "{:<6}  ", ping_col(ping_of(i)));
+        }
+        let _ = write!(out, "{}", s.station);
     }
     Ok(out)
 }
@@ -175,26 +221,27 @@ pub(crate) mod tests {
             country: country.map(|c| c.parse().unwrap()),
             city: city.map(Into::into),
             limit,
+            probe: false,
         }
     }
 
     #[test]
     fn countries_table_and_json() {
-        insta::assert_snapshot!(render(&fake(), &args(None, None, 5), false).unwrap());
-        insta::assert_snapshot!(render(&fake(), &args(None, None, 5), true).unwrap());
+        insta::assert_snapshot!(render(&fake(), &args(None, None, 5), false, None).unwrap());
+        insta::assert_snapshot!(render(&fake(), &args(None, None, 5), true, None).unwrap());
     }
 
     #[test]
     fn servers_ranked_table_and_json() {
-        insta::assert_snapshot!(render(&fake(), &args(Some("ZA"), None, 5), false).unwrap());
-        insta::assert_snapshot!(render(&fake(), &args(Some("ZA"), None, 5), true).unwrap());
+        insta::assert_snapshot!(render(&fake(), &args(Some("ZA"), None, 5), false, None).unwrap());
+        insta::assert_snapshot!(render(&fake(), &args(Some("ZA"), None, 5), true, None).unwrap());
     }
 
     #[test]
     fn city_filter_matches_loosely_and_lists_valid_cities_on_error() {
-        let out = render(&fake(), &args(Some("ZA"), Some("PRETORIA"), 5), false).unwrap();
+        let out = render(&fake(), &args(Some("ZA"), Some("PRETORIA"), 5), false, None).unwrap();
         insta::assert_snapshot!(out);
-        let err = render(&fake(), &args(Some("ZA"), Some("Durban"), 5), false)
+        let err = render(&fake(), &args(Some("ZA"), Some("Durban"), 5), false, None)
             .unwrap_err()
             .to_string();
         assert_eq!(
@@ -205,8 +252,18 @@ pub(crate) mod tests {
 
     #[test]
     fn limit_applies_and_unknown_country_errors() {
-        let out = render(&fake(), &args(Some("ZA"), None, 1), true).unwrap();
+        let out = render(&fake(), &args(Some("ZA"), None, 1), true, None).unwrap();
         assert_eq!(out.matches("hostname").count(), 1);
-        assert!(render(&fake(), &args(Some("US"), None, 5), false).is_err());
+        assert!(render(&fake(), &args(Some("US"), None, 5), false, None).is_err());
+    }
+
+    #[test]
+    fn probe_adds_a_latency_column_and_json_field() {
+        let p = wglane_core::testing::FakeProber::with_ms(&[("192.0.2.2", 41), ("192.0.2.1", 380)]);
+        let prober: Option<&(dyn Prober + Sync)> = Some(&p);
+        insta::assert_snapshot!(
+            render(&fake(), &args(Some("ZA"), None, 5), false, prober).unwrap()
+        );
+        insta::assert_snapshot!(render(&fake(), &args(Some("ZA"), None, 5), true, prober).unwrap());
     }
 }

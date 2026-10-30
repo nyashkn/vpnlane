@@ -22,7 +22,7 @@ All keys are optional.
 |---|---|---|---|
 | `default_country` | two-letter code, e.g. `"US"` | unset | `wglane up` with no argument |
 | `default_city` | string, 1 to 64 letters, digits, space, `-`, `'`, `.` | unset | `wglane up` with no `--city`, when the country also came from the default (no argument): the city must exist in that country, else `up` stops and lists the valid ones |
-| `pick` | `"least-load"` or `"fastest"` | `"least-load"` | reserved: validated, not used yet (servers are always picked by least load) |
+| `pick` | `"least-load"` or `"fastest"` | `"least-load"` | `wglane up`: how the server is chosen. `fastest` pings the 10 least-loaded candidates and takes the lowest round trip |
 | `bypass_extra` | list of CIDRs | `[]` | `up` and `watch`: routes that skip the tunnel, added to the automatic Tailscale ones |
 | `exit_ip_check` | bool | `true` | `status` and the TUI; `false` skips the exit IP lookup (so `protected` and the exit-country warning read as unknown) |
 | `tui.start_expanded` | bool | `false` | TUI opens every continent group |
@@ -47,7 +47,7 @@ optional; a key a preset leaves out comes from the top-level settings.
 |---|---|---|
 | `country` | two-letter code | country to connect to; default: `default_country` |
 | `city` | string, same rule as `default_city` | city in `country`; **requires `country`** |
-| `pick` | `"least-load"` or `"fastest"` | reserved, like the top-level `pick` |
+| `pick` | `"least-load"` or `"fastest"` | selection rule for this preset; beats the top-level `pick`, loses to `up --fastest` |
 | `bypass_extra` | list of CIDRs, same rules as the top-level key | **added** to the top-level `bypass_extra` |
 | `label` | 1 to 24 characters | short display text for `preset list` and the TUI |
 
@@ -82,6 +82,7 @@ For each value, the first layer that sets it wins.
 | `default_country` | `wglane up CC` | `WGLANE_COUNTRY` | `default_country` | unset (`up` errors) |
 | country and city of `up --preset NAME` | `wglane up CC`, `--city` | none: the preset beats `WGLANE_COUNTRY` | the preset, then `default_country` | unset (`up` errors) |
 | `exit_ip_check` | `status --exit-ip-check BOOL` | `WGLANE_EXIT_IP_CHECK` | `exit_ip_check` | `true` |
+| `pick` | `up --fastest` | none | `pick` | `least-load` |
 | everything else | none | none | the key | the default above |
 
 `config show` has no flags, so it reports `env`, `file` or `default`; `flag`
@@ -96,9 +97,42 @@ server in that city; with no `--city` and no country argument, `default_city`
 does the same. A country given on the command line ignores `default_city`
 (so `wglane up DE` never trips over a US city). A cached config is reused only
 for the same request: switching between a city and the whole country, or to
-another city, regenerates it. `pick` is accepted so a file written today keeps
-working when selection grows; it has no effect yet. The TUI does not apply
-`default_city`.
+another city, regenerates it. The TUI does not apply `default_city` or `pick`.
+
+### `pick = "fastest"` and `--fastest`
+
+The candidates are the 10 least-loaded servers Nord recommends for the country
+(or city). They are pinged at once with the system `ping` (one ICMP echo each,
+2 s at most), and the lowest round trip wins; equal times keep the lower load.
+A server that does not answer loses to any that does. If none answers, the
+least-loaded one is used and the summary line says so:
+
+```
+connected to DE, config regenerated, 12 bypass routes, server de1622.example load 19% latency 41 ms
+connected to DE, config regenerated, 12 bypass routes, server de1622.example load 19% (no probe answered: picked the least loaded)
+```
+
+Choosing by latency means measuring now, so `--fastest` always re-picks and
+regenerates the config, even when a fresh one exists. There is no
+environment variable for `pick`, and no flag to switch a configured `fastest`
+off for one run (edit the file).
+`wglane up --preset NAME` honors the preset's `pick` (precedence: `--fastest` >
+preset `pick` > top-level `pick`).
+
+**Probing while a tunnel is up.** Packets to any server except the connected
+one would travel through the tunnel and measure its exit. So while a wglane
+tunnel is up, `ping` is bound to the physical interface (the interface of the
+first non-tunnel default route, as the bypass gateway is found) and a probe
+that cannot leave that way fails rather than leaking into the tunnel. If every
+probe fails while connected, run `wglane down` first, or `wglane up` without
+`--fastest`. `wglane servers CC --probe` shows the same measurement as a PING
+column next to the load.
+
+**Probing while connected.** Probes bind to the physical interface and fail
+safe: where that interface has no interface-scoped default route (common while
+a full tunnel is up), every probe fails and `--fastest` falls back to the least
+loaded server rather than measuring through the tunnel. Temporary host routes
+through the helper are being considered to fix this; they are not implemented.
 
 ## Worked example
 
@@ -116,7 +150,7 @@ warn_ratio = 2.0
 $ WGLANE_COUNTRY=DE wglane config show
 default_country        DE               env
 default_city           (unset)          default
-pick (reserved)        least-load       default
+pick                   least-load       default
 bypass_extra           198.51.100.0/24  file
 exit_ip_check          false            file
 tui.start_expanded     true             file
