@@ -102,7 +102,9 @@ impl Context {
 
     fn city_lines(&self, tunnel: &str) -> (Option<String>, Option<String>) {
         let text = fs::read_to_string(self.city_record(tunnel)).unwrap_or_default();
-        let mut lines = text.lines().map(|l| Some(l.trim().to_owned()).filter(|l| !l.is_empty()));
+        let mut lines = text
+            .lines()
+            .map(|l| Some(l.trim().to_owned()).filter(|l| !l.is_empty()));
         (lines.next().flatten(), lines.next().flatten())
     }
 
@@ -191,10 +193,14 @@ mod tests {
         c.record_city("us", None, Some("Boston")).unwrap();
         assert_eq!(c.recorded_city("us").as_deref(), Some("Boston"));
         assert_eq!(c.recorded_request("us"), None);
-        c.record_city("us", Some("New York"), Some("New York")).unwrap();
+        c.record_city("us", Some("New York"), Some("New York"))
+            .unwrap();
         assert_eq!(c.recorded_request("us").as_deref(), Some("New York"));
         c.record_city("us", None, None).unwrap();
         c.record_city("us", None, None).unwrap();
-        assert_eq!((c.recorded_city("us"), c.recorded_request("us")), (None, None));
+        assert_eq!(
+            (c.recorded_city("us"), c.recorded_request("us")),
+            (None, None)
+        );
     }
 }

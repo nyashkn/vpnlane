@@ -1,9 +1,9 @@
 ---
 source: crates/wglane-cli/src/cmd/config.rs
-expression: "show(&eff(\"\", &Overrides::default()), false).unwrap()"
+expression: "show(&eff(\"\", Overrides::default()), false).unwrap()"
 ---
 default_country        (unset)          default
-default_city (reserved) (unset)          default
+default_city           (unset)          default
 pick (reserved)        least-load       default
 bypass_extra           []               default
 exit_ip_check          true             default
