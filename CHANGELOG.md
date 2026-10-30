@@ -4,15 +4,18 @@ All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog
 
 ## [0.4.0](https://github.com/nyashkn/wglane/compare/v0.3.0...v0.4.0) (2026-10-30)
 
+This release gives the `wglane tui` dashboard a new palette-first layout and makes the browse view easier to read.
 
 ### What's New
 
-* **tui:** palette-first dashboard (variant C, Jump) ([#32](https://github.com/nyashkn/wglane/issues/32)) ([9b3e49d](https://github.com/nyashkn/wglane/commit/9b3e49da7929ee41647f32be628090b4e6949ae3))
+#### Palette-first dashboard ([#32](https://github.com/nyashkn/wglane/issues/32))
 
+The dashboard now opens on a palette-first layout, called variant C or "Jump".
 
 ### Fixes
 
-* **tui:** label browse columns and make load bars readable ([#36](https://github.com/nyashkn/wglane/issues/36)) ([d1a9606](https://github.com/nyashkn/wglane/commit/d1a9606390a5dab72968bf01c6a8baa5fbeeb8ca))
+* Browse columns in the TUI now have labels, so you can tell what each column shows ([#36](https://github.com/nyashkn/wglane/issues/36)).
+* Load bars in the TUI are readable ([#36](https://github.com/nyashkn/wglane/issues/36)).
 
 ## [0.3.0](https://github.com/nyashkn/wglane/compare/v0.2.0...v0.3.0) (2026-10-30)
 
