@@ -138,7 +138,13 @@ and warnings go to `<config dir>/tui.log` (mode 0600), never to the terminal.
 ## Latency and load
 
 Every place row (palette, home, browse) shows a relative LATENCY bar and a
-LOAD bar, each with its number, scaled to the rows on screen; the lowest
+LOAD bar, each with its number, scaled to the rows on screen. Bars are a fixed
+width of `█` (filled) and `░` (empty) cells, so they read the same under
+`NO_COLOR`. Latency is in ms and `-` means not measured; load is the percent of
+server capacity as Nord reports it (60% and up in yellow). Browse labels the
+columns with a `LATENCY` / `LOAD` header row (`LAT` under 50 columns; under 40
+it is dropped and the footer carries a one-line legend), and the `?` overlay
+has a "columns" section with the same legend; the lowest
 latency gets a `fastest` tag. A place's numbers come from one server: the one
 Nord recommends there (`recommended(cc, city, 1)`), its load as Nord reports
 it, its latency pinged now. Nothing is estimated: a place not measured shows
@@ -152,8 +158,8 @@ the same row (`probe::cursor_after`).
 
 **While a tunnel is up**, pings are bound to the physical interface so they
 never measure the tunnel's own exit, and they often all fail. Then home says
-`latency unavailable while connected`, the lists sort by load, and `f`
-refuses. Disconnect to measure. (A follow-up adds temporary helper host routes
+`latency unavailable while connected` (browse shows it in its footer too),
+the lists sort by load, and `f` refuses. Disconnect to measure. (A follow-up adds temporary helper host routes
 for the probes; it replaces only `tui::probe` in `mod.rs`.)
 
 Probe rounds are numbered (`probe_epoch`). A finished connect or disconnect

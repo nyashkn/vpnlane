@@ -4,11 +4,11 @@ expression: render(&s).backend()
 ---
 "· checking  asking the helper which tunnel is up                      "
 "browse  the full tree, for when you do not know the name · esc home   "
+"                                       LATENCY      LOAD              "
 "┌ filter: an_ ───────────────────────────────────────────────────────┐"
 "│  ▾ Europe (2)                                                      │"
 "│>     FR  France                      probing         -             │"
 "│      DE  Germany                     probing         -             │"
 "│  ▾ Asia (1)                                                        │"
-"│      JP  Japan                       probing         -             │"
 "└────────────────────────────────────────────────────────────────────┘"
 "type to filter  enter keep  esc clear  ↑↓ select                      "

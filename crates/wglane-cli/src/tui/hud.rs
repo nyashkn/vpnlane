@@ -514,11 +514,7 @@ fn fastest_lines(s: &State, width: u16) -> Vec<Line<'static>> {
     }
     if places::all_failed(s) {
         out.push(Line::from(Span::styled(
-            if s.is_up() {
-                "latency unavailable while connected"
-            } else {
-                "latency unavailable: no server answered a ping"
-            },
+            places::unavailable_hint(s),
             s.fg(Color::Yellow),
         )));
     }

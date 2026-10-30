@@ -46,6 +46,19 @@ const BROWSE_HELP: [(&str, &str); 5] = [
     ("esc", "clear the filter, then home"),
 ];
 
+/// What the metric columns mean, for the help overlay.
+const COLUMNS_HELP: [(&str, &str); 3] = [
+    (
+        "latency",
+        "ms to the server; - = not measured (no probes while a tunnel is up)",
+    ),
+    (
+        "load",
+        "% of server capacity as Nord reports it; 60%+ yellow",
+    ),
+    ("bar", "█ filled, ░ empty, relative to the rows on screen"),
+];
+
 /// One line of the server tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Row<'a> {
@@ -1012,11 +1025,66 @@ fn draw_browse(s: &State, frame: &mut Frame) {
         ])),
         title,
     );
-    draw_list(s, frame, main);
-    frame.render_widget(Paragraph::new(browse_footer(s, bottom.width)), bottom);
+    let mode = ColumnLabels::for_width(main.width);
+    let [labels, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(main);
+    let name_w = list_name_w(list);
+    if let Some((lat, load)) = mode.texts() {
+        // Right-aligned over the number fields: border, `> `, name column, gap.
+        let lat_w = 7 + if list.width >= 80 { 6 } else { 4 };
+        let pad = 3 + name_w + 2;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                format!(
+                    "{}{lat:>7}{}{load:>4}",
+                    " ".repeat(pad),
+                    " ".repeat(lat_w - 7 + 2)
+                ),
+                dim,
+            ))),
+            labels,
+        );
+    }
+    draw_list(s, frame, list);
+    frame.render_widget(Paragraph::new(browse_footer(s, bottom.width, mode)), bottom);
 }
 
-fn browse_footer(s: &State, width: u16) -> Line<'static> {
+/// How much of the `LATENCY` / `LOAD` header the browse screen can afford.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColumnLabels {
+    Full,
+    Short,
+    /// No room: the footer carries a legend instead.
+    Omitted,
+}
+
+impl ColumnLabels {
+    fn for_width(w: u16) -> Self {
+        match w {
+            50.. => Self::Full,
+            40.. => Self::Short,
+            _ => Self::Omitted,
+        }
+    }
+
+    fn texts(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Full => Some(("LATENCY", "LOAD")),
+            Self::Short => Some(("LAT", "LOAD")),
+            Self::Omitted => None,
+        }
+    }
+}
+
+/// Width of the name column of the browse tree (see [`draw_list`]).
+fn list_name_w(area: Rect) -> usize {
+    let wide = area.width >= 80;
+    let scale_w = 7 + if wide { 6 } else { 4 } + 2 + 4 + if wide { 6 } else { 0 } + 8;
+    usize::from(area.width)
+        .saturating_sub(4 + scale_w + 2)
+        .min(34)
+}
+
+fn browse_footer(s: &State, width: u16, mode: ColumnLabels) -> Line<'static> {
     let dim = Style::new().add_modifier(Modifier::DIM);
     if s.searching {
         return Line::from(Span::styled(
@@ -1024,8 +1092,18 @@ fn browse_footer(s: &State, width: u16) -> Line<'static> {
             dim,
         ));
     }
-    let hints = "enter connect  h l open/close  / filter  : jump  esc home  ? keys";
+    let hints = if mode == ColumnLabels::Omitted {
+        "ms, - not pinged · % load  ? keys"
+    } else {
+        "enter connect  h l open/close  / filter  : jump  esc home  ? keys"
+    };
     if s.message.is_empty() {
+        if places::all_failed(s) {
+            return Line::from(vec![
+                Span::styled(places::unavailable_hint(s), s.fg(Color::Yellow)),
+                Span::styled("  ? keys", dim),
+            ]);
+        }
         return Line::from(Span::styled(hints, dim));
     }
     // The message comes first so a narrow terminal cuts the hints, not the error.
@@ -1067,9 +1145,7 @@ fn draw_list(s: &State, frame: &mut Frame, area: Rect) {
         if wide { 5 } else { 3 },
         if wide { 5 } else { 0 },
     );
-    let name_w = usize::from(area.width)
-        .saturating_sub(4 + scale.width() + 2)
-        .min(34);
+    let name_w = list_name_w(area);
     let pad_to = |spans: &mut Vec<Span<'static>>| {
         let w: usize = spans.iter().map(Span::width).sum();
         if w < name_w + 2 {
@@ -1180,8 +1256,9 @@ fn draw_help(s: &State, frame: &mut Frame) {
     // Groups that do not fit the terminal are left out, last first.
     let room = usize::from(frame.area().height).saturating_sub(2);
     for (title, keys) in [
-        (" in the palette", &PALETTE_HELP),
-        (" browse (b)", &BROWSE_HELP),
+        (" in the palette", &PALETTE_HELP[..]),
+        (" browse (b)", &BROWSE_HELP[..]),
+        (" columns", &COLUMNS_HELP[..]),
     ] {
         if lines.len() + keys.len() + 2 > room {
             break;
