@@ -26,6 +26,7 @@ zeroize.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+proptest.workspace = true
 tempfile.workspace = true
 wglane-core = { workspace = true, features = ["testing"] }
 
