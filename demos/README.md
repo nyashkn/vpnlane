@@ -28,3 +28,8 @@ Setup: `brew install vhs` (pulls ttyd + ffmpeg), node (for the proxy), network a
 lets only the country-list request through so the exit-IP lookup fails and reads `unknown`.
 `servers ZA` is piped through `awk` to drop the server IP column. The tunnel indicator and `doctor` reflect the
 recording machine's state. Review the frames before committing.
+
+The recording shell also runs under `sandbox-exec` with the wireguard run dir hidden (and a dummy mode-600
+token in the temp config dir), so the recorder's real tunnel never shows. The side effect is that `sudo` cannot
+run in there (macOS blocks setuid under sandbox-exec), so the TUI tunnel field reads `unknown (run wglane doctor)`
+instead of `down`. A true `down` needs a seam (e.g. an env override for the sudo path) in wglane-macos.
