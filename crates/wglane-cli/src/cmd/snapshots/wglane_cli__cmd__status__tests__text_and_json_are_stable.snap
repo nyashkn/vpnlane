@@ -1,8 +1,9 @@
 ---
 source: crates/wglane-cli/src/cmd/status.rs
-expression: "render(&status(), false).unwrap()"
+expression: "render(&status(), true, false).unwrap()"
 ---
 tunnel         za
 exit ip        192.0.2.7
+protected      yes (Nord's view)
 tailnet        ok (peer.example.ts.net, 23ms)
 bypass routes  3

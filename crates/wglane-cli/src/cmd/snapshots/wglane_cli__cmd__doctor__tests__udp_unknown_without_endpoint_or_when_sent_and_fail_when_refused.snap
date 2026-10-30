@@ -1,0 +1,5 @@
+---
+source: crates/wglane-cli/src/cmd/doctor.rs
+expression: "render(&[(\"udp 51820\", Check::Fail { fix })], false).unwrap()"
+---
+FAIL  udp 51820  fix: sending UDP to 203.0.113.9:51820: network unreachable. NordLynx only speaks UDP 51820, so `wglane up` will connect but never handshake on a network that blocks it (hotspots, campus, hotel, some ISPs). Options: use another network or a phone hotspot; ask the network owner to allow outbound UDP 51820; check local firewall/pf rules; or use the Nord app's NordWhisper, which wglane does not support (see docs/notes/udp-blocked-fallback.md)

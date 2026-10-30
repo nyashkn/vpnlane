@@ -10,6 +10,7 @@ mod route_bypass;
 mod server_catalog;
 mod token_source;
 mod tunnel;
+mod udp_probe;
 
 pub use bypass_provider::FakeBypassProvider;
 pub use health_probe::{FakeExitIp, FakeTailnet};
@@ -18,3 +19,4 @@ pub use route_bypass::FakeRoutes;
 pub use server_catalog::FakeCatalog;
 pub use token_source::FakeToken;
 pub use tunnel::FakeTunnel;
+pub use udp_probe::FakeUdp;

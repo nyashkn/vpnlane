@@ -762,6 +762,8 @@ mod tests {
         TunnelStatus {
             active: active.iter().map(|s| (*s).to_owned()).collect(),
             exit_ip: Some("203.0.113.7".parse().unwrap()),
+            exit_country: None,
+            protected: None,
             tailnet,
             bypass_routes: 0,
         }

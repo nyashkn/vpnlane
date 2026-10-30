@@ -27,5 +27,5 @@ pub use render::render_wg_conf;
 pub use secret::{PrivateKey, PublicKey, Token};
 pub use server::Server;
 pub use stale::{MAX_CONF_AGE, is_stale};
-pub use status::{TailnetHealth, TunnelStatus};
+pub use status::{ExitInsights, TailnetHealth, TunnelStatus};
 pub use tunnel_config::TunnelConfig;

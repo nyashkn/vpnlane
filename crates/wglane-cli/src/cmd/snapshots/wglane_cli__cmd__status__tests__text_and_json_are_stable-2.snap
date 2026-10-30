@@ -1,16 +1,16 @@
 ---
 source: crates/wglane-cli/src/cmd/status.rs
-expression: "render(&status(), true).unwrap()"
+expression: "render(&status(), true, true).unwrap()"
 ---
 {
-  "active": [
-    "za"
-  ],
+  "bypass_routes": 3,
+  "country": "ZA",
   "exit_ip": "192.0.2.7",
+  "protected": true,
+  "state": "up",
   "tailnet": {
-    "state": "reachable",
-    "peer": "peer.example.ts.net",
-    "latency_ms": 23
-  },
-  "bypass_routes": 3
+    "ms": 23,
+    "ok": true,
+    "peer": "peer.example.ts.net"
+  }
 }

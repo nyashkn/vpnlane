@@ -11,6 +11,7 @@ mod route_bypass;
 mod server_catalog;
 mod token_source;
 mod tunnel;
+mod udp_probe;
 
 pub use bypass_provider::BypassProvider;
 pub use health_probe::{ExitIpProbe, TailnetProbe};
@@ -19,3 +20,4 @@ pub use route_bypass::RouteBypass;
 pub use server_catalog::ServerCatalog;
 pub use token_source::TokenSource;
 pub use tunnel::Tunnel;
+pub use udp_probe::UdpProbe;

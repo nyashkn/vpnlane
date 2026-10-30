@@ -1,12 +1,16 @@
 ---
 source: crates/wglane-cli/src/cmd/status.rs
-expression: "render(&s, true).unwrap()"
+expression: "render(&s, true, true).unwrap()"
 ---
 {
-  "active": [],
+  "bypass_routes": 0,
+  "country": null,
   "exit_ip": null,
+  "protected": null,
+  "state": "down",
   "tailnet": {
-    "state": "not_installed"
-  },
-  "bypass_routes": 0
+    "ms": null,
+    "ok": false,
+    "peer": null
+  }
 }

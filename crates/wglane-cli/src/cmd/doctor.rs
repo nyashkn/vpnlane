@@ -7,9 +7,9 @@ use std::path::Path;
 use color_eyre::Result;
 use serde_json::json;
 use wglane_core::Error;
-use wglane_core::ports::TokenSource;
+use wglane_core::ports::{TokenSource, UdpProbe};
 use wglane_macos::{
-    CommandRunner, HELPER_PATH, SUDOERS_PATH, SystemRunner, TOOL_DIR, check_tool_dir,
+    CommandRunner, HELPER_PATH, SUDOERS_PATH, SystemRunner, TOOL_DIR, UdpSend, check_tool_dir,
 };
 
 use crate::context::Context;
@@ -21,9 +21,12 @@ use crate::context::Context;
 Checks: wireguard-tools installed, tailscale installed, helper installed
 root-owned with its sudoers rule, root-owned tool directory
 (wg, wireguard-go), token present with mode 600, config
-directory private to you.
+directory private to you, and outbound UDP 51820 (NordLynx).
 
-Every failed check prints the exact command to fix it.",
+Every failed check prints the exact command to fix it. The UDP check sends one
+handshake-shaped packet to a server from a generated config. Nord never
+answers it, so it can only prove this machine lets the packet out; whether the
+network delivers it is reported as unknown (`??`, not a failure).",
     after_help = "\
 Examples:
   wglane doctor
@@ -38,6 +41,10 @@ enum Check {
     /// Failed; `fix` is the exact command (or instruction) that repairs it.
     Fail {
         fix: String,
+    },
+    /// Could not be decided; says what is and is not known. Not a failure.
+    Unknown {
+        note: String,
     },
 }
 
@@ -63,9 +70,16 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
         ("sudoers rule", check_sudoers(Path::new(SUDOERS_PATH))),
         ("token", check_token(&ctx.token_source())),
         ("config dir", check_config_dir(&ctx.config_dir)),
+        (
+            "udp 51820",
+            check_udp(&UdpSend, ctx.conf_store().any_endpoint()),
+        ),
     ];
     println!("{}", render(&rows, ctx.json)?);
-    let failed = rows.iter().filter(|(_, c)| *c != Check::Pass).count();
+    let failed = rows
+        .iter()
+        .filter(|(_, c)| matches!(c, Check::Fail { .. }))
+        .count();
     if failed > 0 {
         // A failed check is a result, not a crash: no error report.
         std::process::exit(1);
@@ -117,6 +131,31 @@ fn check_token<T: TokenSource>(source: &T) -> Check {
     }
 }
 
+const UDP_WHY: &str = "NordLynx only speaks UDP 51820, so `wglane up` will connect but never \
+    handshake on a network that blocks it (hotspots, campus, hotel, some ISPs). Options: use \
+    another network or a phone hotspot; ask the network owner to allow outbound UDP 51820; \
+    check local firewall/pf rules; or use the Nord app's NordWhisper, which wglane does not \
+    support (see docs/notes/udp-blocked-fallback.md)";
+
+/// A WireGuard server never answers an unauthenticated initiation, so the most
+/// this can prove is that the local stack lets the datagram out.
+fn check_udp<U: UdpProbe>(udp: &U, endpoint: Option<std::net::SocketAddr>) -> Check {
+    let Some(endpoint) = endpoint else {
+        return Check::Unknown {
+            note: "no generated config to take an endpoint from; run `wglane gen <CC>` and retry"
+                .into(),
+        };
+    };
+    match udp.send_probe(endpoint) {
+        Ok(()) => Check::Unknown {
+            note: "packet left this machine; delivery cannot be tested without a tunnel. \
+                   If `wglane up` never handshakes, this network may block UDP 51820"
+                .into(),
+        },
+        Err(e) => fail(format!("{e}. {UDP_WHY}")),
+    }
+}
+
 /// Holds the token and generated configs, so group/world access is a leak.
 fn check_config_dir(dir: &Path) -> Check {
     let d = dir.display();
@@ -133,6 +172,9 @@ fn render(rows: &[(&str, Check)], json: bool) -> Result<String> {
             .iter()
             .map(|(name, c)| match c {
                 Check::Pass => json!({ "check": name, "status": "pass" }),
+                Check::Unknown { note } => {
+                    json!({ "check": name, "status": "unknown", "note": note })
+                }
                 Check::Fail { fix } => json!({ "check": name, "status": "fail", "fix": fix }),
             })
             .collect();
@@ -143,6 +185,7 @@ fn render(rows: &[(&str, Check)], json: bool) -> Result<String> {
     for (name, c) in rows {
         match c {
             Check::Pass => writeln!(out, "ok    {name}"),
+            Check::Unknown { note } => writeln!(out, "??    {name:<width$}  {note}"),
             Check::Fail { fix } => writeln!(out, "FAIL  {name:<width$}  fix: {fix}"),
         }
         .expect("writing to a String cannot fail");
@@ -154,7 +197,7 @@ fn render(rows: &[(&str, Check)], json: bool) -> Result<String> {
 mod tests {
     use std::fs;
 
-    use wglane_core::testing::FakeToken;
+    use wglane_core::testing::{FakeToken, FakeUdp};
 
     use super::*;
 
@@ -242,11 +285,39 @@ mod tests {
     }
 
     #[test]
+    fn udp_unknown_without_endpoint_or_when_sent_and_fail_when_refused() {
+        let ep = "203.0.113.9:51820".parse().unwrap();
+        let ok = FakeUdp::default();
+        assert!(matches!(check_udp(&ok, None), Check::Unknown { .. }));
+        assert!(ok.sent.borrow().is_empty(), "no endpoint, nothing sent");
+        assert!(matches!(check_udp(&ok, Some(ep)), Check::Unknown { .. }));
+        assert_eq!(*ok.sent.borrow(), vec![ep]);
+        let no = FakeUdp {
+            refuse: Some(std::io::ErrorKind::NetworkUnreachable),
+            ..Default::default()
+        };
+        let Check::Fail { fix } = check_udp(&no, Some(ep)) else {
+            panic!("expected fail");
+        };
+        assert!(
+            fix.contains("sending UDP to 203.0.113.9:51820") && fix.contains("another network")
+        );
+        insta::assert_snapshot!(render(&[("udp 51820", Check::Fail { fix })], false).unwrap());
+    }
+
+    #[test]
     fn output_is_stable() {
         let rows = [
             ("wireguard-tools", Check::Pass),
             ("helper", fail("sudo wglane install-helper")),
             ("config dir", fail("chmod 700 /home/u/.config/wglane")),
+            (
+                "udp 51820",
+                check_udp(
+                    &FakeUdp::default(),
+                    Some("203.0.113.9:51820".parse().unwrap()),
+                ),
+            ),
         ];
         insta::assert_snapshot!(render(&rows, false).unwrap());
         insta::assert_snapshot!(render(&rows, true).unwrap());

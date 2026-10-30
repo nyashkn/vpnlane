@@ -1,13 +1,14 @@
-use std::net::IpAddr;
 use std::time::Duration;
 
 use wglane_core::ports::{ExitIpProbe, ServerCatalog};
-use wglane_core::{Country, CountryCode, Error, PrivateKey, Result, Server, Token};
+use wglane_core::{Country, CountryCode, Error, ExitInsights, PrivateKey, Result, Server, Token};
 
 use crate::wire;
 
 const BASE: &str = "https://api.nordvpn.com/v1";
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// `status` must not hang when offline.
+const INSIGHTS_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// Blocking client for Nord's public API.
 ///
@@ -56,7 +57,22 @@ impl Default for NordApi {
 impl NordApi {
     /// GET `{base}{path}` and return the body. Errors never echo headers.
     fn get(&self, path: &str, query: &[(&str, &str)], auth: Option<&str>) -> Result<String> {
-        let mut req = self.agent.get(format!("{}{path}", self.base));
+        self.get_within(path, query, auth, TIMEOUT)
+    }
+
+    fn get_within(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        auth: Option<&str>,
+        timeout: Duration,
+    ) -> Result<String> {
+        let mut req = self
+            .agent
+            .get(format!("{}{path}", self.base))
+            .config()
+            .timeout_global(Some(timeout))
+            .build();
         for (k, v) in query {
             req = req.query(k, v);
         }
@@ -123,8 +139,13 @@ impl ServerCatalog for NordApi {
 }
 
 impl ExitIpProbe for NordApi {
-    fn exit_ip(&self) -> Result<IpAddr> {
-        wire::parse_exit_ip(&self.get("/helpers/ips/insights", &[], None)?)
+    fn exit(&self) -> Result<ExitInsights> {
+        wire::parse_insights(&self.get_within(
+            "/helpers/ips/insights",
+            &[],
+            None,
+            INSIGHTS_TIMEOUT,
+        )?)
     }
 }
 
@@ -255,12 +276,15 @@ mod tests {
 
     #[test]
     fn exit_ip_over_http() {
-        let (base, _rx) = serve(vec![(
+        let (base, rx) = serve(vec![(
             "/helpers/ips/insights",
             200,
             include_str!("../fixtures/insights.json"),
         )]);
-        let ip = NordApi::with_base(base).exit_ip().unwrap();
-        assert_eq!(ip.to_string(), "198.51.100.7");
+        let i = NordApi::with_base(base).exit().unwrap();
+        assert_eq!(i.ip.to_string(), "198.51.100.7");
+        assert_eq!(i.protected, Some(true));
+        let req = rx.recv().unwrap().to_ascii_lowercase();
+        assert!(!req.contains("authorization"), "{req}");
     }
 }
