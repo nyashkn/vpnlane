@@ -16,7 +16,7 @@ jobs:
   ci:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # rust-toolchain.toml pins the version; rustup installs it on first use.
       - run: rustup show active-toolchain
       - uses: Swatinem/rust-cache@v2
