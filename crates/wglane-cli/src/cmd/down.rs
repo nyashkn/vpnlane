@@ -22,21 +22,42 @@ pub(crate) struct Args {}
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     let _ = args;
-    let helper = HelperClient::new(SystemRunner);
-    println!("{}", disconnect(&helper, ctx.conf_store().dir())?);
+    println!("{}", disconnect_real(ctx)?.summary());
     Ok(())
 }
 
+/// What `disconnect` did.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Disconnected {
+    /// Tunnels that were up and are now down.
+    tunnels: usize,
+}
+
+impl Disconnected {
+    pub(crate) fn summary(&self) -> &'static str {
+        if self.tunnels == 0 {
+            "nothing to do"
+        } else {
+            "disconnected"
+        }
+    }
+}
+
+/// `down` against the real adapters. Prints nothing, so the TUI can call it.
+pub(crate) fn disconnect_real(ctx: &Context) -> Result<Disconnected> {
+    let done = disconnect(&HelperClient::new(SystemRunner), ctx.conf_store().dir())?;
+    ctx.clear_routes_record()?;
+    Ok(done)
+}
+
 /// Brings down every active tunnel; the helper's `down` also removes the bypass routes.
-fn disconnect<T: Tunnel>(tunnel: &T, conf_dir: &Path) -> Result<&'static str> {
+pub(crate) fn disconnect<T: Tunnel>(tunnel: &T, conf_dir: &Path) -> Result<Disconnected> {
     let active = tunnel.active()?;
     for name in &active {
         tunnel.down(&conf_dir.join(format!("{name}.conf")))?;
     }
-    Ok(if active.is_empty() {
-        "nothing to do"
-    } else {
-        "disconnected"
+    Ok(Disconnected {
+        tunnels: active.len(),
     })
 }
 
@@ -50,13 +71,19 @@ mod tests {
     fn downs_every_tunnel() {
         let t = FakeTunnel::default();
         t.up.borrow_mut().push("za".into());
-        assert_eq!(disconnect(&t, Path::new("/cfg")).unwrap(), "disconnected");
+        assert_eq!(
+            disconnect(&t, Path::new("/cfg")).unwrap().summary(),
+            "disconnected"
+        );
         assert!(t.up.borrow().is_empty());
     }
 
     #[test]
     fn nothing_up_is_not_an_error() {
         let t = FakeTunnel::default();
-        assert_eq!(disconnect(&t, Path::new("/cfg")).unwrap(), "nothing to do");
+        assert_eq!(
+            disconnect(&t, Path::new("/cfg")).unwrap().summary(),
+            "nothing to do"
+        );
     }
 }

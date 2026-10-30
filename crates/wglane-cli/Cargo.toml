@@ -31,6 +31,7 @@ wglane-nord.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+tempfile.workspace = true
 wglane-core = { workspace = true, features = ["testing"] }
 wglane-macos = { workspace = true, features = ["testing"] }
 

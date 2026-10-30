@@ -57,6 +57,19 @@ Dependency rules (the compiler enforces direction; review enforces the rest):
 Every external program in `wglane-macos` runs through `CommandRunner`
 (`SystemRunner` in production, `wglane_macos::testing::FakeRunner` in tests).
 
+### Command layer
+
+Each `cmd/<name>.rs` has a `run` that builds real adapters and prints, and a
+generic function over ports that does the work (`up::connect`,
+`down::disconnect`, `status::gather`). `up::connect_real` and
+`down::disconnect_real` return structured outcomes and never print, because
+the TUI owns the screen; `up::run`/`down::run` print the outcome. The
+`cmd::e2e` test drives up, status and down through these functions with fakes.
+
+`status` shows the bypass-route count `up` recorded in `<config_dir>/bypass-routes`
+(the helper's own `bypass.json` is in a root-only directory, so the unprivileged
+CLI cannot read it). The count is 0 when no tunnel is active.
+
 ### Privilege split
 
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
@@ -70,36 +83,36 @@ exploit. This verb set is the future daemon socket protocol.
 
 ## File ownership map
 
-One unit of work per file, so parallel builders do not collide. `TODO(bead):
-<id>` markers name the work items; `grep -rn "TODO(bead)" crates xtask`
-lists them all.
+One unit of work per file, so parallel builders do not collide. Open work
+lives in `bd`; `// TODO(bead): <id>: <what>` markers, if any, point at it
+(`grep -rn "TODO(bead)" crates xtask`). None remain at v0.1.
 
-| Crate | File | Owns | TODOs |
-|---|---|---|---|
-| core | `src/country.rs`, `secret.rs`, `server.rs`, `bypass.rs`, `status.rs`, `tunnel_config.rs` | domain types | 0 |
-| core | `src/render.rs` (+ `snapshots/`) | `render_wg_conf` | 0 (reference) |
-| core | `src/stale.rs`, `src/rank.rs` | `is_stale`, `rank_by_load` | 0 |
-| core | `src/generate.rs` | `generate_config` use case | 1 |
-| core | `src/ports/<port>.rs` + `src/testing/<port>.rs` | one port and its fake | 0 |
-| core | `src/error.rs` | error enum (append variants; shared, keep edits small) | 0 |
-| nord | `src/token.rs` | token sources | 0 (reference) |
-| nord | `src/wire.rs` + `fixtures/` | JSON shapes, parsing | 2 |
-| nord | `src/api.rs` | HTTP calls | 4 |
-| macos | `src/command.rs`, `src/testing.rs` | `CommandRunner`, `FakeRunner` | 0 (reference) |
-| macos | `src/conf_store.rs` | config files on disk | 2 |
-| macos | `src/tunnel.rs` | `WgQuick` | 3 |
-| macos | `src/routes.rs` | `RouteTable` | 3 |
-| macos | `src/bypass.rs` | Tailscale + static bypass | 1 |
-| macos | `src/watcher.rs` | `RouteMonitor` | 1 |
-| macos | `src/probe.rs` | `TailscalePing` | 1 |
-| macos | `src/helper.rs` | `HelperClient`, `HelperVerb` | 6 |
-| macos | `src/privilege.rs` | sudoers + install | 2 |
-| macos | `src/bin/wglane-helper.rs` | root-side verb dispatch | 1 |
-| cli | `src/cmd/<name>.rs` | one subcommand: args, help, run | 1 each (8) |
-| cli | `src/cmd/completions.rs` | completions | 0 (reference) |
+| Crate | File | Owns |
+|---|---|---|
+| core | `src/country.rs`, `secret.rs`, `server.rs`, `bypass.rs`, `status.rs`, `tunnel_config.rs` | domain types |
+| core | `src/render.rs` (+ `snapshots/`) | `render_wg_conf` |
+| core | `src/stale.rs`, `src/rank.rs` | `is_stale`, `rank_by_load` |
+| core | `src/generate.rs` | `generate_config` use case |
+| core | `src/ports/<port>.rs` + `src/testing/<port>.rs` | one port and its fake |
+| core | `src/error.rs` | error enum (append variants; shared, keep edits small) |
+| nord | `src/token.rs` | token sources |
+| nord | `src/wire.rs` + `fixtures/` | JSON shapes, parsing |
+| nord | `src/api.rs` | HTTP calls |
+| macos | `src/command.rs`, `src/testing.rs` | `CommandRunner`, `FakeRunner` |
+| macos | `src/conf_store.rs` | config files on disk |
+| macos | `src/tunnel.rs` | `WgQuick` |
+| macos | `src/routes.rs` | `RouteTable` |
+| macos | `src/bypass.rs` | Tailscale + static bypass |
+| macos | `src/watcher.rs` | `RouteMonitor` |
+| macos | `src/probe.rs` | `TailscalePing` |
+| macos | `src/helper.rs` | `HelperClient`, `HelperVerb` |
+| macos | `src/privilege.rs` | sudoers + install |
+| macos | `src/bin/wglane-helper.rs` | root-side verb dispatch |
+| cli | `src/cmd/<name>.rs` | one subcommand: args, help, run |
+| cli | `src/cmd/completions.rs` | completions |
 | cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop, state + drawing | 1, 2 |
-| cli | `src/cli.rs`, `src/lib.rs`, `src/context.rs` | wiring; scaffold-owned | 0 |
-| xtask | `src/main.rs` | completions, man, release | 1 |
+| cli | `src/cli.rs`, `src/lib.rs`, `src/context.rs` | wiring; scaffold-owned |
+| xtask | `src/main.rs` | completions, man, release |
 
 Shared files (`error.rs`, `cli.rs`, `lib.rs`, `Cargo.toml`s) change only to
 add a line; land such changes as their own small commit to avoid conflicts.
@@ -138,12 +151,10 @@ owner of that subcommand should touch `about`.
 - rust-analyzer: the structure of this document.
 - Google Rust style guide: see `docs/STYLE.md`.
 
-## Open questions (owner decides)
+## Decisions taken
 
-- Helper argument policy: sudoers rule with no argument list (helper validates)
-  vs. one rule per verb. "No wildcards" here means the former.
-- How generated configs reach the root-owned dir: helper `up <cc>` copies from
-  the user's dir after validation, or `gen` writes via the helper.
-- Is `HelperClient::clear` a separate verb or folded into `down`?
-- Token file owner check needs `getuid` (libc, `unsafe`): accept a tiny
-  `unsafe` exception or keep the mode-only check.
+- Sudoers rule has no argument list; the helper validates every argument.
+- `up <cc>` takes the three config fields on stdin and renders the config
+  inside the root-owned dir; the helper never reads a user-supplied path.
+- Bypass cleanup is folded into the `down` verb.
+- Token file mode is checked; the owner check is not (would need `unsafe`).

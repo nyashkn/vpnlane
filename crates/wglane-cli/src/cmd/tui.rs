@@ -18,9 +18,12 @@ Examples:
 pub(crate) struct Args {}
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
-    let _ = (ctx, args);
+    let _ = args;
     #[cfg(feature = "tui")]
-    return crate::tui::run();
+    return crate::tui::run(ctx);
     #[cfg(not(feature = "tui"))]
-    color_eyre::eyre::bail!("this wglane was built without the `tui` feature");
+    {
+        let _ = ctx;
+        color_eyre::eyre::bail!("this wglane was built without the `tui` feature");
+    }
 }

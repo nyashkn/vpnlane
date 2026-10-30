@@ -14,13 +14,15 @@ use wglane_core::{TailnetHealth, TunnelStatus};
 use wglane_macos::{HelperClient, SystemRunner, TailscalePing};
 use wglane_nord::NordApi;
 
+use crate::cmd::{down, up};
+use crate::context::Context;
 use app::{Effect, Event, State};
 
 /// How often the status card refreshes.
 const TICK: Duration = Duration::from_secs(2);
 
 /// Runs the dashboard until the user quits.
-pub(crate) fn run() -> Result<()> {
+pub(crate) fn run(ctx: &Context) -> Result<()> {
     let mut terminal = ratatui::init();
     let result = (|| -> Result<()> {
         let mut state = State::default();
@@ -32,7 +34,7 @@ pub(crate) fn run() -> Result<()> {
                 return Ok(());
             }
             let event = if let Some(effect) = effects.pop_front() {
-                execute(effect)
+                execute(effect, ctx)
             } else if event::poll(TICK)? {
                 match event::read()? {
                     Term::Key(k) if k.kind == KeyEventKind::Press => Event::Key(k.code),
@@ -51,23 +53,27 @@ pub(crate) fn run() -> Result<()> {
 }
 
 /// Runs one effect to completion and reports what happened.
-fn execute(effect: Effect) -> Event {
+fn execute(effect: Effect, ctx: &Context) -> Event {
     match effect {
         Effect::LoadCountries => {
             Event::Countries(NordApi::new().countries().map_err(|e| e.to_string()))
         }
-        Effect::Refresh => Event::Status(probe()),
-        // TODO(bead): wgl-xy5.2: call the `up`/`down` use-cases once
-        // `connect`/`disconnect` are pub(crate); `up::run` prints and would
-        // corrupt the screen.
-        Effect::Connect(_) | Effect::Disconnect => Event::Finished(Err(
-            "connect/disconnect not wired yet: use `wglane up`/`down`".into(),
-        )),
+        Effect::Refresh => Event::Status(probe(ctx)),
+        Effect::Connect(cc) => Event::Finished(
+            up::connect_real(ctx, cc)
+                .map(drop)
+                .map_err(|e| e.to_string()),
+        ),
+        Effect::Disconnect => Event::Finished(
+            down::disconnect_real(ctx)
+                .map(drop)
+                .map_err(|e| e.to_string()),
+        ),
     }
 }
 
 /// Reads tunnel state without sudo. A failing probe is a field value, not an error.
-fn probe() -> TunnelStatus {
+fn probe(ctx: &Context) -> TunnelStatus {
     let runner = SystemRunner;
     TunnelStatus {
         active: HelperClient::new(runner).active().unwrap_or_default(),
@@ -77,6 +83,6 @@ fn probe() -> TunnelStatus {
                 reason: e.to_string(),
             }
         }),
-        bypass_routes: 0,
+        bypass_routes: ctx.recorded_routes(),
     }
 }

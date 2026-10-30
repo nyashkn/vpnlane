@@ -39,7 +39,12 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
-    let cc = args.country;
+    println!("{}", connect_real(ctx, args.country)?.summary(args.country));
+    Ok(())
+}
+
+/// `up` against the real adapters. Prints nothing, so the TUI can call it.
+pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> {
     let store = ctx.conf_store();
     let helper = HelperClient::new(SystemRunner);
     let tailscale = TailscaleBypass::new(SystemRunner);
@@ -57,23 +62,23 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
             })
         },
     )?;
-    println!("{}", done.summary(cc));
-    Ok(())
+    ctx.record_routes(done.routes)?;
+    Ok(done)
 }
 
 /// What `connect` did, for the one-line report.
 #[derive(Debug, PartialEq, Eq)]
-struct Connected {
+pub(crate) struct Connected {
     regenerated: bool,
     /// Other tunnels taken down first.
     switched_from: Vec<String>,
     /// The tunnel for this country was already up and kept.
     already_up: bool,
-    routes: usize,
+    pub(crate) routes: usize,
 }
 
 impl Connected {
-    fn summary(&self, cc: CountryCode) -> String {
+    pub(crate) fn summary(&self, cc: CountryCode) -> String {
         let verb = if self.already_up {
             "already connected to"
         } else if self.switched_from.is_empty() {
@@ -91,7 +96,7 @@ impl Connected {
 }
 
 /// Fetches a fresh config for `cc` and hands the rendered body to `write`.
-fn regenerate<C: ServerCatalog, T: TokenSource>(
+pub(crate) fn regenerate<C: ServerCatalog, T: TokenSource>(
     catalog: &C,
     token: &T,
     cc: CountryCode,
@@ -102,7 +107,7 @@ fn regenerate<C: ServerCatalog, T: TokenSource>(
 
 /// The whole `up` flow against ports. `conf_age` is `None` when the config is
 /// missing; `regen` writes a new config and returns its path.
-fn connect<T: Tunnel, R: RouteBypass>(
+pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
     tunnel: &T,
     routes: &R,
     providers: &[&dyn BypassProvider],

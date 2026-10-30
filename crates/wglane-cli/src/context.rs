@@ -1,5 +1,7 @@
 //! Shared, resolved settings handed to every subcommand.
 
+use std::fs;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
 use color_eyre::eyre::{Result, eyre};
@@ -44,5 +46,55 @@ impl Context {
     /// Generated tunnel configs in the config dir.
     pub(crate) fn conf_store(&self) -> ConfStore {
         ConfStore::new(&self.config_dir)
+    }
+
+    fn routes_record(&self) -> PathBuf {
+        self.config_dir.join("bypass-routes")
+    }
+
+    /// Bypass routes the helper last installed, as recorded by `up`. The
+    /// helper's own `bypass.json` sits in a root-only dir, so status keeps
+    /// this copy of the count instead. 0 when nothing is recorded.
+    pub(crate) fn recorded_routes(&self) -> usize {
+        fs::read_to_string(self.routes_record())
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn record_routes(&self, n: usize) -> Result<()> {
+        Ok(fs::write(self.routes_record(), format!("{n}\n"))?)
+    }
+
+    pub(crate) fn clear_routes_record(&self) -> Result<()> {
+        match fs::remove_file(self.routes_record()) {
+            Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
+            _ => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx(dir: &std::path::Path) -> Context {
+        Context {
+            json: false,
+            verbose: 0,
+            config_dir: dir.to_owned(),
+        }
+    }
+
+    #[test]
+    fn routes_record_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        assert_eq!(c.recorded_routes(), 0);
+        c.record_routes(7).unwrap();
+        assert_eq!(c.recorded_routes(), 7);
+        c.clear_routes_record().unwrap();
+        c.clear_routes_record().unwrap();
+        assert_eq!(c.recorded_routes(), 0);
     }
 }
