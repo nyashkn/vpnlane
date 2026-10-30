@@ -40,7 +40,7 @@ pub(crate) const TOOLS: [&str; 2] = ["wg", "wireguard-go"];
 const SUDO: &str = "/usr/bin/sudo";
 /// The only `PATH` programs run by the helper see; the caller's is discarded.
 const ROOT_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
-const BYPASS_STATE: &str = "bypass.json";
+pub(crate) const BYPASS_STATE: &str = "bypass.json";
 /// Held (`flock`) for the whole of an up/down/active/bypass, so they never interleave.
 pub(crate) const LOCK_FILE: &str = "lock";
 /// A rendered config is ~300 bytes; anything near this is not one.

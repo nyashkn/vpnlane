@@ -28,12 +28,14 @@ Expect: `wglane-helper` (root:wheel, 0755), `wglane/bin/{wg,wireguard-go}`,
 is `drwx------ root`; `tunnels` has one `de utunN ...` line.
 Save all of this output to a file.
 
-## 1. Old tunnel up: install must refuse
+## 1. Old tunnel up: install and uninstall must refuse
 
 ```sh
 sudo ./target/release/vpnlane install-helper; echo "exit=$?"
 ```
 Expect: `Error: an old wglane tunnel may still be up (... lists a tunnel). Run the OLD binary's `wglane down` first, then re-run `sudo vpnlane install-helper`. Nothing was changed.`, `exit=1`.
+
+Also `sudo ./target/release/vpnlane install-helper --uninstall` must refuse the same way (exit 1, nothing removed).
 
 Verify nothing changed:
 ```sh
@@ -117,9 +119,13 @@ Expect: every path `No such file or directory`.
 
 ## 6. Doctor warns about a leftover (optional negative test)
 
-Only if you want to see the warning; this recreates a root file by hand:
+Never write into `/etc/sudoers.d` directly. Write to a temp file, validate, then move:
 ```sh
-sudo sh -c 'umask 227; echo "$SUDO_USER ALL=(root) NOPASSWD: /usr/local/libexec/wglane-helper" > /etc/sudoers.d/wglane'
+T=$(mktemp /tmp/wglane-rule.XXXXXX)
+echo "$USER ALL=(root) NOPASSWD: /usr/local/libexec/wglane-helper" > "$T"
+sudo visudo -cf "$T"            # expect: parsed OK
+sudo chown root:wheel "$T"; sudo chmod 0440 "$T"
+sudo mv "$T" /etc/sudoers.d/wglane
 sudo visudo -c
 ./target/release/vpnlane doctor | grep legacy
 ```
@@ -127,7 +133,17 @@ Expect: `WARN  legacy files  old wglane install still present (/etc/sudoers.d/wg
 ```sh
 sudo ./target/release/vpnlane install-helper
 ```
-Expect the `removed /etc/sudoers.d/wglane` line (the file equals the old rule, so it is ours); doctor is clean again.
+Expect `removed   /etc/sudoers.d/wglane` (the file equals the old rule, so it is ours); doctor is clean again.
+
+### 6b. Edited old rule is kept
+
+Same as above, but add a comment line to the temp file first (`echo '# mine' >> "$T"`), validate and move it into place, then run `sudo ./target/release/vpnlane install-helper`.
+Expect `skipped   /etc/sudoers.d/wglane (WARNING: differs ...)`, exit 0, and the old `wglane-helper` still present. Then `sudo rm /etc/sudoers.d/wglane`, re-run install-helper, expect the old helper to be removed.
+
+### 6c. Stale record after reboot
+
+Start `wglane up DE`, reboot (do not run `down`), then `sudo ./target/release/vpnlane install-helper`.
+Expect the refusal naming `/var/db/wglane/tunnels`. Run `wglane status` (or `sudo /usr/local/libexec/wglane-helper active`), which prunes the dead record; re-run install-helper and expect success.
 
 ## 7. Uninstall both, reinstall
 
@@ -142,8 +158,8 @@ reinstall prints three `installed` lines.
 ## Rollback (if anything above went wrong)
 
 The old and new layouts can coexist, so a half-migrated Mac still works.
-1. `vpnlane down` (or `wglane down`).
-2. `sudo ./target/release/vpnlane install-helper --uninstall`.
-3. From the old release archive: `sudo ./wglane install-helper`, then `wglane doctor`.
-4. If you moved config earlier: `mv ~/.config/vpnlane ~/.config/wglane`.
-Manual last resort, only for files you have confirmed are yours: `sudo rm /etc/sudoers.d/vpnlane` removes the new privilege first; then the helper, tools dir and `/var/db/vpnlane`.
+1. Take down BOTH tunnels: `vpnlane down` and `wglane down` (or `sudo /usr/local/libexec/wglane-helper down`).
+2. If the old install is still intact (old `wglane-helper`, `/etc/sudoers.d/wglane` present): remove only the new files, privilege first:
+   `sudo rm /etc/sudoers.d/vpnlane`, then `sudo rm /usr/local/libexec/vpnlane-helper`, then `sudo rm -r /usr/local/libexec/vpnlane`, then `sudo rm -r /var/db/vpnlane` if present. Check with `wglane doctor`.
+3. If the old install is already gone: `sudo ./target/release/vpnlane install-helper --uninstall` (removes everything), then from the v0.4.0 archive `sudo ./wglane install-helper`, then `wglane doctor`.
+4. If you moved config: `mv ~/.config/vpnlane ~/.config/wglane`.
