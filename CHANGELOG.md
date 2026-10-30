@@ -4,10 +4,16 @@ All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog
 
 ## [0.1.1](https://github.com/nyashkn/wglane/compare/v0.1.0...v0.1.1) (2026-10-30)
 
+A small release that fixes how wglane is published. The command itself does not change.
 
 ### Fixes
 
-* **release:** upload to release-please's release, keep Cargo.lock in step, README install ([#14](https://github.com/nyashkn/wglane/issues/14)) ([7034d1d](https://github.com/nyashkn/wglane/commit/7034d1d84f7cbd970046c880a3c803b2f0db6ceb))
+* Release archives are now uploaded to the release that release-please creates, so the download is attached to the right version ([#14](https://github.com/nyashkn/wglane/issues/14)).
+* `Cargo.lock` now stays in step with the released version ([#14](https://github.com/nyashkn/wglane/issues/14)).
+
+### Smaller changes
+
+* The README install instructions are corrected ([#14](https://github.com/nyashkn/wglane/issues/14)).
 
 ## [0.1.0](https://github.com/nyashkn/wglane/compare/v0.0.1...v0.1.0) (2026-10-30)
 
