@@ -254,6 +254,14 @@ pub(crate) fn plan(ctx: &Context, args: &Args) -> Result<Plan> {
 }
 
 pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
+    let (done, cc) = apply_real(ctx, args)?;
+    println!("{}", done.summary(cc));
+    Ok(())
+}
+
+/// `up` with these arguments against real adapters; prints nothing (the TUI
+/// applies presets and `up -` through it).
+pub(crate) fn apply_real(ctx: &Context, args: &Args) -> Result<(Connected, CountryCode)> {
     let plan = plan(ctx, args)?;
     let cc = plan.location.country();
     let helper = HelperClient::new(SystemRunner);
@@ -271,8 +279,7 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
         plan,
         prober.as_ref().map(|p| p as &(dyn Prober + Sync)),
     )?;
-    println!("{}", done.summary(cc));
-    Ok(())
+    Ok((done, cc))
 }
 
 /// The request behind a TUI connect: the new place, everything else from the

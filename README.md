@@ -34,7 +34,7 @@ fetch your WireGuard key and server list.
 
 ![wglane CLI: help, doctor, servers](docs/media/cli.gif)
 
-![wglane TUI: continent tree, search, help overlay](docs/media/tui.gif)
+![wglane TUI: status home, jump palette searching a city, preset preview, help](docs/media/tui.gif)
 
 ## How it works
 
@@ -127,7 +127,7 @@ Do these in order.
 wglane up ZA        # connect (the config is generated or refreshed as needed)
 wglane status       # country, exit IP, tailnet check, bypass routes
 wglane down
-wglane tui          # dashboard: pick a country, connect, live latency
+wglane tui          # dashboard: status home, space to jump to a city or preset, 1-9 apply presets
 wglane watch        # re-apply bypass routes when you change networks
 wglane doctor       # checks wg, tailscale, helper, sudoers, token, config dir
 wglane up US/Chicago    # a city (same as `up US --city Chicago`); `wglane up -` repeats the last request

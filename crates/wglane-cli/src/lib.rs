@@ -28,8 +28,10 @@ pub fn run() -> color_eyre::Result<()> {
         color_eyre::install()?;
     }
     let cli = Cli::parse();
-    init_tracing(cli.global.verbose);
     let ctx = Context::from_global(&cli.global)?;
+    // The dashboard owns the terminal: a log line on stderr would paint over it.
+    let log_file = matches!(cli.command, Command::Tui(_)).then(|| ctx.config_dir.join("tui.log"));
+    init_tracing(cli.global.verbose, log_file.as_deref());
     match &cli.command {
         Command::Up(a) => cmd::up::run(&ctx, a),
         Command::Down(a) => cmd::down::run(&ctx, a),
@@ -47,7 +49,9 @@ pub fn run() -> color_eyre::Result<()> {
     }
 }
 
-fn init_tracing(verbose: u8) {
+/// Logs go to stderr, or to `log_file` (appended; dropped if it cannot be
+/// opened) while the TUI holds the screen.
+fn init_tracing(verbose: u8, log_file: Option<&std::path::Path>) {
     let level = match verbose {
         0 => "warn",
         1 => "info",
@@ -57,8 +61,27 @@ fn init_tracing(verbose: u8) {
     // RUST_LOG, when set, wins over -v.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .init();
+    let fmt = tracing_subscriber::fmt().with_env_filter(filter);
+    match log_file {
+        None => fmt.with_writer(std::io::stderr).init(),
+        Some(path) => {
+            let file = std::fs::create_dir_all(path.parent().unwrap_or(path))
+                .and_then(|()| {
+                    // 0600: log lines can carry IPs and hostnames.
+                    std::os::unix::fs::OpenOptionsExt::mode(
+                        std::fs::OpenOptions::new().create(true).append(true),
+                        0o600,
+                    )
+                    .open(path)
+                })
+                .ok();
+            let sink: Box<dyn std::io::Write + Send> = match file {
+                Some(f) => Box::new(f),
+                None => Box::new(std::io::sink()),
+            };
+            fmt.with_ansi(false)
+                .with_writer(std::sync::Mutex::new(sink))
+                .init();
+        }
+    }
 }

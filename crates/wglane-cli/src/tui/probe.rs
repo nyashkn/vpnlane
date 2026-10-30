@@ -55,11 +55,12 @@ pub(crate) fn rank_with_probes<'a>(
     Ranked { order, fastest }
 }
 
-/// The cursor index in `next` that sits on the same server as index `cursor`
-/// of `prev`. Falls back to the nearest valid index when that server is gone.
-pub(crate) fn cursor_after(prev: &[&Server], cursor: usize, next: &[&Server]) -> usize {
+/// The cursor index in `next` that sits on the same item (a server, a place,
+/// a palette row) as index `cursor` of `prev`. Falls back to the nearest valid
+/// index when that item is gone.
+pub(crate) fn cursor_after<T: PartialEq>(prev: &[T], cursor: usize, next: &[T]) -> usize {
     prev.get(cursor)
-        .and_then(|on| next.iter().position(|s| s.hostname == on.hostname))
+        .and_then(|on| next.iter().position(|s| s == on))
         .unwrap_or_else(|| cursor.min(next.len().saturating_sub(1)))
 }
 

@@ -1,14 +1,14 @@
 ---
-source: crates/wglane-cli/src/tui/app.rs
+source: crates/wglane-cli/src/tui/app_tests.rs
 expression: render(&s).backend()
 ---
-"· checking...                                                         "
-"┌ servers ──────────────┐┌ stats ────────────────────────────────────┐"
-"│> ▾ Africa (1)         ││tunnel   · checking...                     │"
-"│      ZA  South Africa ││exit ip  unknown                           │"
-"│  ▸ Europe (1)         ││tailnet  unknown                           │"
-"│  ▸ North America (1)  ││latency  -                                 │"
-"│                       ││                                           │"
-"│                       ││                                           │"
-"└───────────────────────┘└───────────────────────────────────────────┘"
-"? help  enter connect  d disconnect  / search  q quit                 "
+"· checking  asking the helper which tunnel is up                      "
+"browse  the full tree, for when you do not know the name · esc home   "
+"┌ servers ───────────────────────────────────────────────────────────┐"
+"│> ▾ Africa (1)                                                      │"
+"│      ZA  South Africa                probing         -             │"
+"│  ▸ Europe (1)                                                      │"
+"│  ▸ North America (1)                                               │"
+"│                                                                    │"
+"└────────────────────────────────────────────────────────────────────┘"
+"enter connect  h l open/close  / filter  : jump  esc home  ? keys     "

@@ -191,8 +191,9 @@ One concern per file, so changes stay local.
 | cli | `src/cmd/<name>.rs` | one subcommand: args, help, run |
 | cli | `src/cmd/completions.rs` | completions |
 | cli | `src/cmd/fastest.rs` | concurrent probing, probe scope (physical interface while a tunnel is up) |
-| cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop, state + drawing |
-| cli | `src/tui/worker.rs`, `src/tui/probe.rs` | effect worker thread; probe results and their ordering |
+| cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop and effects; state, reducer, browse tree |
+| cli | `src/tui/{hud,palette,presets,places,actions}.rs` | home HUD, jump palette, preset slots and preview, place samples and bars, action registry |
+| cli | `src/tui/worker.rs`, `src/tui/probe.rs` | effect worker threads; probe results and their ordering |
 | cli | `src/cli.rs`, `src/lib.rs`, `src/context.rs` | wiring |
 | xtask | `src/main.rs` | completions, man, release |
 
