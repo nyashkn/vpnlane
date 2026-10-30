@@ -28,25 +28,28 @@ pub(crate) struct Args {}
 
 pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
     let runner = SystemRunner;
-    let status = gather(
+    let (status, known) = gather(
         &HelperClient::new(runner),
         &NordApi::new(),
         &TailscalePing::new(runner),
         ctx.recorded_routes(),
     );
-    println!("{}", render(&status, ctx.json)?);
+    println!("{}", render(&status, known, ctx.json)?);
     Ok(())
 }
 
-/// A failing probe is a field value, not a command failure.
+/// A failing probe is a field value, not a command failure. The flag is false
+/// when the helper could not say which tunnel is up (missing helper or sudo rule).
 pub(crate) fn gather<T: Tunnel, E: ExitIpProbe, N: TailnetProbe>(
     tunnel: &T,
     exit: &E,
     tailnet: &N,
     bypass_routes: usize,
-) -> TunnelStatus {
-    let active = tunnel.active().unwrap_or_default();
-    TunnelStatus {
+) -> (TunnelStatus, bool) {
+    let active = tunnel.active();
+    let known = active.is_ok();
+    let active = active.unwrap_or_default();
+    let status = TunnelStatus {
         bypass_routes: if active.is_empty() { 0 } else { bypass_routes },
         active,
         exit_ip: exit.exit_ip().ok(),
@@ -55,14 +58,17 @@ pub(crate) fn gather<T: Tunnel, E: ExitIpProbe, N: TailnetProbe>(
             .unwrap_or_else(|e| TailnetHealth::Unreachable {
                 reason: e.to_string(),
             }),
-    }
+    };
+    (status, known)
 }
 
-fn render(s: &TunnelStatus, json: bool) -> Result<String> {
+fn render(s: &TunnelStatus, known: bool, json: bool) -> Result<String> {
     if json {
         return Ok(serde_json::to_string_pretty(s)?);
     }
-    let tunnel = if s.active.is_empty() {
+    let tunnel = if !known {
+        "unknown: run wglane doctor".to_owned()
+    } else if s.active.is_empty() {
         "none".to_owned()
     } else {
         s.active.join(", ")
@@ -100,12 +106,13 @@ mod tests {
             }),
             3,
         )
+        .0
     }
 
     #[test]
     fn text_and_json_are_stable() {
-        insta::assert_snapshot!(render(&status(), false).unwrap());
-        insta::assert_snapshot!(render(&status(), true).unwrap());
+        insta::assert_snapshot!(render(&status(), true, false).unwrap());
+        insta::assert_snapshot!(render(&status(), true, true).unwrap());
     }
 
     #[test]
@@ -116,8 +123,8 @@ mod tests {
             tailnet: TailnetHealth::NotInstalled,
             bypass_routes: 0,
         };
-        insta::assert_snapshot!(render(&s, false).unwrap());
-        insta::assert_snapshot!(render(&s, true).unwrap());
+        insta::assert_snapshot!(render(&s, true, false).unwrap());
+        insta::assert_snapshot!(render(&s, true, true).unwrap());
     }
 
     #[test]
@@ -127,7 +134,34 @@ mod tests {
             &FakeExitIp("192.0.2.7".parse().unwrap()),
             &FakeTailnet(TailnetHealth::NotInstalled),
             5,
-        );
+        )
+        .0;
         assert_eq!(s.bypass_routes, 0);
+    }
+
+    #[test]
+    fn an_unreadable_tunnel_is_unknown_not_none() {
+        struct Broken;
+        impl Tunnel for Broken {
+            fn up(&self, _: &std::path::Path) -> wglane_core::Result<()> {
+                unreachable!()
+            }
+            fn down(&self, _: &std::path::Path) -> wglane_core::Result<()> {
+                unreachable!()
+            }
+            fn active(&self) -> wglane_core::Result<Vec<String>> {
+                Err(wglane_core::Error::Api("no helper".into()))
+            }
+        }
+        let (s, known) = gather(
+            &Broken,
+            &FakeExitIp("192.0.2.7".parse().unwrap()),
+            &FakeTailnet(TailnetHealth::NotInstalled),
+            0,
+        );
+        assert!(!known);
+        let text = render(&s, known, false).unwrap();
+        assert!(text.contains("unknown: run wglane doctor"), "{text}");
+        assert!(!text.contains("none"), "{text}");
     }
 }

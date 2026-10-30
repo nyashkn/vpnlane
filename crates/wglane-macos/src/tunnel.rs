@@ -3,8 +3,9 @@ use std::fmt::Write as _;
 use std::fs::{self, DirBuilder};
 use std::io::{self, Read as _};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::os::unix::fs::DirBuilderExt;
+use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use ipnet::IpNet;
 use wglane_core::ports::{RouteBypass, Tunnel};
@@ -12,6 +13,7 @@ use wglane_core::{Error, Result};
 use zeroize::Zeroizing;
 
 use crate::helper::{is_cc_stem, rm, write_private};
+use crate::privilege::trusted_dir;
 use crate::{CommandOutput, CommandRunner, RouteTable};
 
 /// Where `wireguard-go` keeps each interface's control socket (`utunN.sock`);
@@ -21,7 +23,9 @@ pub(crate) const WG_RUN_DIR: &str = "/var/run/wireguard";
 /// (`WG_TUN_NAME_FILE`, set by the helper's runner).
 pub(crate) const NAME_FILE: &str = "wglane.name";
 /// Root-owned record of which `utunN` is which country's tunnel: one
-/// `<cc> <utunN> <endpoint-ip|->` line each. Only these are ever torn down.
+/// `<cc> <utunN> <endpoint-ip|-> <dev>:<ino>:<boot>` line each (the control
+/// socket's identity and the boot it was made in). Only these are ever torn
+/// down, and only while that socket is still the same file.
 const STATE_FILE: &str = "tunnels";
 const MAX_CONF_BYTES: u64 = 4096;
 /// A full tunnel as two half-routes, so the physical default route survives.
@@ -35,12 +39,19 @@ pub struct WgGo<R> {
     runner: R,
     state_dir: PathBuf,
     run_dir: PathBuf,
+    /// Seconds since epoch of this boot (`kern.boottime`); a seam for tests.
+    boot: fn() -> Result<u64>,
+    /// `(top, owner)`: `run_dir` and its ancestors up to `top` must be owned by
+    /// `owner` and not writable by others. `None` in tests.
+    run_dir_trust: Option<(PathBuf, u32)>,
 }
 
 impl<R: CommandRunner> WgGo<R> {
     /// Keeps the tunnel record in `state_dir`; every program runs via `runner`.
     pub fn new(runner: R, state_dir: impl Into<PathBuf>) -> Self {
-        Self::with_run_dir(runner, state_dir, WG_RUN_DIR)
+        let mut engine = Self::with_run_dir(runner, state_dir, WG_RUN_DIR);
+        engine.run_dir_trust = Some(("/".into(), 0));
+        engine
     }
 
     /// Like [`new`](Self::new) but with `wireguard-go`'s socket dir elsewhere (tests).
@@ -53,14 +64,44 @@ impl<R: CommandRunner> WgGo<R> {
             runner,
             state_dir: state_dir.into(),
             run_dir: run_dir.into(),
+            boot: system_boot,
+            run_dir_trust: None,
         }
     }
+}
+
+/// `kern.boottime` seconds. `/var/run` (where the sockets live) is wiped at
+/// boot but the state dir is not, and `utunN` numbers are reused afterwards.
+fn system_boot() -> Result<u64> {
+    let out = Command::new("/usr/sbin/sysctl")
+        .args(["-n", "kern.boottime"])
+        .env_clear()
+        .output()
+        .map_err(|e| Error::io("running sysctl kern.boottime", e))?;
+    parse_boottime(&String::from_utf8_lossy(&out.stdout))
+        .ok_or_else(|| Error::Api("unreadable kern.boottime".into()))
+}
+
+/// `{ sec = 1761800000, usec = 123456 } Thu Oct 30 ...` -> `1761800000`.
+fn parse_boottime(text: &str) -> Option<u64> {
+    let rest = text.split_once("sec = ")?.1;
+    rest.split(',').next()?.trim().parse().ok()
+}
+
+/// Which file a tunnel's control socket was, and in which boot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Ident {
+    dev: u64,
+    ino: u64,
+    boot: u64,
 }
 
 struct Entry {
     utun: String,
     /// Set once the endpoint host route is installed: only then is it ours to delete.
     endpoint: Option<Ipv4Addr>,
+    /// `None` for a record without an identity: never trusted.
+    id: Option<Ident>,
 }
 
 type State = BTreeMap<String, Entry>;
@@ -73,6 +114,19 @@ fn valid_utun(s: &str) -> bool {
 fn parse_entry(line: &str) -> Option<(String, Entry)> {
     let mut f = line.split(' ');
     let (cc, utun, ep) = (f.next()?, f.next()?, f.next()?);
+    let id = match f.next() {
+        None => None,
+        Some(id) => {
+            let mut n = id.split(':').map(|n| n.parse::<u64>().ok());
+            let id = Ident {
+                dev: n.next()??,
+                ino: n.next()??,
+                boot: n.next()??,
+            };
+            n.next().is_none().then_some(id)?;
+            Some(id)
+        }
+    };
     if f.next().is_some() || !is_cc_stem(cc) || !valid_utun(utun) {
         return None;
     }
@@ -85,6 +139,7 @@ fn parse_entry(line: &str) -> Option<(String, Entry)> {
         Entry {
             utun: utun.to_owned(),
             endpoint,
+            id,
         },
     ))
 }
@@ -178,9 +233,50 @@ impl<R: CommandRunner> WgGo<R> {
         for (cc, e) in state {
             let ep = e.endpoint.map_or("-".to_owned(), |ip| ip.to_string());
             // `write!` to a String cannot fail.
-            let _ = writeln!(text, "{cc} {} {ep}", e.utun);
+            let _ = write!(text, "{cc} {} {ep}", e.utun);
+            if let Some(i) = e.id {
+                let _ = write!(text, " {}:{}:{}", i.dev, i.ino, i.boot);
+            }
+            text.push('\n');
         }
         write_private(&self.state_dir.join(STATE_FILE), text.as_bytes())
+    }
+
+    fn sock(&self, utun: &str) -> PathBuf {
+        self.run_dir.join(format!("{utun}.sock"))
+    }
+
+    /// Identity of `utun`'s control socket right now.
+    fn ident(&self, utun: &str) -> Result<Ident> {
+        let path = self.sock(utun);
+        let m = fs::symlink_metadata(&path)
+            .map_err(|e| Error::io(format!("checking {}", path.display()), e))?;
+        Ok(Ident {
+            dev: m.dev(),
+            ino: m.ino(),
+            boot: (self.boot)()?,
+        })
+    }
+
+    /// Drops every record whose control socket is gone, is another file, or
+    /// was made in an earlier boot: the `utunN` may now be someone else's
+    /// tunnel, so nothing is run or removed for it.
+    fn prune(&self, state: &mut State) -> Result<()> {
+        if state.is_empty() {
+            return Ok(());
+        }
+        let boot = (self.boot)()?;
+        let before = state.len();
+        state.retain(|_, e| {
+            let now = fs::symlink_metadata(self.sock(&e.utun)).ok();
+            e.id.is_some_and(|i| {
+                i.boot == boot && now.is_some_and(|m| (m.dev(), m.ino()) == (i.dev, i.ino))
+            })
+        });
+        if state.len() == before {
+            return Ok(());
+        }
+        self.save(state)
     }
 
     /// The interface `wireguard-go` just created, from its name file.
@@ -255,6 +351,7 @@ impl<R: CommandRunner> WgGo<R> {
     /// Keeps the record if a step fails, so a retry still finds the tunnel.
     fn down_cc(&self, cc: &str) -> Result<()> {
         let mut state = self.load()?;
+        self.prune(&mut state)?;
         let Some(entry) = state.get(cc) else {
             return Ok(());
         };
@@ -277,7 +374,7 @@ impl<R: CommandRunner> WgGo<R> {
             self.runner
                 .run("route", &["-q", "-n", "delete", "-inet", &ip.to_string()])?;
         }
-        rm(&self.run_dir.join(format!("{}.sock", entry.utun)))?;
+        rm(&self.sock(&entry.utun))?;
         state.remove(cc);
         self.save(&state)
     }
@@ -299,6 +396,9 @@ impl<R: CommandRunner> Tunnel for WgGo<R> {
             .mode(0o755)
             .create(&self.run_dir)
             .map_err(|e| Error::io(format!("creating {}", self.run_dir.display()), e))?;
+        if let Some((top, owner)) = &self.run_dir_trust {
+            trusted_dir(&self.run_dir, top, *owner)?;
+        }
         rm(&self.run_dir.join(NAME_FILE))?;
         self.runner.run_ok("wireguard-go", &["utun"])?;
         let utun = self.take_name()?;
@@ -308,6 +408,7 @@ impl<R: CommandRunner> Tunnel for WgGo<R> {
         state.insert(
             cc.to_owned(),
             Entry {
+                id: Some(self.ident(&utun)?),
                 utun: utun.clone(),
                 endpoint: None,
             },
@@ -325,18 +426,16 @@ impl<R: CommandRunner> Tunnel for WgGo<R> {
 
     /// Only tunnels recorded by `up` whose `wireguard-go` is still running.
     fn active(&self) -> Result<Vec<String>> {
-        Ok(self
-            .load()?
-            .into_iter()
-            .filter(|(_, e)| self.run_dir.join(format!("{}.sock", e.utun)).exists())
-            .map(|(cc, _)| cc)
-            .collect())
+        let mut state = self.load()?;
+        self.prune(&mut state)?;
+        Ok(state.into_keys().collect())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::os::unix::fs::PermissionsExt as _;
 
     use wglane_core::{PrivateKey, PublicKey, Server, TunnelConfig, render_wg_conf};
 
@@ -350,6 +449,7 @@ default            192.0.2.1          UGScg                 en0
 ";
     const EP: &str = "198.51.100.7";
     const GW: &str = "192.0.2.1";
+    const BOOT: u64 = 1_761_800_000;
 
     /// [`FakeRunner`] that also plays `wireguard-go`: it reports `utun7` in
     /// the name file and creates the control socket.
@@ -408,8 +508,10 @@ default            192.0.2.1          UGScg                 en0
             sim.inner.push_stdout(netstat);
             let conf = state.join("za.conf");
             fs::write(&conf, conf_text(EP)).unwrap();
+            let mut engine = WgGo::with_run_dir(sim, &state, &run);
+            engine.boot = || Ok(BOOT);
             Self {
-                engine: WgGo::with_run_dir(sim, &state, &run),
+                engine,
                 conf,
                 _t: t,
             }
@@ -482,12 +584,15 @@ default            192.0.2.1          UGScg                 en0
                 ]),
             ]
         );
-        assert_eq!(f.state_file(), format!("za utun7 {EP}\n"));
+        let m = fs::metadata(f.engine.run_dir.join("utun7.sock")).unwrap();
+        assert_eq!(
+            f.state_file(),
+            format!("za utun7 {EP} {}:{}:{BOOT}\n", m.dev(), m.ino())
+        );
         assert_eq!(f.engine.active().unwrap(), ["za"]);
         // A recorded tunnel whose wireguard-go is gone is not active.
         fs::remove_file(f.engine.run_dir.join("utun7.sock")).unwrap();
         assert_eq!(f.engine.active().unwrap().len(), 0);
-        fs::write(f.engine.run_dir.join("utun7.sock"), "").unwrap();
         assert!(
             !f.engine.run_dir.join(NAME_FILE).exists(),
             "name file is consumed"
@@ -570,6 +675,83 @@ default            192.0.2.1          UGScg                 en0
             f.engine.active().unwrap().is_empty(),
             "foreign sockets are not ours"
         );
+    }
+
+    /// Writes a record for `za` on utun7 with the given identity.
+    fn record(f: &Fixture, id: &str) {
+        let line = format!("za utun7 {EP} {id}\n");
+        fs::write(f.engine.state_dir.join(STATE_FILE), line).unwrap();
+    }
+
+    fn assert_stale_is_dropped_untouched(f: &Fixture) {
+        let sock = f.engine.run_dir.join("utun7.sock");
+        assert_eq!(f.engine.active().unwrap().len(), 0);
+        assert_eq!(f.state_file(), "", "record dropped");
+        record_again(f);
+        f.engine.down(&f.conf).unwrap();
+        assert_eq!(f.calls().len(), 0, "ran {:?}", f.calls());
+        assert!(sock.exists(), "foreign socket removed");
+        assert_eq!(f.state_file(), "");
+    }
+
+    fn record_again(f: &Fixture) {
+        let id = fs::read_to_string(f.engine.state_dir.join("last-id")).unwrap();
+        record(f, &id);
+    }
+
+    #[test]
+    fn a_record_whose_socket_is_another_file_is_stale_and_runs_nothing() {
+        // utun7.sock now belongs to some other tunnel (the reviewer's repro).
+        let f = Fixture::new();
+        fs::write(f.engine.run_dir.join("utun7.sock"), "").unwrap();
+        let id = format!("1:1:{BOOT}");
+        fs::write(f.engine.state_dir.join("last-id"), &id).unwrap();
+        record(&f, &id);
+        assert_stale_is_dropped_untouched(&f);
+    }
+
+    #[test]
+    fn a_record_from_an_earlier_boot_is_stale() {
+        let f = Fixture::new();
+        let sock = f.engine.run_dir.join("utun7.sock");
+        fs::write(&sock, "").unwrap();
+        let m = fs::metadata(&sock).unwrap();
+        let id = format!("{}:{}:{}", m.dev(), m.ino(), BOOT - 1);
+        fs::write(f.engine.state_dir.join("last-id"), &id).unwrap();
+        record(&f, &id);
+        assert_stale_is_dropped_untouched(&f);
+    }
+
+    #[test]
+    fn a_record_without_identity_or_socket_is_stale() {
+        let f = Fixture::new();
+        fs::write(f.engine.run_dir.join("utun7.sock"), "").unwrap();
+        fs::write(f.engine.state_dir.join("last-id"), "").unwrap();
+        fs::write(
+            f.engine.state_dir.join(STATE_FILE),
+            format!("za utun7 {EP}\n"),
+        )
+        .unwrap();
+        f.engine.down(&f.conf).unwrap();
+        assert_eq!(f.calls().len(), 0);
+        assert!(f.engine.run_dir.join("utun7.sock").exists());
+        assert_eq!(f.state_file(), "");
+        // Socket missing entirely.
+        fs::remove_file(f.engine.run_dir.join("utun7.sock")).unwrap();
+        record(&f, &format!("1:1:{BOOT}"));
+        f.engine.down(&f.conf).unwrap();
+        assert_eq!(f.calls().len(), 0);
+        assert_eq!(f.state_file(), "");
+    }
+
+    #[test]
+    fn boottime_parser() {
+        assert_eq!(
+            parse_boottime("{ sec = 1761800000, usec = 123456 } Thu Oct 30 09:00:00 2026\n"),
+            Some(1_761_800_000)
+        );
+        assert_eq!(parse_boottime("garbage"), None);
+        assert_eq!(parse_boottime("{ sec = x, usec = 1 }"), None);
     }
 
     #[test]
@@ -730,13 +912,13 @@ default            192.0.2.1          UGScg                 en0
     fn state_file_round_trips_and_rejects_corruption() {
         let f = Fixture::new();
         let path = f.engine.state_dir.join(STATE_FILE);
-        fs::write(&path, "de utun3 -\nza utun7 198.51.100.7\n").unwrap();
+        fs::write(&path, "de utun3 -\nza utun7 198.51.100.7 1:2:3\n").unwrap();
         let s = f.engine.load().unwrap();
         assert_eq!(s.len(), 2);
         f.engine.save(&s).unwrap();
         assert_eq!(
             fs::read_to_string(&path).unwrap(),
-            "de utun3 -\nza utun7 198.51.100.7\n"
+            "de utun3 -\nza utun7 198.51.100.7 1:2:3\n"
         );
         for bad in [
             "za utun7\n",
@@ -746,9 +928,34 @@ default            192.0.2.1          UGScg                 en0
             "za utun7 host\n",
             "za utun7 ../x\n",
             "za  utun7 -\n",
+            "za utun7 - 1:2\n",
+            "za utun7 - 1:2:3:4\n",
+            "za utun7 - a:2:3\n",
+            "za utun7 - 1:2:3 x\n",
         ] {
             fs::write(&path, bad).unwrap();
             assert!(f.engine.load().is_err(), "accepted {bad:?}");
         }
+    }
+
+    #[test]
+    fn production_engine_checks_the_run_dir_chain_from_root() {
+        let e = WgGo::new(FakeRunner::new(), "/s");
+        assert_eq!(e.run_dir_trust, Some(("/".into(), 0)));
+    }
+
+    #[test]
+    fn up_refuses_a_run_dir_others_can_write_before_starting_wireguard_go() {
+        let mut f = Fixture::new();
+        let top = fs::canonicalize(f.engine.run_dir.parent().unwrap()).unwrap();
+        let uid = fs::metadata(&top).unwrap().uid();
+        f.engine.run_dir_trust = Some((top, uid));
+        fs::set_permissions(&f.engine.run_dir, fs::Permissions::from_mode(0o777)).unwrap();
+        let err = f.engine.up(&f.conf).unwrap_err().to_string();
+        assert!(err.contains("not writable by others"), "{err}");
+        assert_eq!(f.calls().len(), 1, "only netstat, no wireguard-go");
+        fs::set_permissions(&f.engine.run_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        f.engine.runner.inner.push_stdout(NETSTAT);
+        f.engine.up(&f.conf).unwrap();
     }
 }

@@ -67,6 +67,7 @@ mod e2e {
                 &FakeTailnet(TailnetHealth::NotInstalled),
                 ctx.recorded_routes(),
             )
+            .0
         };
 
         let done = up::connect_recorded(
