@@ -16,6 +16,7 @@ use wglane_core::{
 };
 use zeroize::Zeroizing;
 
+use crate::routes::is_bad_bypass;
 use crate::{CommandOutput, CommandRunner, RouteTable, WgQuick};
 
 /// Root-owned install location of `wglane-helper` (never the user-writable
@@ -34,9 +35,6 @@ const BYPASS_STATE: &str = "bypass.json";
 const MAX_STDIN: usize = 1024;
 const MAX_CONF_BYTES: u64 = 4096;
 const MAX_CIDRS: usize = 1024;
-/// Shortest bypass prefixes accepted; `/0` or `/1` would swallow the VPN.
-const MIN_PREFIX_V4: u8 = 8;
-const MIN_PREFIX_V6: u8 = 16;
 
 /// The complete helper protocol. This verb set becomes the socket protocol
 /// if wglane later grows a launchd daemon.
@@ -215,13 +213,7 @@ fn parse_cidr(s: &str) -> Result<IpNet, HelperError> {
     let net: IpNet = s
         .parse()
         .map_err(|_| HelperError::usage(format!("{s:?} is not ADDR/PREFIX")))?;
-    let min = if net.addr().is_ipv4() {
-        MIN_PREFIX_V4
-    } else {
-        MIN_PREFIX_V6
-    };
-    let ip = net.addr();
-    if net.prefix_len() < min || ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() {
+    if is_bad_bypass(&net) {
         return Err(HelperError::usage(format!(
             "bypass destination {s:?} is too broad or not unicast"
         )));
@@ -1165,5 +1157,126 @@ mod tests {
         let client = HelperClient::new(FakeRunner::new());
         client.clear(&BypassSet::new()).unwrap();
         assert_eq!(client.runner.calls(), Vec::<Vec<String>>::new());
+    }
+}
+
+/// Properties of the private validators that run as root.
+#[cfg(test)]
+mod props {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    const PRIV: &str = "U1lOVEhFVElDLVBSSVZBVEUtS0VZLU5PVC1SRUFMMDE=";
+    const PUB: &str = "U1lOVEhFVElDLVBFRVItUFVCTElDLUtFWS0wMDAwMDE=";
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(512)
+    }
+
+    fn key() -> impl Strategy<Value = String> {
+        "[A-Za-z0-9+/]{43}=".prop_map(String::from)
+    }
+
+    /// Text with at least one char the helper must never let through.
+    fn hostile() -> impl Strategy<Value = String> {
+        (
+            "[ -~]{0,12}",
+            prop::sample::select(vec!["\n", "\r", "\0", " ", "\t", "\u{a0}", "\u{2028}"]),
+            "[ -~]{0,12}",
+        )
+            .prop_map(|(a, c, b)| format!("{a}{c}{b}"))
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Accepted fields only ever fill the template's three value slots.
+        #[test]
+        fn accepted_request_renders_only_the_template(
+            private in key(), public in key(), ip in any::<u32>(), port in any::<u16>(),
+        ) {
+            let endpoint = format!("{}:{port}", std::net::Ipv4Addr::from(ip));
+            let Ok(req) = UpRequest::new(&private, &public, &endpoint) else { return Ok(()) };
+            let base = UpRequest::new(PRIV, PUB, "192.0.2.10:51820").unwrap().render();
+            let want = base
+                .replace(PRIV, &private)
+                .replace(PUB, &public)
+                .replace("192.0.2.10:51820", &req.endpoint.to_string());
+            prop_assert_eq!(&**req.render(), want.as_str());
+        }
+
+        // Arbitrary stdin: acceptance means the text is exactly our own wire format.
+        #[test]
+        fn from_wire_accepts_only_canonical_text(text in ".{0,200}") {
+            if let Ok(req) = UpRequest::from_wire(&text) {
+                prop_assert_eq!(&**req.to_wire(), text.as_str());
+            }
+        }
+
+        // Structured near-misses of the wire format are refused or round-trip.
+        #[test]
+        fn from_wire_mutated_fields(
+            private in "[ -~]{0,50}", public in "[ -~]{0,50}", endpoint in "[ -~]{0,30}",
+        ) {
+            let text = format!("private_key={private}\npublic_key={public}\nendpoint={endpoint}\n");
+            if let Ok(req) = UpRequest::from_wire(&text) {
+                prop_assert_eq!(&**req.to_wire(), text.as_str());
+            }
+        }
+
+        #[test]
+        fn hostile_fields_are_rejected(bad in hostile()) {
+            prop_assert!(UpRequest::new(&bad, PUB, "192.0.2.10:51820").is_err());
+            prop_assert!(UpRequest::new(PRIV, &bad, "192.0.2.10:51820").is_err());
+            prop_assert!(UpRequest::new(PRIV, PUB, &bad).is_err());
+            prop_assert!(parse_cc(&bad).is_err());
+            prop_assert!(parse_gateway(&bad).is_err());
+            prop_assert!(parse_cidr(&bad).is_err());
+        }
+
+        #[test]
+        fn path_like_tokens_are_rejected(a in "[ -~]{0,8}", b in "[ -~]{0,8}") {
+            for sep in ["..", "/"] {
+                let s = format!("{a}{sep}{b}");
+                prop_assert!(parse_cc(&s).is_err(), "cc {s:?}");
+                prop_assert!(parse_gateway(&s).is_err(), "gateway {s:?}");
+            }
+            let s = format!("{a}..{b}");
+            prop_assert!(parse_cidr(&s).is_err(), "cidr {s:?}");
+        }
+
+        #[test]
+        fn cc_accepts_only_two_capitals(s in "\\PC{0,4}") {
+            prop_assert_eq!(
+                parse_cc(&s).is_ok(),
+                s.len() == 2 && s.bytes().all(|b| b.is_ascii_uppercase())
+            );
+        }
+
+        #[test]
+        fn gateway_is_canonical_unicast(s in "[0-9a-f:.]{0,20}") {
+            if let Ok(ip) = parse_gateway(&s) {
+                prop_assert!(!ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast());
+                prop_assert_eq!(s.parse::<IpAddr>().unwrap(), ip);
+            }
+        }
+
+        // Whatever the input, an accepted CIDR is a canonical, specific unicast network.
+        #[test]
+        fn cidr_result_is_truncated_and_specific(s in "[0-9a-f:./]{0,45}") {
+            if let Ok(net) = parse_cidr(&s) {
+                prop_assert_eq!(net, net.trunc());
+                prop_assert!(!is_bad_bypass(&net));
+            }
+        }
+
+        #[test]
+        fn cidr_never_yields_an_unspecified_network(a in any::<u32>(), p in 0u8..=32) {
+            let s = format!("{}/{p}", std::net::Ipv4Addr::from(a));
+            if let Ok(net) = parse_cidr(&s) {
+                prop_assert!(!net.addr().is_unspecified() && net.prefix_len() >= 8);
+            }
+        }
     }
 }
