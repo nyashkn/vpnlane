@@ -29,6 +29,7 @@ pub fn run() -> color_eyre::Result<()> {
         Command::Status(a) => cmd::status::run(&ctx, a),
         Command::Servers(a) => cmd::servers::run(&ctx, a),
         Command::Ls(a) => cmd::ls::run(&ctx, a),
+        Command::Preset(a) => cmd::preset::run(&ctx, a),
         Command::Gen(a) => cmd::gen_conf::run(&ctx, a),
         Command::Doctor(a) => cmd::doctor::run(&ctx, a),
         Command::Config(a) => cmd::config::run(&ctx, a),

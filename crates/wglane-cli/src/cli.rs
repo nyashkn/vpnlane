@@ -30,6 +30,7 @@ Examples:
   wglane up ZA          connect to South Africa (switches if already up)
   wglane status         country, exit IP, tailnet check, bypass routes
   wglane down           disconnect and remove bypass routes
+  wglane preset list    named bundles from config.toml; `preset apply NAME` connects
   wglane doctor         check prerequisites and print fixes
   wglane config show    saved settings in effect, and where each came from
 
@@ -74,6 +75,7 @@ pub(crate) enum Command {
     Status(cmd::status::Args),
     Servers(cmd::servers::Args),
     Ls(cmd::ls::Args),
+    Preset(cmd::preset::Args),
     Gen(cmd::gen_conf::Args),
     Doctor(cmd::doctor::Args),
     Config(cmd::config::Args),

@@ -1,0 +1,26 @@
+---
+source: crates/wglane-cli/src/cmd/preset.rs
+expression: "show(&s, \"work\", Some(\"work\"), Some(&cur), true).unwrap()"
+---
+{
+  "active": true,
+  "changes": [
+    "country  ZA -> DE",
+    "city  - -> Berlin",
+    "bypass_extra  +2 routes"
+  ],
+  "connected": true,
+  "key": 1,
+  "label": "Office exit",
+  "name": "work",
+  "request": {
+    "bypass_extra": [
+      "203.0.113.0/24",
+      "203.0.113.9/32",
+      "203.0.113.10/32"
+    ],
+    "city": "Berlin",
+    "country": "DE",
+    "pick": "least-load"
+  }
+}

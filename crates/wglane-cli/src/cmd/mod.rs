@@ -8,6 +8,7 @@ pub(crate) mod down;
 pub(crate) mod gen_conf;
 pub(crate) mod install_helper;
 pub(crate) mod ls;
+pub(crate) mod preset;
 pub(crate) mod servers;
 pub(crate) mod status;
 pub(crate) mod tui;

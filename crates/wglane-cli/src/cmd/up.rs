@@ -11,7 +11,7 @@ use wglane_core::{
     BypassSet, City, CountryCode, Error, MAX_BYPASS, Overrides, generate_config, is_stale,
     render_wg_conf,
 };
-use wglane_macos::{HelperClient, SystemRunner, TailscaleBypass};
+use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
 use wglane_nord::NordApi;
 
 use crate::context::Context;
@@ -28,6 +28,13 @@ country regenerates the config.
 If the config for COUNTRY is missing or older than 7 days it is regenerated
 first (no separate `gen` step). An existing wglane tunnel is brought down.
 
+With --preset NAME the request comes from [presets.NAME] in config.toml
+(`wglane preset list`); the preset's bypass_extra is added to the top-level
+one. Precedence for what to connect to: explicit COUNTRY and --city, then the
+preset, then WGLANE_COUNTRY, then config.toml. A COUNTRY other than the
+preset's drops the preset's city. Presets are applied the same way by
+`wglane preset apply NAME`; the active one is shown by `wglane status`.
+
 Why Tailscale breaks, and what wglane does:
   A full tunnel (AllowedIPs 0.0.0.0/0) also captures Tailscale's underlay:
   the control server and DERP relays. netcheck then reports UDP false and the
@@ -41,6 +48,8 @@ Examples:
   wglane up us          case does not matter
   wglane up             use default_country from config.toml (or WGLANE_COUNTRY)
   wglane up US --city \"New York\"
+  wglane up --preset work         apply [presets.work] from config.toml
+  wglane up --preset work FR      the preset, but exit in France
   wglane -v up DE       show each step"
 )]
 pub(crate) struct Args {
@@ -52,55 +61,169 @@ pub(crate) struct Args {
     /// Default: `default_city` from `config.toml`, for the default country.
     #[arg(long, value_name = "NAME")]
     pub(crate) city: Option<String>,
+
+    /// Connect with a preset from `[presets.NAME]` in `config.toml`. An
+    /// explicit COUNTRY or --city overrides the preset's.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) preset: Option<String>,
 }
 
-pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
-    let flags = Overrides {
-        country: args.country,
-        ..Overrides::default()
-    };
-    let settings = ctx.settings(flags)?;
-    let cc = settings.default_country.value.ok_or_else(|| {
+/// What `up` will do, from the arguments and the saved settings.
+#[derive(Debug)]
+pub(crate) struct Plan {
+    cc: CountryCode,
+    /// City name or identifier, not yet checked against the network.
+    city: Option<String>,
+    /// Config `bypass_extra` plus the preset's.
+    bypass: BypassSet,
+    preset: Option<String>,
+}
+
+/// Precedence: COUNTRY/--city > preset > `WGLANE_COUNTRY` > config file.
+pub(crate) fn plan(ctx: &Context, args: &Args) -> Result<Plan> {
+    let settings = ctx.settings(Overrides::default())?;
+    let preset = args
+        .preset
+        .as_deref()
+        .map(|n| {
+            settings.preset(n).ok_or_else(|| {
+                let names: Vec<_> = settings
+                    .presets
+                    .value
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect();
+                eyre!(
+                    "unknown preset {n:?}: {} (see `wglane preset list`)",
+                    if names.is_empty() {
+                        "none defined in config.toml".to_owned()
+                    } else {
+                        format!("defined: {}", names.join(", "))
+                    }
+                )
+            })
+        })
+        .transpose()?;
+    let mut req = preset.cloned().unwrap_or_default().resolve(&settings);
+    if let Some(c) = args.country {
+        // A city belongs to its country: keep it only if the preset itself names this one.
+        if preset.is_none_or(|p| p.country != Some(c)) {
+            req.city = None;
+        }
+        req.country = Some(c);
+    }
+    if args.city.is_some() {
+        req.city.clone_from(&args.city);
+    }
+    let cc = req.country.ok_or_else(|| {
         eyre!(
             "no country given: run `wglane up ZA`, or set default_country in {} (see `wglane config init`)",
             ctx.config_file().display()
         )
     })?;
-    // default_city belongs to the default country; `up DE` must not trip over it.
-    let query = args.city.clone().or_else(|| {
-        settings
-            .default_city
-            .value
-            .clone()
-            .filter(|_| args.country.is_none())
-    });
-    let city = query
-        .as_deref()
-        .map(|q| crate::cmd::servers::resolve_city(&NordApi::new(), cc, q))
-        .transpose()?;
-    println!("{}", connect_real(ctx, cc, city.as_ref())?.summary(cc));
+    Ok(Plan {
+        cc,
+        city: req.city,
+        bypass: req.bypass_extra.iter().copied().collect(),
+        preset: args.preset.clone(),
+    })
+}
+
+pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
+    let plan = plan(ctx, args)?;
+    let cc = plan.cc;
+    let helper = HelperClient::new(SystemRunner);
+    let done = connect_target(
+        ctx,
+        &helper,
+        &helper,
+        &TailscaleBypass::new(SystemRunner),
+        &NordApi::new(),
+        &ctx.token_source(),
+        plan,
+    )?;
+    println!("{}", done.summary(cc));
     Ok(())
 }
 
-/// `up` against the real adapters. Prints nothing, so the TUI can call it.
+/// `up` against real adapters. Prints nothing, so the TUI can call it.
+#[cfg(feature = "tui")]
 pub(crate) fn connect_real(
     ctx: &Context,
     cc: CountryCode,
     city: Option<&City>,
 ) -> Result<Connected> {
     let helper = HelperClient::new(SystemRunner);
-    let tailscale = TailscaleBypass::new(SystemRunner);
-    let static_routes = ctx.static_bypass()?;
-    connect_recorded(
+    connect_with(
         ctx,
         &helper,
         &helper,
-        &[&tailscale, &static_routes],
+        &TailscaleBypass::new(SystemRunner),
         &NordApi::new(),
         &ctx.token_source(),
+        (cc, city),
+        &ctx.static_bypass()?,
+        None,
+    )
+}
+
+/// Resolves the plan's city (the only network check of a preset's city, so
+/// it happens before any tunnel is touched), then connects.
+pub(crate) fn connect_target<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
+    ctx: &Context,
+    tunnel: &T,
+    routes: &R,
+    tailscale: &dyn BypassProvider,
+    catalog: &C,
+    token: &S,
+    plan: Plan,
+) -> Result<Connected> {
+    let city = plan
+        .city
+        .as_deref()
+        .map(|q| crate::cmd::servers::resolve_city(catalog, plan.cc, q))
+        .transpose()?;
+    connect_with(
+        ctx,
+        tunnel,
+        routes,
+        tailscale,
+        catalog,
+        token,
+        (plan.cc, city.as_ref()),
+        &StaticBypass(plan.bypass),
+        plan.preset.as_deref(),
+    )
+}
+
+/// `connect_recorded`, then notes which preset (if any) the connection matches.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "ports plus the target; a struct for two callers would only move the list"
+)]
+fn connect_with<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
+    ctx: &Context,
+    tunnel: &T,
+    routes: &R,
+    tailscale: &dyn BypassProvider,
+    catalog: &C,
+    token: &S,
+    (cc, city): (CountryCode, Option<&City>),
+    extra: &StaticBypass,
+    hint: Option<&str>,
+) -> Result<Connected> {
+    let done = connect_recorded(
+        ctx,
+        tunnel,
+        routes,
+        &[tailscale, extra],
+        catalog,
+        token,
         cc,
         city,
-    )
+    )?;
+    crate::cmd::preset::settle(ctx, hint, cc, city.map(|c| c.name.as_str()), &extra.0)?;
+    Ok(done)
 }
 
 /// The helper takes at most [`MAX_BYPASS`] routes; say which setting to trim.

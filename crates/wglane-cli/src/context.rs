@@ -140,6 +140,30 @@ impl Context {
         Ok(fs::write(self.city_record(tunnel), body)?)
     }
 
+    fn preset_record(&self) -> PathBuf {
+        self.config_dir.join("active-preset")
+    }
+
+    /// Name of the preset the current connection was last applied from, as
+    /// noted by `up`/`preset apply` (user-level state beside `<cc>.city`).
+    /// `None` when none. It does not check that the tunnel is still up or the
+    /// preset still exists; see `cmd::preset::active_name` for that.
+    pub(crate) fn recorded_preset(&self) -> Option<String> {
+        let text = fs::read_to_string(self.preset_record()).ok()?;
+        Some(text.trim().to_owned()).filter(|n| !n.is_empty())
+    }
+
+    /// Notes the active preset; `None` clears the note.
+    pub(crate) fn record_preset(&self, name: Option<&str>) -> Result<()> {
+        match name {
+            Some(n) => Ok(fs::write(self.preset_record(), format!("{n}\n"))?),
+            None => match fs::remove_file(self.preset_record()) {
+                Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
+                _ => Ok(()),
+            },
+        }
+    }
+
     pub(crate) fn clear_routes_record(&self) -> Result<()> {
         match fs::remove_file(self.routes_record()) {
             Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
@@ -183,6 +207,18 @@ mod tests {
         c.clear_routes_record().unwrap();
         c.clear_routes_record().unwrap();
         assert_eq!(c.recorded_routes(), 0);
+    }
+
+    #[test]
+    fn preset_record_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = ctx(dir.path());
+        assert_eq!(c.recorded_preset(), None);
+        c.record_preset(Some("work")).unwrap();
+        assert_eq!(c.recorded_preset().as_deref(), Some("work"));
+        c.record_preset(None).unwrap();
+        c.record_preset(None).unwrap();
+        assert_eq!(c.recorded_preset(), None);
     }
 
     #[test]
