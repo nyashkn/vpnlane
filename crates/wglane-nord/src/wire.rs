@@ -5,7 +5,7 @@
 //! API changes do not break us, missing fields surface as `Error::Api`.
 
 use serde::Deserialize;
-use wglane_core::{Country, Error, PrivateKey, PublicKey, Result, Server};
+use wglane_core::{Country, Error, ExitInsights, PrivateKey, PublicKey, Result, Server};
 
 /// `GET /v1/servers/countries` element.
 #[derive(Debug, Deserialize)]
@@ -25,6 +25,10 @@ pub(crate) struct WireCredentials {
 #[derive(Debug, Deserialize)]
 pub(crate) struct WireInsights {
     pub(crate) ip: std::net::IpAddr,
+    #[serde(default)]
+    pub(crate) country_code: Option<String>,
+    #[serde(default)]
+    pub(crate) protected: Option<bool>,
 }
 
 /// `GET /v1/servers/recommendations` element.
@@ -114,10 +118,14 @@ pub(crate) fn parse_private_key(json: &str) -> Result<PrivateKey> {
     Ok(PrivateKey::new(c.nordlynx_private_key))
 }
 
-/// Insights -> our exit IP.
-pub(crate) fn parse_exit_ip(json: &str) -> Result<std::net::IpAddr> {
+/// Insights -> the few fields we show. City, ISP and coordinates are dropped here.
+pub(crate) fn parse_insights(json: &str) -> Result<ExitInsights> {
     let i: WireInsights = serde_json::from_str(json).map_err(|e| schema_drift(&e))?;
-    Ok(i.ip)
+    Ok(ExitInsights {
+        ip: i.ip,
+        country: i.country_code.and_then(|c| c.parse().ok()),
+        protected: i.protected,
+    })
 }
 
 fn schema_drift(e: &serde_json::Error) -> Error {
@@ -138,8 +146,16 @@ mod tests {
 
     #[test]
     fn insights_fixture() {
-        let ip = parse_exit_ip(include_str!("../fixtures/insights.json")).unwrap();
-        assert_eq!(ip.to_string(), "198.51.100.7");
+        let i = parse_insights(include_str!("../fixtures/insights.json")).unwrap();
+        assert_eq!(i.ip.to_string(), "198.51.100.7");
+        assert_eq!(i.country.map(|c| c.to_string()), Some("ZA".to_owned()));
+        assert_eq!(i.protected, Some(true));
+    }
+
+    #[test]
+    fn insights_tolerates_missing_and_bad_optional_fields() {
+        let i = parse_insights(r#"{"ip":"198.51.100.7","country_code":"???"}"#).unwrap();
+        assert_eq!((i.country, i.protected), (None, None));
     }
 
     #[test]

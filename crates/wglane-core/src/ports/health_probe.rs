@@ -1,11 +1,10 @@
-use std::net::IpAddr;
+use crate::{ExitInsights, Result, TailnetHealth};
 
-use crate::{Result, TailnetHealth};
-
-/// Asks the outside world which IP we exit from (provider API).
+/// Asks the provider how it sees our public connection. Sends no credentials.
 pub trait ExitIpProbe {
-    /// Our public IP as seen by the provider.
-    fn exit_ip(&self) -> Result<IpAddr>;
+    /// Our public IP, its country and the provider's `protected` verdict.
+    /// Fails on timeout or when offline; callers treat that as "unknown".
+    fn exit(&self) -> Result<ExitInsights>;
 }
 
 /// Checks the tailnet still works with the VPN up.

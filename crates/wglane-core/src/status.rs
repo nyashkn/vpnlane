@@ -2,6 +2,8 @@ use std::net::IpAddr;
 
 use serde::Serialize;
 
+use crate::CountryCode;
+
 /// Snapshot shown by `wglane status` (and `--json`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct TunnelStatus {
@@ -9,10 +11,26 @@ pub struct TunnelStatus {
     pub active: Vec<String>,
     /// Public IP the internet sees, if it could be determined.
     pub exit_ip: Option<IpAddr>,
+    /// Country Nord says the exit IP is in, if it said.
+    pub exit_country: Option<CountryCode>,
+    /// Nord's verdict on whether this connection is protected; `None` when the
+    /// lookup failed or Nord did not say.
+    pub protected: Option<bool>,
     /// Whether the tailnet still works.
     pub tailnet: TailnetHealth,
     /// Number of bypass routes installed.
     pub bypass_routes: usize,
+}
+
+/// What Nord's insights endpoint says about our public connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExitInsights {
+    /// Public IP the internet sees.
+    pub ip: IpAddr,
+    /// Country of that IP, if Nord gave a valid code.
+    pub country: Option<CountryCode>,
+    /// Nord's `protected` flag, if present.
+    pub protected: Option<bool>,
 }
 
 /// Result of probing the tailnet.

@@ -1,15 +1,27 @@
 use std::net::IpAddr;
 
 use crate::ports::{ExitIpProbe, TailnetProbe};
-use crate::{Result, TailnetHealth};
+use crate::{ExitInsights, Result, TailnetHealth};
 
-/// [`ExitIpProbe`] with a fixed IP.
+/// [`ExitIpProbe`] with a fixed answer; `None` simulates a failed lookup.
 #[derive(Clone, Copy, Debug)]
-pub struct FakeExitIp(pub IpAddr);
+pub struct FakeExitIp(pub Option<ExitInsights>);
+
+impl FakeExitIp {
+    /// Protected exit at `ip` with no country.
+    pub fn at(ip: IpAddr) -> Self {
+        Self(Some(ExitInsights {
+            ip,
+            country: None,
+            protected: Some(true),
+        }))
+    }
+}
 
 impl ExitIpProbe for FakeExitIp {
-    fn exit_ip(&self) -> Result<IpAddr> {
-        Ok(self.0)
+    fn exit(&self) -> Result<ExitInsights> {
+        self.0
+            .ok_or_else(|| crate::Error::Api("fake: lookup failed".into()))
     }
 }
 

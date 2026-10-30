@@ -63,7 +63,7 @@ mod e2e {
         let status = || {
             status::gather(
                 &tunnel,
-                &FakeExitIp("192.0.2.7".parse().unwrap()),
+                &FakeExitIp::at("192.0.2.7".parse().unwrap()),
                 &FakeTailnet(TailnetHealth::NotInstalled),
                 ctx.recorded_routes(),
             )
