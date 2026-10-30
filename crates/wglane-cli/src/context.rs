@@ -83,7 +83,7 @@ impl Context {
         if let Some(line) = deprecation_line(&eff.deprecated)
             && !DEPRECATION_SHOWN.swap(true, Ordering::Relaxed)
         {
-            eprintln!("{line}");
+            warn_user(&line);
         }
         Ok(eff)
     }
@@ -95,9 +95,9 @@ impl Context {
         let last = match self.load_state() {
             Ok(s) => s.last,
             Err(e) => {
-                eprintln!(
+                warn_user(&format!(
                     "warning: {e}; using the top-level bypass_extra, any preset routes are not re-applied"
-                );
+                ));
                 None
             }
         };
@@ -347,7 +347,25 @@ impl Context {
 /// warning, not a failed command: the tunnel is up either way.
 pub(crate) fn note(what: &str, result: Result<()>) {
     if let Err(e) = result {
-        eprintln!("warning: {what}: {e}");
+        warn_user(&format!("warning: {what}: {e}"));
+    }
+}
+
+/// Set while the TUI holds the screen: stderr would paint over it.
+static SCREEN_TAKEN: AtomicBool = AtomicBool::new(false);
+
+/// Marks whether the terminal belongs to the TUI (warnings then go to the log).
+#[cfg(feature = "tui")]
+pub(crate) fn set_screen_taken(taken: bool) {
+    SCREEN_TAKEN.store(taken, Ordering::Relaxed);
+}
+
+/// A warning for the user: stderr, or the log while the TUI is up.
+fn warn_user(line: &str) {
+    if SCREEN_TAKEN.load(Ordering::Relaxed) {
+        tracing::warn!("{line}");
+    } else {
+        eprintln!("{line}");
     }
 }
 
