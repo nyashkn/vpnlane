@@ -22,7 +22,7 @@ mod watcher;
 pub use bypass::{StaticBypass, TailscaleBypass};
 pub use command::{CommandOutput, CommandRunner, SystemRunner};
 pub use conf_store::ConfStore;
-pub use helper::{HELPER_PATH, HelperClient, HelperVerb, STATE_DIR, helper_main};
+pub use helper::{HELPER_PATH, HelperClient, HelperVerb, STATE_DIR, TOOL_DIR, helper_main};
 pub use privilege::{SUDOERS_PATH, install_helper, render_sudoers_rule, uninstall_helper};
 pub use probe::TailscalePing;
 pub use routes::RouteTable;

@@ -16,6 +16,7 @@ use wglane_core::{
 };
 use zeroize::Zeroizing;
 
+use crate::privilege::trusted_tool;
 use crate::routes::is_bad_bypass;
 use crate::{CommandOutput, CommandRunner, RouteTable, WgQuick};
 
@@ -27,9 +28,17 @@ pub const HELPER_PATH: &str = "/usr/local/libexec/wglane-helper";
 /// and its bypass-route record. Nothing in it is ever taken from the caller.
 pub const STATE_DIR: &str = "/var/db/wglane";
 
+/// Root-owned copies of `bash`, `wg-quick`, `wg` and `wireguard-go`, put there
+/// by `install-helper`. Homebrew's own copies are user-writable, so the helper
+/// never runs, sources or searches them.
+pub const TOOL_DIR: &str = "/usr/local/libexec/wglane/bin";
+/// What `install-helper` copies into [`TOOL_DIR`]: wg-quick needs bash 4+.
+pub(crate) const TOOLS: [&str; 4] = ["bash", "wg-quick", "wg", "wireguard-go"];
+
 const SUDO: &str = "/usr/bin/sudo";
 /// The only `PATH` programs run by the helper see; the caller's is discarded.
-const ROOT_PATH: &str = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+/// [`TOOL_DIR`] first, then system dirs only.
+const ROOT_PATH: &str = "/usr/local/libexec/wglane/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 const BYPASS_STATE: &str = "bypass.json";
 /// A rendered config is ~300 bytes; anything near this is not one.
 const MAX_STDIN: usize = 1024;
@@ -581,48 +590,50 @@ fn write_private(path: &Path, body: &[u8]) -> Result<()> {
     fs::rename(&tmp, path).map_err(|e| Error::io(ctx("installing"), e))
 }
 
-/// Runs only the few programs the helper needs, by absolute path, with a
-/// fixed `PATH` and nothing else in the environment. Without this, the
-/// caller's `PATH` would choose which `wg-quick` runs as root.
+/// Runs only the few programs the helper needs, with a fixed `PATH` and
+/// nothing else in the environment. `wg-quick` and its `bash` come only from
+/// [`TOOL_DIR`], and only if the file and every ancestor is root-owned and not
+/// group/world-writable at the moment of the call.
 struct RootRunner;
 
 impl RootRunner {
-    fn resolve(program: &str, exists: impl Fn(&Path) -> bool) -> Result<PathBuf> {
-        let candidates: &[&str] = match program {
-            "wg-quick" => &["/opt/homebrew/bin/wg-quick", "/usr/local/bin/wg-quick"],
-            "route" => &["/sbin/route"],
-            "netstat" => &["/usr/sbin/netstat"],
-            other => {
-                return Err(Error::Command {
-                    program: other.to_owned(),
-                    status: "refused".into(),
-                    stderr: "not on the helper's program allowlist".into(),
-                });
-            }
-        };
-        candidates
-            .iter()
-            .map(Path::new)
-            .find(|p| exists(p))
-            .map(Path::to_path_buf)
-            .ok_or_else(|| {
-                Error::io(
-                    format!("finding `{program}` (brew install wireguard-tools?)"),
-                    io::ErrorKind::NotFound.into(),
-                )
-            })
+    /// The argv prefix (program, then fixed leading args) for `program`.
+    /// `trust` turns a candidate path into a verified one or refuses it.
+    fn resolve(
+        program: &str,
+        tool_dir: &Path,
+        trust: impl Fn(&Path) -> Result<PathBuf>,
+    ) -> Result<Vec<PathBuf>> {
+        match program {
+            // Explicit `bash wg-quick` so the script's `#!/usr/bin/env bash` is never consulted.
+            "wg-quick" => ["bash", "wg-quick"]
+                .iter()
+                .map(|t| trust(&tool_dir.join(t)))
+                .collect(),
+            "route" => Ok(vec!["/sbin/route".into()]),
+            "netstat" => Ok(vec!["/usr/sbin/netstat".into()]),
+            other => Err(Error::Command {
+                program: other.to_owned(),
+                status: "refused".into(),
+                stderr: "not on the helper's program allowlist".into(),
+            }),
+        }
     }
 }
 
 impl CommandRunner for RootRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<CommandOutput> {
-        let path = Self::resolve(program, Path::exists)?;
-        let out = Command::new(&path)
+        let tool_dir = Path::new(TOOL_DIR);
+        let prog = Self::resolve(program, tool_dir, |p| {
+            trusted_tool(p, tool_dir, Path::new("/"), 0)
+        })?;
+        let out = Command::new(&prog[0])
+            .args(&prog[1..])
             .args(args)
             .env_clear()
             .env("PATH", ROOT_PATH)
             .output()
-            .map_err(|e| Error::io(format!("running `{}`", path.display()), e))?;
+            .map_err(|e| Error::io(format!("running `{}`", prog[0].display()), e))?;
         Ok(CommandOutput {
             code: out.status.code(),
             stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
@@ -1027,25 +1038,46 @@ mod tests {
     }
 
     #[test]
-    fn root_runner_resolves_only_allowlisted_programs() {
-        let all = |_: &Path| true;
-        let none = |_: &Path| false;
+    fn root_runner_resolves_wg_quick_only_inside_the_tool_dir() {
+        let dir = Path::new(TOOL_DIR);
+        let trust = |p: &Path| Ok(p.to_path_buf());
         assert_eq!(
-            RootRunner::resolve("route", all).unwrap(),
-            Path::new("/sbin/route")
+            RootRunner::resolve("route", dir, trust).unwrap(),
+            [Path::new("/sbin/route")]
         );
         assert_eq!(
-            RootRunner::resolve("wg-quick", all).unwrap(),
-            Path::new("/opt/homebrew/bin/wg-quick")
+            RootRunner::resolve("wg-quick", dir, trust).unwrap(),
+            [
+                Path::new("/usr/local/libexec/wglane/bin/bash"),
+                Path::new("/usr/local/libexec/wglane/bin/wg-quick")
+            ]
         );
-        assert_eq!(
-            RootRunner::resolve("wg-quick", |p| p.starts_with("/usr/local")).unwrap(),
-            Path::new("/usr/local/bin/wg-quick")
-        );
-        assert!(RootRunner::resolve("wg-quick", none).is_err());
+        // A refusal by the trust check is final: no fallback to another location.
+        let refuse = |p: &Path| {
+            Err(Error::io(
+                format!("untrusted {}", p.display()),
+                io::ErrorKind::PermissionDenied.into(),
+            ))
+        };
+        assert!(RootRunner::resolve("wg-quick", dir, refuse).is_err());
         for bad in ["sh", "/bin/sh", "./wg-quick", "wg-quick ", "rm", "bash"] {
-            assert!(RootRunner::resolve(bad, all).is_err(), "resolved {bad:?}");
+            assert!(
+                RootRunner::resolve(bad, dir, trust).is_err(),
+                "resolved {bad:?}"
+            );
         }
+    }
+
+    #[test]
+    fn root_path_has_no_user_writable_entries() {
+        assert!(ROOT_PATH.starts_with(TOOL_DIR));
+        for entry in ROOT_PATH.split(':').skip(1) {
+            assert!(
+                ["/usr/bin", "/bin", "/usr/sbin", "/sbin"].contains(&entry),
+                "{entry}"
+            );
+        }
+        assert!(!ROOT_PATH.contains("homebrew") && !ROOT_PATH.contains("/usr/local/bin"));
     }
 
     // ---- client ----

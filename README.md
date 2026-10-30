@@ -62,7 +62,12 @@ the WireGuard config itself from three validated fields, refuses bypass routes
 unless the gateway is the real physical gateway, and keeps its state in a
 root-only directory (`/var/db/wglane`). Anything that can run commands as your
 user can use those three verbs, so treat the helper as a capability of your
-account, not as isolation from it. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+account, not as isolation from it. Root never runs Homebrew's user-writable
+`wg-quick`: `install-helper` also copies `bash`, `wg-quick`, `wg` and
+`wireguard-go` into root-owned `/usr/local/libexec/wglane/bin`, and the helper
+refuses to run them unless each file and every parent directory is root-owned
+and not group/other-writable. After upgrading `wireguard-tools` or `bash`,
+re-run `sudo wglane install-helper`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Development
 
