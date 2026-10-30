@@ -48,10 +48,11 @@ pub(crate) fn disconnect_real(ctx: &Context) -> Result<Disconnected> {
     disconnect_recorded(ctx, &HelperClient::new(SystemRunner))
 }
 
-/// `disconnect` plus clearing the route-count record `status` reads.
+/// `disconnect` plus clearing the route-count and active-preset records.
 pub(crate) fn disconnect_recorded<T: Tunnel>(ctx: &Context, tunnel: &T) -> Result<Disconnected> {
     let done = disconnect(tunnel, ctx.conf_store().dir())?;
     ctx.clear_routes_record()?;
+    ctx.record_preset(None)?;
     Ok(done)
 }
 

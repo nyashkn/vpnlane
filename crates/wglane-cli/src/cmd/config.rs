@@ -130,6 +130,29 @@ fn show(e: &Effective, json: bool) -> Result<String> {
         format!("{:?}", e.tui.warn_ratio.value),
         &e.tui.warn_ratio.source,
     );
+    let names = e.presets.value.iter().map(|p| p.name.as_str());
+    let names = names.collect::<Vec<_>>().join(",");
+    row(
+        "presets",
+        if names.is_empty() {
+            "(none)".to_owned()
+        } else {
+            names
+        },
+        &e.presets.source,
+    );
+    for (i, p) in e.presets.value.iter().enumerate() {
+        let key = if i < wglane_core::KEYED_PRESETS {
+            (i + 1).to_string()
+        } else {
+            "-".to_owned()
+        };
+        row(
+            &format!("  {key} {}", p.name),
+            p.preset.summary(),
+            &e.presets.source,
+        );
+    }
     Ok(out.trim_end().to_owned())
 }
 
@@ -156,7 +179,8 @@ mod tests {
             exit_ip_check: None,
         };
         let file = "default_country = \"DE\"\nexit_ip_check = false\npick = \"fastest\"\n\
-                    bypass_extra = [\"203.0.113.0/24\"]\n[tui]\nwarn_ratio = 2.0\n";
+                    bypass_extra = [\"203.0.113.0/24\"]\n[tui]\nwarn_ratio = 2.0\n\
+                    [presets.work]\ncountry = \"DE\"\ncity = \"Berlin\"\n[presets.home]\npick = \"fastest\"\n";
         insta::assert_snapshot!("file_and_env", show(&eff(file, env), false).unwrap());
     }
 

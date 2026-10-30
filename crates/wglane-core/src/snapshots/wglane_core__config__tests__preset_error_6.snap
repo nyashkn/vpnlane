@@ -1,0 +1,9 @@
+---
+source: crates/wglane-core/src/config.rs
+expression: err(text)
+---
+TOML parse error at line 2, column 8
+  |
+2 | pick = "slowest"
+  |        ^^^^^^^^^
+unknown variant `slowest`, expected `least-load` or `fastest`

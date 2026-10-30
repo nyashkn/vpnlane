@@ -9,6 +9,7 @@ mod country;
 mod error;
 mod generate;
 pub mod ports;
+mod preset;
 mod rank;
 mod render;
 mod secret;
@@ -27,6 +28,10 @@ pub use config::{
 pub use country::{City, Country, CountryCode, fold};
 pub use error::{Error, Result};
 pub use generate::generate_config;
+pub use preset::{
+    ActiveState, ChangeLine, EffectiveRequest, KEYED_PRESETS, MAX_PRESET_LABEL, MAX_PRESET_NAME,
+    NamedPreset, Preset, describe_change,
+};
 pub use rank::rank_by_load;
 pub use render::render_wg_conf;
 pub use secret::{PrivateKey, PublicKey, Token};

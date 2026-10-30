@@ -10,3 +10,6 @@ exit_ip_check          false            file
 tui.start_expanded     false            default
 tui.graph_samples      60               default
 tui.warn_ratio         2.0              file
+presets                home,work        file
+  1 home               fastest          file
+  2 work               DE, Berlin       file

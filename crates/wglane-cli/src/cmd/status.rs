@@ -29,6 +29,8 @@ With --json, prints one object for scripts and menu-bar plugins:
   protected      true | false | null (unknown)
   tailnet        {ok: bool, peer: string|null, ms: number|null}
   bypass_routes  number of bypass routes installed
+  preset         name of the preset the connection was applied from; present
+                 only while a tunnel is up and a preset is active
 Keys are stable; new keys may be added, none removed or renamed.",
     after_help = "\
 Examples:
@@ -57,7 +59,8 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
         ctx.recorded_routes(),
         ctx.settings(flags)?.exit_ip_check.value,
     );
-    println!("{}", render(&status, known, ctx.json)?);
+    let preset = ctx.recorded_preset().filter(|_| !status.active.is_empty());
+    println!("{}", render(&status, known, ctx.json, preset.as_deref())?);
     Ok(())
 }
 
@@ -96,7 +99,7 @@ fn connected(s: &TunnelStatus) -> Option<CountryCode> {
 }
 
 /// The documented `--json` shape; see `long_about`.
-fn report(s: &TunnelStatus, known: bool) -> serde_json::Value {
+fn report(s: &TunnelStatus, known: bool, preset: Option<&str>) -> serde_json::Value {
     let (ok, peer, ms) = match &s.tailnet {
         TailnetHealth::Reachable { peer, latency_ms } => {
             (true, Some(peer.as_str()), Some(*latency_ms))
@@ -108,14 +111,18 @@ fn report(s: &TunnelStatus, known: bool) -> serde_json::Value {
         (true, true) => "down",
         (true, false) => "up",
     };
-    serde_json::json!({
+    let mut v = serde_json::json!({
         "state": state,
         "country": connected(s),
         "exit_ip": s.exit_ip,
         "protected": s.protected,
         "tailnet": { "ok": ok, "peer": peer, "ms": ms },
         "bypass_routes": s.bypass_routes,
-    })
+    });
+    if let Some(p) = preset {
+        v["preset"] = p.into();
+    }
+    v
 }
 
 /// Leak warnings; only meaningful while a tunnel is up.
@@ -133,9 +140,9 @@ fn warnings(s: &TunnelStatus) -> Vec<String> {
     w
 }
 
-fn render(s: &TunnelStatus, known: bool, json: bool) -> Result<String> {
+fn render(s: &TunnelStatus, known: bool, json: bool, preset: Option<&str>) -> Result<String> {
     if json {
-        return Ok(serde_json::to_string_pretty(&report(s, known))?);
+        return Ok(serde_json::to_string_pretty(&report(s, known, preset))?);
     }
     let tunnel = if !known {
         "unknown: run wglane doctor".to_owned()
@@ -158,6 +165,9 @@ fn render(s: &TunnelStatus, known: bool, json: bool) -> Result<String> {
     };
     let mut out = String::new();
     let _ = writeln!(out, "tunnel         {tunnel}");
+    if let Some(p) = preset {
+        let _ = writeln!(out, "preset         {p}");
+    }
     let _ = writeln!(out, "exit ip        {exit_ip}");
     let _ = writeln!(out, "protected      {protected}");
     let _ = writeln!(out, "tailnet        {tailnet}");
@@ -197,8 +207,18 @@ mod tests {
 
     #[test]
     fn text_and_json_are_stable() {
-        insta::assert_snapshot!(render(&status(), true, false).unwrap());
-        insta::assert_snapshot!(render(&status(), true, true).unwrap());
+        insta::assert_snapshot!(render(&status(), true, false, None).unwrap());
+        insta::assert_snapshot!(render(&status(), true, true, None).unwrap());
+    }
+
+    #[test]
+    fn active_preset_is_an_additive_key() {
+        let s = status();
+        let json = render(&s, true, true, Some("work")).unwrap();
+        assert!(json.contains("\"preset\": \"work\""), "{json}");
+        assert!(!render(&s, true, true, None).unwrap().contains("preset"));
+        let text = render(&s, true, false, Some("work")).unwrap();
+        assert!(text.contains("preset         work"), "{text}");
     }
 
     #[test]
@@ -211,8 +231,8 @@ mod tests {
             tailnet: TailnetHealth::NotInstalled,
             bypass_routes: 0,
         };
-        insta::assert_snapshot!(render(&s, true, false).unwrap());
-        insta::assert_snapshot!(render(&s, true, true).unwrap());
+        insta::assert_snapshot!(render(&s, true, false, None).unwrap());
+        insta::assert_snapshot!(render(&s, true, true, None).unwrap());
     }
 
     #[test]
@@ -221,7 +241,7 @@ mod tests {
         assert_eq!(warnings(&s).len(), 0);
         s.protected = Some(false);
         s.exit_country = Some("DE".parse().unwrap());
-        insta::assert_snapshot!(render(&s, true, false).unwrap());
+        insta::assert_snapshot!(render(&s, true, false, None).unwrap());
         s.protected = None;
         s.exit_country = None;
         assert_eq!(warnings(&s).len(), 0);
@@ -241,7 +261,7 @@ mod tests {
         );
         assert_eq!((s.exit_ip, s.protected), (None, None));
         assert!(
-            render(&s, true, false)
+            render(&s, true, false, None)
                 .unwrap()
                 .contains("protected      unknown")
         );
@@ -282,7 +302,7 @@ mod tests {
             true,
         );
         assert!(!known);
-        let text = render(&s, known, false).unwrap();
+        let text = render(&s, known, false, None).unwrap();
         assert!(text.contains("unknown: run wglane doctor"), "{text}");
         assert!(!text.contains("none"), "{text}");
     }
