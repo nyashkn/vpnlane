@@ -69,21 +69,16 @@ mod e2e {
             )
         };
 
-        let done = up::connect(
+        let done = up::connect_recorded(
+            &ctx,
             &tunnel,
             &routes,
             &[&bypass],
+            &catalog,
+            &FakeToken(Some("tok".into())),
             za,
-            store.dir(),
-            store.age(za).unwrap(),
-            || {
-                up::regenerate(&catalog, &FakeToken(Some("tok".into())), za, |b| {
-                    Ok(store.write(za, b).unwrap())
-                })
-            },
         )
         .unwrap();
-        ctx.record_routes(done.routes).unwrap();
         assert!(
             done.summary(za)
                 .ends_with("config regenerated, 2 bypass routes")
@@ -92,9 +87,9 @@ mod e2e {
         let s = status();
         assert_eq!((s.active, s.bypass_routes), (vec!["za".to_owned()], 2));
 
-        let gone = down::disconnect(&tunnel, store.dir()).unwrap();
-        ctx.clear_routes_record().unwrap();
+        let gone = down::disconnect_recorded(&ctx, &tunnel).unwrap();
         assert_eq!(gone.summary(), "disconnected");
+        assert_eq!(ctx.recorded_routes(), 0, "down clears the route record");
         let s = status();
         assert_eq!((s.active, s.bypass_routes), (vec![], 0));
     }

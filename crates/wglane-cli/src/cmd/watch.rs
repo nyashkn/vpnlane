@@ -114,8 +114,40 @@ mod tests {
             [1, 1],
             "count recorded after each re-apply"
         );
+        assert_eq!(routes.apply_calls.get(), 2, "one apply per change");
         assert_eq!(routes.installed.borrow().len(), 1);
         assert_eq!(routes.installed.borrow()[0].1.to_string(), "192.168.1.1");
+    }
+
+    #[test]
+    fn failed_reapply_does_not_end_the_loop() {
+        let tunnel = FakeTunnel::default();
+        tunnel.up(Path::new("us.conf")).unwrap();
+        let routes = FakeRoutes::new("192.168.1.1".parse().unwrap());
+        routes.fail_applies.set(1);
+        let recorded = std::cell::RefCell::new(Vec::new());
+
+        let _ = watch_loop(
+            &mut FakeWatcher { changes: 2 },
+            &tunnel,
+            &routes,
+            &FakeBypassProvider(set()),
+            |n| {
+                recorded.borrow_mut().push(n);
+                Ok(())
+            },
+        );
+
+        assert_eq!(
+            routes.apply_calls.get(),
+            2,
+            "the change after the failure is handled"
+        );
+        assert_eq!(
+            *recorded.borrow(),
+            [1],
+            "only the successful apply is recorded"
+        );
     }
 
     #[test]

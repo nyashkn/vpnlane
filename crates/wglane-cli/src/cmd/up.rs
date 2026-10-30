@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use color_eyre::Result;
+use color_eyre::eyre::eyre;
 use wglane_core::ports::{BypassProvider, RouteBypass, ServerCatalog, TokenSource, Tunnel};
 use wglane_core::{BypassSet, CountryCode, generate_config, is_stale, render_wg_conf};
 use wglane_macos::{HelperClient, StaticBypass, SystemRunner, TailscaleBypass};
@@ -45,22 +46,39 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
 
 /// `up` against the real adapters. Prints nothing, so the TUI can call it.
 pub(crate) fn connect_real(ctx: &Context, cc: CountryCode) -> Result<Connected> {
-    let store = ctx.conf_store();
     let helper = HelperClient::new(SystemRunner);
     let tailscale = TailscaleBypass::new(SystemRunner);
     let static_routes = StaticBypass::default();
-    let done = connect(
+    connect_recorded(
+        ctx,
         &helper,
         &helper,
         &[&tailscale, &static_routes],
+        &NordApi::new(),
+        &ctx.token_source(),
+        cc,
+    )
+}
+
+/// `connect` plus the config store and the route-count record `status` reads.
+pub(crate) fn connect_recorded<T: Tunnel, R: RouteBypass, C: ServerCatalog, S: TokenSource>(
+    ctx: &Context,
+    tunnel: &T,
+    routes: &R,
+    providers: &[&dyn BypassProvider],
+    catalog: &C,
+    token: &S,
+    cc: CountryCode,
+) -> Result<Connected> {
+    let store = ctx.conf_store();
+    let done = connect(
+        tunnel,
+        routes,
+        providers,
         cc,
         store.dir(),
         store.age(cc)?,
-        || {
-            regenerate(&NordApi::new(), &ctx.token_source(), cc, |body| {
-                Ok(store.write(cc, body)?)
-            })
-        },
+        || regenerate(catalog, token, cc, |body| Ok(store.write(cc, body)?)),
     )?;
     ctx.record_routes(done.routes)?;
     Ok(done)
@@ -143,11 +161,25 @@ pub(crate) fn connect<T: Tunnel, R: RouteBypass>(
     if !already_up {
         tunnel.up(&conf)?;
     }
-    let mut set = BypassSet::new();
-    for p in providers {
-        set.merge(p.collect()?);
-    }
-    let routes = routes.apply(&set, gateway)?;
+    let applied = (|| {
+        let mut set = BypassSet::new();
+        for p in providers {
+            set.merge(p.collect()?);
+        }
+        routes.apply(&set, gateway)
+    })();
+    let routes = match applied {
+        Ok(n) => n,
+        Err(e) => {
+            // A full tunnel without its bypass routes kills the tailnet.
+            return Err(match tunnel.down(&conf) {
+                Ok(()) => eyre!("tunnel {name} was removed because bypass routes failed: {e}"),
+                Err(d) => {
+                    eyre!("bypass routes failed ({e}) and tunnel {name} could not be removed: {d}")
+                }
+            });
+        }
+    };
     Ok(Connected {
         regenerated,
         switched_from,
@@ -312,5 +344,28 @@ mod tests {
         ));
         assert_eq!(*rig.tunnel.up.borrow(), ["us"]);
         assert!(rig.routes.installed.borrow().is_empty());
+    }
+
+    #[test]
+    fn gateway_is_read_before_the_tunnel_comes_up() {
+        let rig = Rig::new(&[]);
+        let before: IpAddr = "192.0.2.254".parse().unwrap();
+        let gw = rig.routes.gateway.clone();
+        // Once the tunnel is up the default route is the tunnel.
+        rig.tunnel
+            .on_up
+            .borrow_mut()
+            .push(Box::new(move || gw.set("10.5.0.1".parse().unwrap())));
+        rig.up("ZA", FRESH, None).unwrap();
+        assert_eq!(rig.routes.installed.borrow()[0].1, before);
+    }
+
+    #[test]
+    fn failed_bypass_removes_the_tunnel() {
+        let rig = Rig::new(&[]);
+        rig.routes.fail_applies.set(1);
+        let err = rig.up("ZA", FRESH, None).unwrap_err().to_string();
+        assert!(err.contains("tunnel za was removed because bypass routes failed"));
+        assert!(rig.tunnel.up.borrow().is_empty());
     }
 }
