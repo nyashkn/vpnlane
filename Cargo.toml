@@ -25,6 +25,8 @@ color-eyre = "0.6"
 crossterm = "0.29"
 insta = "1.49"
 ipnet = { version = "2", features = ["serde"] }
+# Property tests only; no fork/timeout machinery.
+proptest = { version = "1.12", default-features = false, features = ["std"] }
 ratatui = "0.30"
 # Safe euid check for install-helper (no unsafe).
 rustix = { version = "1", default-features = false, features = ["process", "std"] }
