@@ -2,4 +2,8 @@
 source: crates/wglane-core/src/config.rs
 expression: err(text)
 ---
-line 3: presets.work.city "a/b": use 1 to 64 letters, digits, spaces, '-', ''' or '.'
+TOML parse error at line 2, column 12
+  |
+2 | location = "DE/Berlin/de1"
+  |            ^^^^^^^^^^^^^^^
+location "DE/Berlin/de1": CC/City/hostname is not supported yet; use CC or CC/City

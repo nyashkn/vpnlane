@@ -19,8 +19,10 @@ Saved settings live in <config dir>/config.toml (the directory that holds the
 token; override it with --config-dir or WGLANE_CONFIG_DIR). A missing file
 means the built-in defaults. Unknown keys are an error naming the key and line.
 
-Precedence for each value: CLI flag > environment > config file > default.
-The Nord token is never a config key.
+Precedence for each value: CLI flag > environment > config file > default
+(a preset sits in the file layer). The file is yours: wglane never writes to
+it; what it last applied is kept in state.json beside it. The Nord token is
+never a config key.
 
 Reference: docs/CONFIG.md.",
     after_help = "\
@@ -89,22 +91,9 @@ fn show(e: &Effective, json: bool) -> Result<String> {
     };
     let opt = |s: Option<String>| s.unwrap_or_else(|| "(unset)".to_owned());
     row(
-        "default_country",
-        opt(e.default_country.value.map(|c| c.to_string())),
-        &e.default_country.source,
-    );
-    let city_source = match (&e.default_city.value, e.default_country.value) {
-        (Some(_), cc) if e.default_city_for(cc).is_none() => format!(
-            "{} (inactive: belongs to default_country {})",
-            e.default_city.source,
-            opt(e.file_default_country.map(|c| c.to_string()))
-        ),
-        _ => e.default_city.source.to_string(),
-    };
-    row(
-        "default_city",
-        opt(e.default_city.value.clone()),
-        &city_source,
+        "location",
+        opt(e.location.value.as_ref().map(ToString::to_string)),
+        &e.location.source,
     );
     row("pick", e.pick.value.to_string(), &e.pick.source);
     let extra = &e.bypass_extra.value;
@@ -118,6 +107,7 @@ fn show(e: &Effective, json: bool) -> Result<String> {
             .join(",")
     };
     row("bypass_extra", v, &e.bypass_extra.source);
+    row("preset", opt(e.preset.value.clone()), &e.preset.source);
     row(
         "exit_ip_check",
         e.exit_ip_check.value.to_string(),
@@ -161,6 +151,12 @@ fn show(e: &Effective, json: bool) -> Result<String> {
             &e.presets.source,
         );
     }
+    if !e.deprecated.is_empty() {
+        out.push_str("\ndeprecated spellings in use (still work for this release):\n");
+        for d in &e.deprecated {
+            let _ = writeln!(out, "  {} -> {}", d.old, d.new);
+        }
+    }
     Ok(out.trim_end().to_owned())
 }
 
@@ -173,7 +169,7 @@ mod tests {
     fn eff(toml: &str, env: Overrides) -> Effective {
         FileConfig::parse(toml)
             .unwrap()
-            .resolve(Overrides::default(), env)
+            .resolve(&Overrides::default(), env)
     }
 
     #[test]
@@ -183,32 +179,37 @@ mod tests {
             show(&eff("", Overrides::default()), false).unwrap()
         );
         let env = Overrides {
-            country: Some("fr".parse().unwrap()),
-            exit_ip_check: None,
+            location: Some("fr".parse().unwrap()),
+            pick: Some(wglane_core::Pick::LeastLoad),
+            preset: Some("work".into()),
+            ..Overrides::default()
         };
-        let file = "default_country = \"DE\"\nexit_ip_check = false\npick = \"fastest\"\n\
+        let file = "location = \"DE\"\nexit_ip_check = false\npick = \"fastest\"\n\
                     bypass_extra = [\"203.0.113.0/24\"]\n[tui]\nwarn_ratio = 2.0\n\
-                    [presets.work]\ncountry = \"DE\"\ncity = \"Berlin\"\n[presets.home]\npick = \"fastest\"\n";
+                    [presets.work]\nlocation = \"DE/Berlin\"\n[presets.home]\npick = \"fastest\"\n";
         insta::assert_snapshot!("file_and_env", show(&eff(file, env), false).unwrap());
     }
 
     #[test]
-    fn default_city_is_inactive_for_another_country() {
-        let file = "default_country = \"US\"\ndefault_city = \"Chicago\"\n";
+    fn show_lists_deprecated_spellings_in_use() {
+        let file = "default_country = \"US\"\ndefault_city = \"Chicago\"\n\
+                    [presets.work]\ncountry = \"DE\"\n";
         let env = Overrides {
-            country: Some("de".parse().unwrap()),
-            exit_ip_check: None,
+            location: Some("de".parse().unwrap()),
+            deprecated: vec![wglane_core::Deprecation {
+                old: "WGLANE_COUNTRY".into(),
+                new: "WGLANE_LOCATION".into(),
+            }],
+            ..Overrides::default()
         };
-        let line = |e| {
-            show(&e, false)
+        insta::assert_snapshot!("deprecated", show(&eff(file, env), false).unwrap());
+        let json = show(&eff(file, Overrides::default()), true).unwrap();
+        assert!(json.contains("\"old\": \"default_country\""), "{json}");
+        assert!(
+            !show(&eff("location = \"US\"", Overrides::default()), false)
                 .unwrap()
-                .lines()
-                .find(|l| l.starts_with("default_city"))
-                .unwrap()
-                .to_owned()
-        };
-        assert!(line(eff(file, env)).contains("inactive: belongs to default_country US"));
-        assert!(!line(eff(file, Overrides::default())).contains("inactive"));
+                .contains("deprecated")
+        );
     }
 
     #[test]

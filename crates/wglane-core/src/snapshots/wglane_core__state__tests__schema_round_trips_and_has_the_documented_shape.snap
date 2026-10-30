@@ -1,0 +1,29 @@
+---
+source: crates/wglane-core/src/state.rs
+expression: json
+---
+{
+  "version": 1,
+  "connected": true,
+  "last": {
+    "location": "DE/Berlin",
+    "pick": "fastest",
+    "bypass_extra": [
+      "203.0.113.0/24"
+    ],
+    "preset": {
+      "name": "work",
+      "overridden": [
+        "location"
+      ]
+    },
+    "at": 1767225600
+  },
+  "bypass_routes": 3,
+  "confs": {
+    "de": {
+      "requested": "Berlin",
+      "picked": "Berlin"
+    }
+  }
+}

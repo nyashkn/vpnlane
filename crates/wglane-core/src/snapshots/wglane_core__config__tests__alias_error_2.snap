@@ -1,0 +1,5 @@
+---
+source: crates/wglane-core/src/config.rs
+expression: err(text)
+---
+line 3: presets.work.country is the old spelling of presets.work.location: set only presets.work.location

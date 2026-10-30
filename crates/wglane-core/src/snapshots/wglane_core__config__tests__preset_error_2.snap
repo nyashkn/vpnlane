@@ -2,4 +2,8 @@
 source: crates/wglane-core/src/config.rs
 expression: err(text)
 ---
-line 2: presets.work: city needs a country
+TOML parse error at line 2, column 12
+  |
+2 | location = "DE/a*b"
+  |            ^^^^^^^^
+location "DE/a*b": empty or invalid city

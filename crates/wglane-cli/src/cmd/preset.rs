@@ -6,8 +6,8 @@ use color_eyre::Result;
 use serde_json::json;
 use wglane_core::ports::Tunnel;
 use wglane_core::{
-    ActiveState, BypassSet, CountryCode, Effective, EffectiveRequest, KEYED_PRESETS, NamedPreset,
-    Overrides, describe_change,
+    ActiveState, CountryCode, Effective, KEYED_PRESETS, Location, NamedPreset, Overrides, Pick,
+    PresetUse, describe_change,
 };
 use wglane_macos::{HelperClient, SystemRunner};
 
@@ -18,23 +18,24 @@ use crate::context::Context;
 #[command(
     about = "List, inspect and apply presets (named bundles of settings)",
     long_about = "\
-A preset is a [presets.NAME] table in config.toml that bundles a connection
-request: country, city, pick and extra bypass CIDRs, plus a short label.
-Every key is optional; what a preset leaves out comes from the top-level
-settings (see docs/CONFIG.md). The first 9 presets (preset_order, then
-alphabetical) have a number key, shown by `list`; the TUI uses it too.
+A preset is a [presets.NAME] table in config.toml: an overlay of the top-level
+connection keys (location, pick, bypass_extra) plus a short label. Every key
+is optional and means what it means at the top level; scalars replace, and
+bypass_extra is added to the top-level list. The first 9 presets
+(preset_order, then alphabetical) have a number key, shown by `list`; the TUI
+uses it too.
 
-`apply` is `up` with that request: same code path, same flags and
-environment otherwise. The name of the last applied preset is kept in
-<config dir>/active-preset and cleared by `down` or by an `up` that no longer
-matches it (different country, city or bypass routes). `status` shows it.
+`apply` is `up --preset NAME`: same code path, same environment. The applied
+preset is recorded in <config dir>/state.json (never in config.toml), shown by
+`status` (as `NAME (location overridden)` when you named another place), and
+cleared by `down`.
 
 Only the shape of a preset's city is checked when the file is read; it is
 checked against Nord's list when you apply, and the error lists valid cities.",
     after_help = "\
 Examples:
   wglane preset list              numbered key, name, label, summary; * marks the active one
-  wglane preset show work         the request, and what applying it would change now
+  wglane preset show work         the resolved request, and what applying it would change now
   wglane preset apply work        connect (same as `wglane up --preset work`)
   wglane preset list --json
 
@@ -70,31 +71,33 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     match &args.action {
         Action::List => {
             let settings = ctx.settings(Overrides::default())?;
-            let active = active_name(ctx, &HelperClient::new(SystemRunner));
-            println!("{}", list(&settings, active.as_deref(), ctx.json)?);
+            let active = active_preset(ctx, &HelperClient::new(SystemRunner));
+            println!(
+                "{}",
+                list(
+                    &settings,
+                    active.as_ref().map(|p| p.name.as_str()),
+                    ctx.json
+                )?
+            );
         }
         Action::Show { name } => {
             let settings = ctx.settings(Overrides::default())?;
             let tunnel = HelperClient::new(SystemRunner);
-            let active = active_name(ctx, &tunnel);
-            let current = current_state(ctx, &tunnel, &settings);
+            let active = active_preset(ctx, &tunnel);
+            let current = current_state(ctx, &tunnel);
             println!(
                 "{}",
-                show(
-                    &settings,
-                    name,
-                    active.as_deref(),
-                    current.as_ref(),
-                    ctx.json
-                )?
+                show(&settings, name, active.as_ref(), current.as_ref(), ctx.json)?
             );
         }
         Action::Apply { name } => up::run(
             ctx,
             &up::Args {
-                country: None,
+                target: None,
                 city: None,
                 preset: Some(name.clone()),
+                pick: None,
                 fastest: false,
             },
         )?,
@@ -102,61 +105,35 @@ pub(crate) fn run(ctx: &Context, args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// The active preset, for the TUI header and `list`: the recorded name, if the
-/// preset still exists and a tunnel is up (or cannot be read).
-pub(crate) fn active_name<T: Tunnel>(ctx: &Context, tunnel: &T) -> Option<String> {
-    let name = ctx.recorded_preset()?;
+/// The active preset, for the TUI header, `list` and `status`: the one the
+/// live connection was applied from, with what was overridden. `None` when no
+/// preset was used, `down` has run, or the helper says no tunnel is up.
+pub(crate) fn active_preset<T: Tunnel>(ctx: &Context, tunnel: &T) -> Option<PresetUse> {
+    let preset = ctx.active_preset()?;
     match tunnel.active() {
         Ok(a) if a.is_empty() => None,
-        _ => Some(name),
+        _ => Some(preset),
     }
 }
 
-/// The connection as it is now; `None` when no tunnel is up. The city is the
-/// one asked for, as `up` recorded it.
-pub(crate) fn current_state<T: Tunnel>(
-    ctx: &Context,
-    tunnel: &T,
-    settings: &Effective,
-) -> Option<ActiveState> {
+/// The connection as it is now; `None` when no tunnel is up. Taken from the
+/// last request when it is for the tunnel's country, else just the country.
+pub(crate) fn current_state<T: Tunnel>(ctx: &Context, tunnel: &T) -> Option<ActiveState> {
     let cc: CountryCode = tunnel.active().ok()?.first()?.parse().ok()?;
-    let base = ctx
-        .recorded_preset()
-        .and_then(|n| settings.preset(&n).cloned())
-        .unwrap_or_default()
-        .resolve(settings);
-    Some(ActiveState {
-        country: Some(cc),
-        city: ctx.recorded_request(&cc.to_lowercase()),
-        ..base
-    })
-}
-
-/// After a connection: keep the active-preset note if the connection still
-/// matches that preset (the one just applied, else the recorded one), else clear it.
-pub(crate) fn settle(
-    ctx: &Context,
-    hint: Option<&str>,
-    cc: CountryCode,
-    city: Option<&str>,
-    bypass: &BypassSet,
-) -> Result<()> {
-    let settings = ctx.settings(Overrides::default())?;
-    let used = EffectiveRequest {
-        country: Some(cc),
-        city: city.map(Into::into),
-        pick: settings.pick.value,
-        bypass_extra: bypass.iter().copied().collect(),
-    };
-    let name = hint
-        .map(str::to_owned)
-        .or_else(|| ctx.recorded_preset())
-        .filter(|n| {
-            settings
-                .preset(n)
-                .is_some_and(|p| p.resolve(&settings).same_connection(&used))
-        });
-    ctx.record_preset(name.as_deref())
+    Some(
+        match ctx.last_request().filter(|l| l.location.country() == cc) {
+            Some(l) => ActiveState {
+                location: Some(l.location),
+                pick: l.pick,
+                bypass_extra: l.bypass_extra,
+            },
+            None => ActiveState {
+                location: Some(Location::country_only(cc)),
+                pick: Pick::default(),
+                bypass_extra: Vec::new(),
+            },
+        },
+    )
 }
 
 fn key_of(index: usize) -> Option<usize> {
@@ -214,7 +191,7 @@ fn list(settings: &Effective, active: Option<&str>, json: bool) -> Result<String
 fn show(
     settings: &Effective,
     name: &str,
-    active: Option<&str>,
+    active: Option<&PresetUse>,
     current: Option<&ActiveState>,
     json: bool,
 ) -> Result<String> {
@@ -235,18 +212,20 @@ fn show(
         ));
     };
     let preset = &settings.presets.value[index].preset;
-    let req = preset.resolve(settings);
+    let req = settings.resolved_presets().swap_remove(index).request;
     let changes: Vec<String> = describe_change(current, preset, settings)
         .iter()
         .map(ToString::to_string)
         .collect();
-    let is_active = active == Some(name);
+    let active = active.filter(|a| a.name == name);
+    let is_active = active.is_some();
     if json {
         return Ok(serde_json::to_string_pretty(&json!({
             "name": name,
             "key": key_of(index),
             "label": preset.label,
             "active": is_active,
+            "overridden": active.map(|a| &a.overridden),
             "request": req,
             "connected": current.is_some(),
             "changes": changes,
@@ -265,7 +244,14 @@ fn show(
     let _ = writeln!(
         out,
         "preset        {name}{}",
-        if is_active { " (active)" } else { "" }
+        active.map_or(String::new(), |a| format!(
+            " (active{})",
+            if a.overridden.is_empty() {
+                String::new()
+            } else {
+                format!(", {} overridden", a.overridden.join(", "))
+            }
+        ))
     );
     let _ = writeln!(
         out,
@@ -277,10 +263,9 @@ fn show(
     }
     let _ = writeln!(
         out,
-        "country       {}",
-        req.country.map_or("(unset)".to_owned(), |c| c.to_string())
+        "location      {}",
+        req.location.map_or("(unset)".to_owned(), |l| l.to_string())
     );
-    let _ = writeln!(out, "city          {}", req.city.as_deref().unwrap_or("-"));
     let _ = writeln!(out, "pick          {}", req.pick);
     let _ = writeln!(out, "bypass_extra  {nets}");
     let _ = writeln!(
@@ -305,20 +290,27 @@ mod tests {
     use wglane_core::testing::{
         FakeBypassProvider, FakeCatalog, FakeRoutes, FakeToken, FakeTunnel,
     };
-    use wglane_core::{City, Country, FileConfig, Pick, PublicKey, Server};
+    use wglane_core::{City, Country, FileConfig, PublicKey, Server};
 
     use super::*;
 
     const CFG: &str = "preset_order = [\"work\"]\nbypass_extra = [\"203.0.113.0/24\"]\n\
-        [presets.work]\nlabel = \"Office exit\"\ncountry = \"DE\"\ncity = \"Berlin\"\n\
+        [presets.work]\nlabel = \"Office exit\"\nlocation = \"DE/Berlin\"\n\
         bypass_extra = [\"203.0.113.9/32\", \"203.0.113.10/32\"]\n\
-        [presets.home]\ncountry = \"ZA\"\npick = \"fastest\"\n\
-        [presets.ghost]\ncountry = \"DE\"\ncity = \"Atlantis\"\n";
+        [presets.home]\nlocation = \"ZA\"\npick = \"fastest\"\n\
+        [presets.ghost]\nlocation = \"DE/Atlantis\"\n";
 
     fn settings() -> Effective {
         FileConfig::parse(CFG)
             .unwrap()
-            .resolve(Overrides::default(), Overrides::default())
+            .resolve(&Overrides::default(), Overrides::default())
+    }
+
+    fn use_of(name: &str, overridden: &[&str]) -> PresetUse {
+        PresetUse {
+            name: name.into(),
+            overridden: overridden.iter().map(|s| (*s).to_owned()).collect(),
+        }
     }
 
     #[test]
@@ -327,8 +319,7 @@ mod tests {
         insta::assert_snapshot!("list", list(&s, Some("home"), false).unwrap());
         insta::assert_snapshot!("list_json", list(&s, None, true).unwrap());
         let cur = ActiveState {
-            country: Some("ZA".parse().unwrap()),
-            city: None,
+            location: Some("ZA".parse().unwrap()),
             pick: Pick::LeastLoad,
             bypass_extra: vec!["203.0.113.0/24".parse().unwrap()],
         };
@@ -339,7 +330,18 @@ mod tests {
         insta::assert_snapshot!("show_down", show(&s, "home", None, None, false).unwrap());
         insta::assert_snapshot!(
             "show_json",
-            show(&s, "work", Some("work"), Some(&cur), true).unwrap()
+            show(&s, "work", Some(&use_of("work", &[])), Some(&cur), true).unwrap()
+        );
+        insta::assert_snapshot!(
+            "show_overridden",
+            show(
+                &s,
+                "work",
+                Some(&use_of("work", &["location"])),
+                Some(&cur),
+                false
+            )
+            .unwrap()
         );
         let e = show(&s, "nope", None, None, false).unwrap_err().to_string();
         assert_eq!(
@@ -348,7 +350,7 @@ mod tests {
         );
         assert!(
             list(
-                &FileConfig::default().resolve(Overrides::default(), Overrides::default()),
+                &FileConfig::default().resolve(&Overrides::default(), Overrides::default()),
                 None,
                 false
             )
@@ -391,10 +393,15 @@ mod tests {
             cities,
         };
         FakeCatalog {
-            countries: vec![country("DE", vec![berlin]), country("ZA", vec![jnb])],
+            countries: vec![
+                country("DE", vec![berlin]),
+                country("ZA", vec![jnb]),
+                country("FR", vec![]),
+            ],
             servers: [
                 (cc("DE"), vec![server("DE", "Berlin")]),
                 (cc("ZA"), vec![server("ZA", "Johannesburg")]),
+                (cc("FR"), vec![server("FR", "Paris")]),
             ]
             .into(),
             private_key: Some("priv".into()),
@@ -426,29 +433,47 @@ mod tests {
             }
         }
 
-        fn up(
-            &self,
-            country: Option<&str>,
-            city: Option<&str>,
-            preset: Option<&str>,
-        ) -> Result<up::Connected> {
-            let ctx = self.ctx();
-            let args = up::Args {
-                country: country.map(cc),
+        fn args(target: Option<&str>, city: Option<&str>, preset: Option<&str>) -> up::Args {
+            up::Args {
+                target: target.map(|t| t.parse().unwrap()),
                 city: city.map(Into::into),
                 preset: preset.map(Into::into),
+                pick: None,
                 fastest: false,
-            };
+            }
+        }
+
+        fn run(&self, args: &up::Args) -> Result<up::Connected> {
+            let ctx = self.ctx();
             up::connect_target(
                 &ctx,
                 &self.tunnel,
                 &self.routes,
-                &FakeBypassProvider(BypassSet::default()),
+                &FakeBypassProvider(wglane_core::BypassSet::default()),
                 &catalog(),
                 &FakeToken(Some("tok".into())),
-                up::plan(&ctx, &args)?,
+                up::plan(&ctx, args)?,
                 None,
             )
+        }
+
+        fn up(
+            &self,
+            target: Option<&str>,
+            city: Option<&str>,
+            preset: Option<&str>,
+        ) -> Result<up::Connected> {
+            self.run(&Self::args(target, city, preset))
+        }
+
+        fn active(&self) -> Option<String> {
+            active_preset(&self.ctx(), &self.tunnel).map(|p| p.describe())
+        }
+
+        fn last(&self) -> String {
+            self.ctx()
+                .last_request()
+                .map_or("-".to_owned(), |l| l.location.to_string())
         }
     }
 
@@ -462,55 +487,147 @@ mod tests {
         // Base route plus the preset's two.
         assert_eq!(rig.routes.installed.borrow().len(), 3);
         assert_eq!(ctx.recorded_request("de").as_deref(), Some("Berlin"));
-        assert_eq!(ctx.recorded_preset().as_deref(), Some("work"));
-        assert_eq!(active_name(&ctx, &rig.tunnel).as_deref(), Some("work"));
-        assert_eq!(
-            current_state(&ctx, &rig.tunnel, &settings())
-                .unwrap()
-                .city
-                .as_deref(),
-            Some("Berlin")
-        );
+        assert_eq!(rig.active().as_deref(), Some("work"));
+        let cur = current_state(&ctx, &rig.tunnel).unwrap();
+        assert_eq!(cur.location.unwrap().to_string(), "DE/Berlin");
+        assert_eq!(cur.bypass_extra.len(), 3);
 
-        // A plain `up` to the same place lacks the preset's bypass routes: no longer "work".
-        rig.up(Some("DE"), Some("berlin"), None).unwrap();
-        assert_eq!(ctx.recorded_preset(), None);
+        // A plain `up` to the same place is not a preset apply: no preset routes.
+        rig.up(Some("DE/berlin"), None, None).unwrap();
+        assert_eq!(rig.active(), None);
+        assert_eq!(ctx.last_request().unwrap().bypass_extra.len(), 1);
     }
 
     #[test]
-    fn active_preset_is_cleared_by_a_different_up_and_by_down() {
+    fn active_preset_follows_apply_override_and_down() {
         let rig = Rig::new();
         let ctx = rig.ctx();
         rig.up(None, None, Some("home")).unwrap();
-        assert_eq!(ctx.recorded_preset().as_deref(), Some("home"));
-        // Explicit flags beat the preset: no longer "home".
-        rig.up(Some("ZA"), Some("Johannesburg"), Some("home"))
-            .unwrap();
-        assert_eq!(ctx.recorded_preset(), None);
-        rig.up(None, None, Some("home")).unwrap();
-        // Same country, plain up: matches home exactly (no city, same routes).
-        rig.up(Some("ZA"), None, None).unwrap();
-        assert_eq!(ctx.recorded_preset().as_deref(), Some("home"));
-        // Different country: cleared.
-        rig.up(Some("DE"), None, None).unwrap();
-        assert_eq!(ctx.recorded_preset(), None);
-        // Preset with a flag override is not the preset any more.
-        rig.up(Some("ZA"), None, Some("work")).unwrap();
-        assert_eq!(ctx.recorded_preset(), None);
-        rig.up(None, None, Some("work")).unwrap();
-        assert_eq!(ctx.recorded_preset().as_deref(), Some("work"));
+        assert_eq!(rig.active().as_deref(), Some("home"));
+        // The user overrode the preset's place: still the preset, and it says so.
+        rig.up(Some("FR"), None, Some("home")).unwrap();
+        assert_eq!(rig.active().as_deref(), Some("home (location overridden)"));
+        // The same place spelled another way is not an override.
+        rig.up(Some("za"), None, Some("home")).unwrap();
+        assert_eq!(rig.active().as_deref(), Some("home"));
+        // A --pick that differs from the preset's.
+        let mut a = Rig::args(None, None, Some("home"));
+        a.pick = Some(Pick::LeastLoad);
+        rig.run(&a).unwrap();
+        assert_eq!(rig.active().as_deref(), Some("home (pick overridden)"));
         crate::cmd::down::disconnect_recorded(&ctx, &rig.tunnel).unwrap();
-        assert_eq!(ctx.recorded_preset(), None);
-        assert_eq!(active_name(&ctx, &rig.tunnel), None);
+        assert_eq!(ctx.active_preset(), None);
+        assert_eq!(active_preset(&ctx, &rig.tunnel), None);
     }
 
     #[test]
-    fn a_stale_record_is_not_active_when_nothing_is_up() {
+    fn up_dash_repeats_the_last_request_even_after_down() {
         let rig = Rig::new();
         let ctx = rig.ctx();
-        ctx.record_preset(Some("work")).unwrap();
-        assert_eq!(active_name(&ctx, &rig.tunnel), None);
-        assert!(current_state(&ctx, &rig.tunnel, &settings()).is_none());
+        let e = rig.up(Some("-"), None, None).unwrap_err().to_string();
+        assert!(e.contains("no previous connection"), "{e}");
+
+        rig.up(Some("FR"), None, Some("work")).unwrap();
+        assert_eq!(rig.last(), "FR");
+        crate::cmd::down::disconnect_recorded(&ctx, &rig.tunnel).unwrap();
+        assert!(rig.tunnel.up.borrow().is_empty());
+
+        let done = rig.up(Some("-"), None, None).unwrap();
+        assert!(done.summary(cc("FR")).starts_with("connected to FR"));
+        assert_eq!(*rig.tunnel.up.borrow(), ["fr"]);
+        assert_eq!(
+            rig.routes.installed.borrow().len(),
+            3,
+            "the preset's routes came back"
+        );
+        assert_eq!(rig.active().as_deref(), Some("work (location overridden)"));
+
+        // Plain `up` is the base config again, not "last".
+        let e = rig.up(None, None, None).unwrap_err().to_string();
+        assert!(e.contains("no location given"), "{e}");
+        // `-` takes no companions.
+        for bad in [
+            (Some("-"), Some("Berlin"), None),
+            (Some("-"), None, Some("work")),
+        ] {
+            let e = rig.up(bad.0, bad.1, bad.2).unwrap_err().to_string();
+            assert!(e.contains("repeats the last request"), "{e}");
+        }
+        let mut a = Rig::args(Some("-"), None, None);
+        a.fastest = true;
+        assert!(rig.run(&a).is_err());
+    }
+
+    #[test]
+    fn city_is_sugar_for_the_second_half_of_location() {
+        let rig = Rig::new();
+        rig.up(Some("DE"), Some("berlin"), None).unwrap();
+        assert_eq!(rig.last(), "DE/Berlin");
+        rig.up(Some("DE/Berlin"), None, None).unwrap();
+        assert_eq!(rig.last(), "DE/Berlin");
+        // Alone, --city takes the country from the preset.
+        rig.up(None, Some("Johannesburg"), Some("home")).unwrap();
+        assert_eq!(rig.last(), "ZA/Johannesburg");
+        let e = rig.up(Some("DE/Berlin"), Some("Berlin"), None).unwrap_err();
+        insta::assert_snapshot!("city_twice", e.to_string());
+        let e = rig.up(None, Some("Berlin"), None).unwrap_err();
+        insta::assert_snapshot!("city_without_country", e.to_string());
+    }
+
+    #[test]
+    fn a_positional_location_replaces_the_presets_whole_location() {
+        let rig = Rig::new();
+        // work is DE/Berlin; naming DE drops the city (replace, not a special case).
+        rig.up(Some("DE"), None, Some("work")).unwrap();
+        assert_eq!(rig.last(), "DE");
+        assert_eq!(rig.ctx().recorded_request("de"), None);
+        assert_eq!(rig.active().as_deref(), Some("work (location overridden)"));
+        // The preset's own place, spelled differently, is not an override.
+        rig.up(Some("de/BERLIN"), None, Some("work")).unwrap();
+        assert_eq!(rig.active().as_deref(), Some("work"));
+    }
+
+    #[test]
+    fn pick_flag_and_its_fastest_alias() {
+        let rig = Rig::new();
+        let ctx = rig.ctx();
+        let pick = |a: &up::Args| format!("{:?}", up::plan(&ctx, a).unwrap());
+        let mut a = Rig::args(Some("ZA"), None, None);
+        assert!(pick(&a).contains("pick: LeastLoad"));
+        a.fastest = true;
+        assert!(pick(&a).contains("pick: Fastest"));
+        // The preset's pick applies unless a flag says otherwise.
+        let mut home = Rig::args(None, None, Some("home"));
+        assert!(pick(&home).contains("pick: Fastest"));
+        home.pick = Some(Pick::LeastLoad);
+        assert!(pick(&home).contains("pick: LeastLoad"));
+    }
+
+    #[test]
+    fn a_tui_connect_elsewhere_keeps_the_presets_routes() {
+        let rig = Rig::new();
+        rig.up(None, None, Some("work")).unwrap();
+        let ctx = rig.ctx();
+        let plan = up::plan_from_last(&ctx, "ZA/Johannesburg".parse().unwrap()).unwrap();
+        up::connect_target(
+            &ctx,
+            &rig.tunnel,
+            &rig.routes,
+            &FakeBypassProvider(wglane_core::BypassSet::default()),
+            &catalog(),
+            &FakeToken(Some("tok".into())),
+            plan,
+            None,
+        )
+        .unwrap();
+        assert_eq!(*rig.tunnel.up.borrow(), ["za"]);
+        assert_eq!(
+            rig.routes.installed.borrow().len(),
+            3,
+            "base + the preset's two"
+        );
+        assert_eq!(rig.active().as_deref(), Some("work (location overridden)"));
+        assert_eq!(ctx.applied_bypass().unwrap().0.len(), 3);
     }
 
     #[test]
@@ -522,21 +639,7 @@ mod tests {
         let e = rig.up(None, None, Some("ghost")).unwrap_err().to_string();
         assert!(e.contains("Atlantis") && e.contains("Berlin"), "{e}");
         assert_eq!(*rig.tunnel.up.borrow(), ["us"]);
-        assert_eq!(rig.ctx().recorded_preset(), None);
-    }
-
-    #[test]
-    fn explicit_country_drops_the_presets_city() {
-        let rig = Rig::new();
-        rig.up(Some("ZA"), None, Some("work")).unwrap();
-        assert_eq!(*rig.tunnel.up.borrow(), ["za"]);
-        assert_eq!(
-            rig.ctx().recorded_request("za"),
-            None,
-            "preset city Berlin dropped"
-        );
-        // Same country as the preset: its city stays.
-        rig.up(Some("DE"), None, Some("work")).unwrap();
-        assert_eq!(rig.ctx().recorded_request("de").as_deref(), Some("Berlin"));
+        assert_eq!(rig.ctx().active_preset(), None);
+        assert_eq!(rig.ctx().last_request(), None);
     }
 }

@@ -12,7 +12,7 @@ routes that underlay around it via your physical gateway.
 Usage: wglane [OPTIONS] <COMMAND>
 
 Commands:
-  up              Connect to a country (switches if already connected)
+  up              Connect to a location (switches if already connected)
   down            Disconnect and remove bypass routes
   status          Show country, exit IP, tailnet health and bypass routes [alias: st]
   servers         List countries, or ranked servers in one country

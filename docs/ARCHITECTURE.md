@@ -75,9 +75,18 @@ generic function over ports that does the work (`up::connect`,
 the TUI owns the screen; `up::run`/`down::run` print the outcome. The
 `cmd::e2e` test drives up, status and down through these functions with fakes.
 
-`status` shows the bypass-route count `up` recorded in `<config_dir>/bypass-routes`
+`status` shows the bypass-route count `up` recorded in `<config_dir>/state.json`
 (the helper's own `bypass.json` is in a root-only directory, so the unprivileged
 CLI cannot read it). The count is 0 when no tunnel is active.
+
+Runtime state lives in one file, `<config_dir>/state.json` (schema:
+`wglane_core::State`, documented in [CONFIG.md](CONFIG.md)), never in
+`config.toml`. `Context` is the only reader and writer. `up` records the
+resolved request (`LastRequest`: place, pick, bypass set, preset); `down` keeps
+it and clears the active preset; `watch` and TUI connects read the bypass set
+from it, so a preset's routes survive a network change or a connect to another
+country. Older releases kept `active-preset`, `bypass-routes` and `<cc>.city`
+files; they are imported once and deleted.
 
 ### Privilege split
 
@@ -155,6 +164,9 @@ One concern per file, so changes stay local.
 | Crate | File | Owns |
 |---|---|---|
 | core | `src/country.rs`, `secret.rs`, `server.rs`, `bypass.rs`, `status.rs`, `tunnel_config.rs` | domain types |
+| core | `src/location.rs` | `Location` (`CC` or `CC/City`), the one parser for every layer |
+| core | `src/config.rs`, `src/preset.rs` | `config.toml` schema, old-key aliases, `Effective::request` (base, preset, env, flags), `describe_change` |
+| core | `src/state.rs` | `State`, `LastRequest`: the `state.json` schema (no I/O) |
 | core | `src/render.rs` (+ `snapshots/`) | `render_wg_conf` |
 | core | `src/stale.rs`, `src/rank.rs` | `is_stale`, `rank_by_load` |
 | core | `src/fastest.rs` | `pick_fastest`, `Choice` (pure choice by measured latency) |

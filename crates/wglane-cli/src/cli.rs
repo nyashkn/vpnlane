@@ -97,6 +97,37 @@ mod tests {
     }
 
     #[test]
+    fn up_takes_a_location_a_dash_and_pick() {
+        use clap::Parser;
+        let up = |args: &[&str]| {
+            let mut argv = vec!["wglane", "up"];
+            argv.extend(args);
+            match Cli::try_parse_from(argv).map(|c| c.command) {
+                Ok(Command::Up(a)) => Ok(a),
+                Ok(_) => unreachable!("parsed `up`"),
+                Err(e) => Err(e),
+            }
+        };
+        let place = |s: &str| crate::cmd::up::Target::Place(s.parse().unwrap());
+        assert_eq!(
+            up(&["-"]).unwrap().target,
+            Some(crate::cmd::up::Target::Last)
+        );
+        assert_eq!(up(&["DE/Berlin"]).unwrap().target, Some(place("DE/Berlin")));
+        assert_eq!(up(&["de"]).unwrap().target, Some(place("DE")));
+        assert_eq!(up(&[]).unwrap().target, None);
+        assert_eq!(
+            up(&["--pick", "fastest"]).unwrap().pick,
+            Some(wglane_core::Pick::Fastest)
+        );
+        assert!(up(&["--fastest"]).unwrap().fastest);
+        assert!(up(&["--fastest", "--pick", "least-load"]).is_err());
+        assert!(up(&["--pick", "slowest"]).is_err());
+        assert!(up(&["de1234"]).is_err(), "bare hostnames are reserved");
+        assert!(up(&["DE/Berlin/de1"]).is_err());
+    }
+
+    #[test]
     fn top_level_help() {
         let help = Cli::command()
             .term_width(100)

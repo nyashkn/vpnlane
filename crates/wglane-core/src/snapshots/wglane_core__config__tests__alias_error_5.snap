@@ -1,0 +1,5 @@
+---
+source: crates/wglane-core/src/config.rs
+expression: err(text)
+---
+line 1: presets.work.tui: not a connection setting, so it cannot differ per preset; set it at the top level of config.toml

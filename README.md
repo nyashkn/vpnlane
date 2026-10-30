@@ -130,7 +130,7 @@ wglane down
 wglane tui          # dashboard: pick a country, connect, live latency
 wglane watch        # re-apply bypass routes when you change networks
 wglane doctor       # checks wg, tailscale, helper, sudoers, token, config dir
-wglane up US --city "New York"   # least-loaded server in one city (or set default_city)
+wglane up US/Chicago    # a city (same as `up US --city Chicago`); `wglane up -` repeats the last request
 wglane ls US        # cities of a country with their server counts
 wglane servers US   # ranked servers with their city (--city NAME to filter)
 wglane ls           # list countries
@@ -144,7 +144,7 @@ sudo "$(command -v wglane)" install-helper --uninstall   # remove the helper
 `--config-dir` (or `WGLANE_CONFIG_DIR`) moves the config directory.
 Dashboard keys and states: [docs/TUI.md](docs/TUI.md).
 
-Saved settings (`config.toml`: default country, extra bypass CIDRs, TUI options, named presets applied with `wglane preset apply NAME`): [docs/CONFIG.md](docs/CONFIG.md).
+Saved settings (`config.toml`: one `location` value, `pick`, extra bypass CIDRs, TUI options, and presets that overlay them, applied with `wglane preset apply NAME`; what wglane last applied lives in `state.json`, never in your config): [docs/CONFIG.md](docs/CONFIG.md).
 
 ## Troubleshooting
 

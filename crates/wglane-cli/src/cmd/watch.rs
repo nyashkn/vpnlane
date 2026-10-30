@@ -33,20 +33,16 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
     )
 }
 
-/// `bypass_extra` of the active preset, read afresh on every change so a
-/// preset applied after `watch` started is honored.
+/// The `bypass_extra` the last `up` applied (base plus preset), read afresh
+/// on every change so a connect made after `watch` started is honored.
 struct ActiveBypass<'a>(&'a Context);
 
 impl BypassProvider for ActiveBypass<'_> {
     fn collect(&self) -> wglane_core::Result<BypassSet> {
-        let (set, warning) = self
-            .0
-            .effective_bypass()
-            .map_err(|e| wglane_core::Error::Config(e.to_string()))?;
-        if let Some(w) = warning {
-            eprintln!("warning: {w}");
-        }
-        Ok(set.0)
+        self.0
+            .applied_bypass()
+            .map(|set| set.0)
+            .map_err(|e| wglane_core::Error::Config(e.to_string()))
     }
 }
 
@@ -141,6 +137,8 @@ mod tests {
         assert_eq!(routes.installed.borrow()[0].1.to_string(), "192.168.1.1");
     }
 
+    /// Regression (#29): routes of the applied preset survive a network change.
+    /// They now come from the state file's last request, not from the config.
     #[test]
     fn preset_routes_survive_a_refresh() {
         let dir = tempfile::tempdir().unwrap();
@@ -154,18 +152,36 @@ mod tests {
             verbose: 0,
             config_dir: dir.path().to_owned(),
         };
-        ctx.record_preset(Some("work")).unwrap();
         let tunnel = FakeTunnel::default();
         tunnel.up(Path::new("us.conf")).unwrap();
         let routes = FakeRoutes::new("192.168.1.1".parse().unwrap());
 
+        // Nothing applied yet: the top-level set.
+        let n = reapply(&tunnel, &routes, &[&ActiveBypass(&ctx)]).unwrap();
+        assert_eq!(n, Some(1));
+
+        // `up --preset work` recorded both routes; the refresh re-applies both.
+        ctx.record_applied(wglane_core::LastRequest {
+            location: "US".parse().unwrap(),
+            pick: wglane_core::Pick::LeastLoad,
+            bypass_extra: vec![
+                "203.0.113.0/24".parse().unwrap(),
+                "198.51.100.0/24".parse().unwrap(),
+            ],
+            preset: Some(wglane_core::PresetUse {
+                name: "work".into(),
+                overridden: vec![],
+            }),
+            at: 1,
+        })
+        .unwrap();
         let n = reapply(&tunnel, &routes, &[&ActiveBypass(&ctx)]).unwrap();
         assert_eq!(n, Some(2), "top-level and preset route both re-applied");
 
-        // A preset that vanished from config falls back to the top-level set.
-        ctx.record_preset(Some("gone")).unwrap();
+        // The set is the applied one, even if the preset has since left the config.
+        std::fs::write(dir.path().join("config.toml"), "").unwrap();
         let n = reapply(&tunnel, &routes, &[&ActiveBypass(&ctx)]).unwrap();
-        assert_eq!(n, Some(1));
+        assert_eq!(n, Some(2));
     }
 
     #[test]

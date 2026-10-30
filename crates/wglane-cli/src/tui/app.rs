@@ -1193,7 +1193,7 @@ mod tests {
         );
         wglane_core::FileConfig::parse(&file)
             .unwrap()
-            .resolve(Default::default(), Default::default())
+            .resolve(&Default::default(), Default::default())
             .tui
     }
 

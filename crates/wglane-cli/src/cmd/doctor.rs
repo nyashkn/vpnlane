@@ -21,7 +21,8 @@ use crate::context::Context;
 Checks: wireguard-tools installed, tailscale installed, helper installed
 root-owned with its sudoers rule, root-owned tool directory
 (wg, wireguard-go), token present with mode 600, config
-directory private to you, and outbound UDP 51820 (NordLynx).
+directory private to you, the leak check (warns if `exit_ip_check = false`),
+and outbound UDP 51820 (NordLynx).
 
 Every failed check prints the exact command to fix it. The UDP check sends one
 handshake-shaped packet to a server from a generated config. Nord never
@@ -44,6 +45,10 @@ enum Check {
     },
     /// Could not be decided; says what is and is not known. Not a failure.
     Unknown {
+        note: String,
+    },
+    /// Works, but not as safe as it could be. Not a failure.
+    Warn {
         note: String,
     },
 }
@@ -70,6 +75,7 @@ pub(crate) fn run(ctx: &Context, _args: &Args) -> Result<()> {
         ("sudoers rule", check_sudoers(Path::new(SUDOERS_PATH))),
         ("token", check_token(&ctx.token_source())),
         ("config dir", check_config_dir(&ctx.config_dir)),
+        ("leak check", check_leak(ctx)),
         (
             "udp 51820",
             check_udp(&UdpSend, ctx.conf_store().any_endpoint()),
@@ -157,6 +163,26 @@ fn check_udp<U: UdpProbe>(udp: &U, endpoint: Option<std::net::SocketAddr>) -> Ch
 }
 
 /// Holds the token and generated configs, so group/world access is a leak.
+/// The exit IP lookup (`exit_ip_check`) is on. Off is allowed, so only a warning.
+fn check_leak(ctx: &Context) -> Check {
+    match ctx.settings(wglane_core::Overrides::default()) {
+        Ok(s) => leak_check(s.exit_ip_check.value),
+        Err(e) => Check::Unknown {
+            note: format!("settings unreadable: {e}"),
+        },
+    }
+}
+
+fn leak_check(enabled: bool) -> Check {
+    if enabled {
+        Check::Pass
+    } else {
+        Check::Warn {
+            note: "exit_ip_check = false: `status` cannot tell you if traffic leaks; remove the key or set WGLANE_EXIT_IP_CHECK=true".to_owned(),
+        }
+    }
+}
+
 fn check_config_dir(dir: &Path) -> Check {
     let d = dir.display();
     match std::fs::metadata(dir) {
@@ -175,6 +201,7 @@ fn render(rows: &[(&str, Check)], json: bool) -> Result<String> {
                 Check::Unknown { note } => {
                     json!({ "check": name, "status": "unknown", "note": note })
                 }
+                Check::Warn { note } => json!({ "check": name, "status": "warn", "note": note }),
                 Check::Fail { fix } => json!({ "check": name, "status": "fail", "fix": fix }),
             })
             .collect();
@@ -186,6 +213,7 @@ fn render(rows: &[(&str, Check)], json: bool) -> Result<String> {
         match c {
             Check::Pass => writeln!(out, "ok    {name}"),
             Check::Unknown { note } => writeln!(out, "??    {name:<width$}  {note}"),
+            Check::Warn { note } => writeln!(out, "WARN  {name:<width$}  {note}"),
             Check::Fail { fix } => writeln!(out, "FAIL  {name:<width$}  fix: {fix}"),
         }
         .expect("writing to a String cannot fail");
@@ -303,6 +331,20 @@ mod tests {
             fix.contains("sending UDP to 203.0.113.9:51820") && fix.contains("another network")
         );
         insta::assert_snapshot!(render(&[("udp 51820", Check::Fail { fix })], false).unwrap());
+    }
+
+    #[test]
+    fn a_disabled_leak_check_warns_but_does_not_fail() {
+        assert_eq!(leak_check(true), Check::Pass);
+        let off = leak_check(false);
+        assert!(matches!(off, Check::Warn { .. }));
+        let rows = [("leak check", off)];
+        insta::assert_snapshot!("leak_warn_text", render(&rows, false).unwrap());
+        assert!(
+            render(&rows, true)
+                .unwrap()
+                .contains("\"status\": \"warn\"")
+        );
     }
 
     #[test]
