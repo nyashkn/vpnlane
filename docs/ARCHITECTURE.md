@@ -74,39 +74,60 @@ CLI cannot read it). The count is 0 when no tunnel is active.
 
 The CLI runs unprivileged. `HelperClient` implements `Tunnel` + `RouteBypass`
 by running `sudo -n /usr/local/libexec/wglane-helper <verb> <args>`. The helper
-(`crates/wglane-cli/src/bin/wglane-helper.rs`) runs as root and uses
-`WgGo` + `RouteTable` with a `RootRunner`. Verbs are fixed: `up <cc>`,
+(`crates/wglane-cli/src/bin/wglane-helper.rs`) runs as root and uses `WgGo` +
+`RouteTable` with a `RootRunner`.
+
+**Verbs** (fixed; this set is the future daemon socket protocol): `up <cc>`,
 `down`, `active`, `bypass <gw> <cidr>...`. The helper takes no paths from the
-caller and validates every argument with the core parsers. `install-helper`
-copies it to a root-owned path; a sudoers rule on a user-writable binary would
-be a root exploit. The same rule covers what root executes. Root never runs a
-shell or a script and never loads a library outside `/usr/lib` and
-`/System/Library`: `WgGo` starts `wireguard-go utun` (it reports the interface
-via `WG_TUN_NAME_FILE`), runs `wg setconf utunN /dev/stdin` with the rendered
-config minus its `Address` line, then `ifconfig` (address, `up`) and `route`
-(endpoint host route via the physical gateway, then `0.0.0.0/1` and
-`128.0.0.0/1` via the interface). `down` deletes those routes and the
-interface's control socket, which ends `wireguard-go`. Which `utunN` is
-wglane's is recorded in the root-only `/var/db/wglane/tunnels`; `active` (a
-helper verb, because that dir is private) lists only those, so the user's
-other tunnels are never counted or touched. `install-helper` copies `wg` and
-`wireguard-go` from Homebrew into root:wheel `/usr/local/libexec/wglane/bin`
-and refuses to install unless `otool -L` on each copy (and on the helper) lists
-only `/usr/lib/` and `/System/Library/` paths (no `@rpath`, no `..`), or if
-any ancestor of the helper or tool dir is not root-owned, g/o-unwritable and
-ACL-free. `RootRunner` resolves `wg` and `wireguard-go` only there and
-re-verifies the canonical file and every ancestor on every exec; `ifconfig`,
-`route` and `netstat` are fixed `/sbin` and `/usr/sbin` paths; `PATH` is system
-dirs only. Upgrading wireguard-tools or wireguard-go requires re-running
-`install-helper`. Limits: IPv4 endpoints and the full IPv4 tunnel only; two
-simultaneous `up` calls share one name file, so run one at a time.
-This verb set is the future daemon socket protocol.
+caller and validates every argument with the core parsers. The sudoers rule
+names only the helper and has no argument list.
 
-## File ownership map
+**What root runs.** Never a shell or script, and never a library outside
+`/usr/lib` and `/System/Library`. `WgGo` does, in order:
 
-One unit of work per file, so parallel builders do not collide. Open work
-lives in `bd`; `// TODO(bead): <id>: <what>` markers, if any, point at it
-(`grep -rn "TODO(bead)" crates xtask`). None remain at v0.1.
+1. `wireguard-go utun` (reports the interface via `WG_TUN_NAME_FILE`).
+2. `wg setconf utunN /dev/stdin` with the rendered config minus `Address`.
+3. `ifconfig` (address, `up`).
+4. `route`: endpoint host route via the physical gateway, then `0.0.0.0/1`
+   and `128.0.0.0/1` via the interface.
+
+`down` deletes those routes and the interface's control socket, which ends
+`wireguard-go`.
+
+**Which tunnel is ours.** Recorded in the root-only `/var/db/wglane/tunnels`
+(`cc utunN endpoint dev:ino:boot`). `active` (a helper verb, because that dir
+is private) lists only those, so the user's other tunnels are never counted or
+touched. A record is trusted only while its control socket is the same file
+from the same boot.
+
+**Trusted install.** `install-helper` copies the helper, `wg` and
+`wireguard-go` into root:wheel paths (`/usr/local/libexec/wglane-helper`,
+`/usr/local/libexec/wglane/bin`) because a sudoers rule on a user-writable
+binary would be a root exploit. It refuses to install unless `otool -L` on
+each copy lists only `/usr/lib/` and `/System/Library/` paths (no `@rpath`, no
+`..`), or if any ancestor is not root-owned, g/o-unwritable and ACL-free.
+`RootRunner` resolves `wg` and `wireguard-go` only there and re-verifies the
+canonical file and every ancestor on every exec; `ifconfig`, `route` and
+`netstat` are fixed `/sbin` and `/usr/sbin` paths; `PATH` is system dirs only.
+Upgrading wireguard-tools or wireguard-go requires re-running `install-helper`.
+
+**Limits.** IPv4 endpoints and the IPv4 tunnel only (IPv6 is not tunnelled, see
+the README); two simultaneous `up` calls share one name file, so run one at a
+time.
+
+### Network change
+
+`wglane watch` listens to `route -n monitor` through `NetworkWatcher`. On each
+change it reads the new physical gateway and calls the helper's `bypass` verb.
+The helper first re-points every tunnel endpoint host route at the new gateway
+(`Tunnel::refresh_endpoint`), then replaces the Tailscale bypass routes it
+recorded earlier (never routes it did not add). Skipping the endpoint step
+leaves the tunnel's own packets going to the old gateway: IPv4 stalls while
+Tailscale over IPv6 still looks healthy.
+
+## Code map
+
+One concern per file, so changes stay local.
 
 | Crate | File | Owns |
 |---|---|---|
@@ -131,14 +152,14 @@ lives in `bd`; `// TODO(bead): <id>: <what>` markers, if any, point at it
 | cli | `src/bin/wglane-helper.rs` | root-side verb dispatch |
 | cli | `src/cmd/<name>.rs` | one subcommand: args, help, run |
 | cli | `src/cmd/completions.rs` | completions |
-| cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop, state + drawing | 1, 2 |
-| cli | `src/cli.rs`, `src/lib.rs`, `src/context.rs` | wiring; scaffold-owned |
+| cli | `src/tui/mod.rs`, `src/tui/app.rs` | dashboard loop, state + drawing |
+| cli | `src/cli.rs`, `src/lib.rs`, `src/context.rs` | wiring |
 | xtask | `src/main.rs` | completions, man, release |
 
 Shared files (`error.rs`, `cli.rs`, `lib.rs`, `Cargo.toml`s) change only to
-add a line; land such changes as their own small commit to avoid conflicts.
-`cli.rs`'s help snapshot changes when a subcommand's `about` changes: only the
-owner of that subcommand should touch `about`.
+add a line; keep such changes in their own small commit.
+`cli.rs`'s help snapshot changes when a subcommand's `about` changes; review
+that `.snap` diff.
 
 ## Where does X go?
 

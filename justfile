@@ -39,7 +39,7 @@ assets:
     cargo xtask completions
     cargo xtask man
 
-# Real-Mac smoke test (wgl-xy5.4). Needs sudo, a token and a live network, so it is NOT in `ci`.
+# Real-Mac smoke test. Needs sudo, a token and a live network, so it is NOT in `ci`.
 # `just mac-test US`. Test `wglane watch` by hand afterwards (switch Wi-Fi).
 mac-test cc="US":
     cargo build --release
