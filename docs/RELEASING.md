@@ -4,8 +4,8 @@ Nothing is published until the owner pushes a `v*` tag. `cargo release` is a dry
 
 ## One-time owner setup
 
-1. Replace the `OWNER/wglane` placeholder (`repository`/`homepage` in the root `Cargo.toml`) with the real GitHub repo.
-2. Create the tap repo (`OWNER/homebrew-tap`, public, with a `Formula/` dir). Put the real name in `tap` in `dist-workspace.toml`, then run `dist generate`.
+1. `repository`/`homepage` in the root `Cargo.toml` already point at `https://github.com/nyashkn/wglane`; change them only if the repo moves.
+2. Create the tap repo (`nyashkn/homebrew-tap`, public, with a `Formula/` dir). If you use a different name, set `tap` in `dist-workspace.toml`, then run `dist generate`.
 3. Create a token with write access to the tap repo and add it as the `HOMEBREW_TAP_TOKEN` secret on the wglane repo.
 4. `cargo install cargo-release --locked` (and `dist`, same version as `cargo-dist-version`).
 
@@ -15,7 +15,7 @@ Nothing is published until the owner pushes a `v*` tag. `cargo release` is a dry
 2. Preview: `cargo release patch` (or `minor`/`major`). Prints the plan; runs `just ci` as the pre-release hook. Needs a clean tree.
 3. Bump + tag locally: `cargo release patch --execute`. All crates share one version; this commits the bump and creates tag `vX.Y.Z`. It does not push.
 4. Push: `git push && git push origin vX.Y.Z`. The tag triggers `.github/workflows/release.yml` (cargo-dist): builds aarch64 and x86_64 macOS archives, creates the GitHub Release, and pushes the Homebrew formula to the tap.
-5. Check: `brew install OWNER/tap/wglane-cli` (installs both binaries).
+5. Check: `brew install nyashkn/tap/wglane-cli` (installs both binaries).
 
 Pull requests run `dist plan` only; they never publish.
 

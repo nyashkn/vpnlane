@@ -11,7 +11,7 @@ installers = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 # A GitHub repo to push Homebrew formulas to
-tap = "OWNER/homebrew-tap"
+tap = "nyashkn/homebrew-tap"
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
 cargo-dist-version = "0.32.0"
 # publish = false (workspace-wide) hides binaries from dist; opt packages back in.
