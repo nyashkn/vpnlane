@@ -2,6 +2,21 @@
 
 All notable changes to wglane. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [0.4.0](https://github.com/nyashkn/wglane/compare/v0.3.0...v0.4.0) (2026-10-30)
+
+This release gives the `wglane tui` dashboard a new palette-first layout and makes the browse view easier to read.
+
+### What's New
+
+#### Palette-first dashboard ([#32](https://github.com/nyashkn/wglane/issues/32))
+
+The dashboard now opens on a palette-first layout, called variant C or "Jump".
+
+### Fixes
+
+* Browse columns in the TUI now have labels, so you can tell what each column shows ([#36](https://github.com/nyashkn/wglane/issues/36)).
+* Load bars in the TUI are readable ([#36](https://github.com/nyashkn/wglane/issues/36)).
+
 ## [0.3.0](https://github.com/nyashkn/wglane/compare/v0.2.0...v0.3.0) (2026-10-30)
 
 This release adds saved settings and presets, city-level server choice, a leak check in `wglane status`, and a faster way to pick a server.
