@@ -41,6 +41,8 @@ const SUDO: &str = "/usr/bin/sudo";
 /// The only `PATH` programs run by the helper see; the caller's is discarded.
 const ROOT_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 const BYPASS_STATE: &str = "bypass.json";
+/// Held (`flock`) for the whole of an up/down/active/bypass, so they never interleave.
+const LOCK_FILE: &str = "lock";
 /// A rendered config is ~300 bytes; anything near this is not one.
 const MAX_STDIN: usize = 1024;
 const MAX_CONF_BYTES: u64 = 4096;
@@ -419,9 +421,13 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
                 [cc] => self.up(parse_cc(cc)?, stdin).map(|()| String::new()),
                 _ => Err(HelperError::usage("up takes exactly one argument")),
             },
-            Some(HelperVerb::Down) if rest.is_empty() => self.down().map(|()| String::new()),
+            Some(HelperVerb::Down) if rest.is_empty() => {
+                let _lock = self.lock(false)?;
+                self.down().map(|()| String::new())
+            }
             Some(HelperVerb::Down) => Err(HelperError::usage("down takes no arguments")),
             Some(HelperVerb::Active) if rest.is_empty() => {
+                let _lock = self.lock(false)?;
                 let mut names = self.tunnel.active()?;
                 names.sort();
                 Ok(names.iter().flat_map(|n| [n.as_str(), "\n"]).collect())
@@ -456,7 +462,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
             .ok_or_else(|| HelperError::usage("stdin is not a short UTF-8 field list"))?;
         let req = UpRequest::from_wire(text).map_err(HelperError::Usage)?;
 
-        self.ensure_dir()?;
+        let _lock = self.lock(true)?;
         let path = self.conf_path(cc);
         write_private(&path, req.render().as_bytes())?;
         if let Err(e) = self.tunnel.up(&path) {
@@ -514,7 +520,7 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
         for net in new.iter() {
             check_dest(net, gateway)?;
         }
-        self.ensure_dir()?;
+        let _lock = self.lock(true)?;
         let old = self.load_bypass()?;
         // Record before installing, so a partial failure is still cleaned up by `down`.
         let json = serde_json::to_vec(new).map_err(|e| Error::Api(e.to_string()))?;
@@ -565,6 +571,30 @@ impl<T: Tunnel, B: RouteBypass> Helper<T, B> {
                 ),
             })
         }
+    }
+
+    /// Exclusive `flock` on `state_dir/lock`, released when the file drops.
+    /// `create` makes the state dir first; otherwise a missing dir means there
+    /// is nothing to protect (`None`).
+    fn lock(&self, create: bool) -> Result<Option<fs::File>> {
+        if create {
+            self.ensure_dir()?;
+        } else if !self.dir_exists()? {
+            return Ok(None);
+        }
+        let path = self.state_dir.join(LOCK_FILE);
+        let ctx = |what: &str| format!("{what} {}", path.display());
+        let f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits().cast_signed())
+            .open(&path)
+            .map_err(|e| Error::io(ctx("opening"), e))?;
+        rustix::fs::flock(&f, rustix::fs::FlockOperation::LockExclusive)
+            .map_err(|e| Error::io(ctx("locking"), e.into()))?;
+        Ok(Some(f))
     }
 
     fn ensure_dir(&self) -> Result<()> {
@@ -1085,8 +1115,12 @@ mod tests {
         run(&h, &["down"], "").unwrap();
         assert_eq!(*h.tunnel.up.borrow(), ["home"]);
         assert!(h.routes.installed.borrow().is_empty());
-        let left: Vec<_> = fs::read_dir(&h.state_dir).unwrap().collect();
-        assert!(left.is_empty(), "{left:?}");
+        // Only the (empty, permanent) lock file stays.
+        let left: Vec<_> = fs::read_dir(&h.state_dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [LOCK_FILE], "{left:?}");
     }
 
     #[test]
@@ -1432,6 +1466,63 @@ mod tests {
         let client = HelperClient::new(FakeRunner::new());
         client.clear(&BypassSet::new()).unwrap();
         assert_eq!(client.runner.calls(), Vec::<Vec<String>>::new());
+    }
+
+    /// Tunnel that, on every call, tries to take the helper's lock itself.
+    struct LockProbe {
+        lock: PathBuf,
+        /// Per call: could someone else have taken the lock meanwhile?
+        raced: std::cell::RefCell<Vec<bool>>,
+    }
+
+    impl LockProbe {
+        fn probe(&self) {
+            let f = fs::File::open(&self.lock).unwrap();
+            let got = rustix::fs::flock(&f, rustix::fs::FlockOperation::NonBlockingLockExclusive);
+            self.raced.borrow_mut().push(got.is_ok());
+        }
+    }
+
+    impl Tunnel for LockProbe {
+        fn up(&self, _: &Path) -> Result<()> {
+            self.probe();
+            Ok(())
+        }
+        fn down(&self, _: &Path) -> Result<()> {
+            self.probe();
+            Ok(())
+        }
+        fn active(&self) -> Result<Vec<String>> {
+            self.probe();
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn up_down_and_active_hold_the_state_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let h = Helper {
+            tunnel: LockProbe {
+                lock: state.join(LOCK_FILE),
+                raced: std::cell::RefCell::default(),
+            },
+            routes: FakeRoutes::new(GW.parse().unwrap()),
+            state_dir: state,
+            owner: rustix::process::geteuid().as_raw(),
+        };
+        h.run(
+            &args(&["up", "ZA"]),
+            &mut Cursor::new(wire("192.0.2.10:51820").into_bytes()),
+        )
+        .unwrap();
+        h.run(&args(&["active"]), &mut Cursor::new(vec![])).unwrap();
+        h.run(&args(&["down"]), &mut Cursor::new(vec![])).unwrap();
+        // down also tears down the za conf: up, active, down.
+        assert_eq!(*h.tunnel.raced.borrow(), [false, false, false]);
+        // And the lock is released afterwards.
+        let f = fs::File::open(&h.tunnel.lock).unwrap();
+        rustix::fs::flock(&f, rustix::fs::FlockOperation::NonBlockingLockExclusive).unwrap();
     }
 }
 

@@ -31,7 +31,7 @@ ipnet = { version = "2", features = ["serde"] }
 proptest = { version = "1.12", default-features = false, features = ["std"] }
 ratatui = "0.30"
 # Safe euid check for install-helper (no unsafe).
-rustix = { version = "1", default-features = false, features = ["process", "std"] }
+rustix = { version = "1", default-features = false, features = ["fs", "process", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"

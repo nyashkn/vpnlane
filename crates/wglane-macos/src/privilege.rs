@@ -93,12 +93,16 @@ fn require_trusted_chain(
     Ok(())
 }
 
-/// `ls -le` shows an ACL entry as an indented `N: user:... allow ...` line.
+/// `ls -lde` shows an ACL as an indented `N: user:... allow ...` line and as a
+/// trailing `+` on the mode (`drwxr-xr-x+`); either is enough.
 fn listing_has_acl(ls: &str) -> bool {
     ls.lines().any(|l| {
-        l.trim_start()
-            .split_once(": ")
-            .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        l.split_whitespace()
+            .next()
+            .is_some_and(|mode| mode.len() == 11 && mode.ends_with('+'))
+            || l.trim_start()
+                .split_once(": ")
+                .is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
     })
 }
 
@@ -132,6 +136,49 @@ fn require_no_acl(path: &Path, top: &Path) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// `(uid, gid, st_mode)` of `path` without following a final symlink.
+fn lstat_gid(path: &Path) -> io::Result<(u32, u32, u32)> {
+    let m = fs::symlink_metadata(path)?;
+    Ok((m.uid(), m.gid(), m.mode()))
+}
+
+/// Fails unless `path` and every ancestor up to `top` has uid `owner` and is
+/// not world-writable. Group write is allowed only for gid 0 (wheel) and 1
+/// (daemon): macOS ships `/var/run` as `root:daemon 0775`, and users are in
+/// neither group (shortcut: a user added to `daemon` defeats this; upgrade
+/// to a real membership check).
+fn require_dir_chain(
+    path: &Path,
+    top: &Path,
+    owner: u32,
+    stat: impl Fn(&Path) -> io::Result<(u32, u32, u32)>,
+) -> Result<()> {
+    for p in path.ancestors() {
+        let (uid, gid, mode) =
+            stat(p).map_err(|e| Error::io(format!("stat {}", p.display()), e))?;
+        if uid != owner || mode & 0o002 != 0 || (mode & 0o020 != 0 && gid > 1) {
+            return Err(invalid(format!(
+                "{} must be owned by root and not writable by others (uid {uid}, gid {gid}, mode {:o})",
+                p.display(),
+                mode & 0o7777,
+            )));
+        }
+        if p == top {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Run-time check before root lets `wireguard-go` write into `dir`: it and
+/// every ancestor up to `top` is root's ([`require_dir_chain`]) and ACL-free.
+pub(crate) fn trusted_dir(dir: &Path, top: &Path, owner: u32) -> Result<()> {
+    let canon =
+        fs::canonicalize(dir).map_err(|e| Error::io(format!("finding {}", dir.display()), e))?;
+    require_dir_chain(&canon, top, owner, lstat_gid)?;
+    require_no_acl(&canon, top)
 }
 
 /// Run-time check before root executes `path`: it must resolve (symlinks
@@ -214,11 +261,20 @@ fn check_dependencies(name: &str, otool_l: &str) -> Result<()> {
     let mut headers = 0;
     for line in otool_l.lines() {
         if !line.starts_with(char::is_whitespace) {
-            // "<file>:" (one per architecture of a fat binary)
-            headers += usize::from(line.ends_with(':'));
+            // "<file>:" (one per architecture of a fat binary); anything else is not otool's.
+            if !line.ends_with(':') {
+                return Err(invalid(format!(
+                    "unexpected `otool -L` line for {name}: {line:?}"
+                )));
+            }
+            headers += 1;
             continue;
         }
-        let dep = line.trim().split(" (").next().unwrap_or_default();
+        // The version suffix is the last parenthesis; a path may contain " (".
+        let line = line.trim();
+        let dep = line
+            .rsplit_once(" (compatibility version")
+            .map_or(line, |(dep, _)| dep);
         let clean = Path::new(dep)
             .components()
             .all(|c| !matches!(c, Component::ParentDir));
@@ -654,6 +710,8 @@ mod tests {
             "/x:\n\t/usr/libexec/evil.dylib (c)\n",
             "/x:\n\t/System/Libraryx/evil.dylib (c)\n",
             "/x:\n\t/usr/lib/libSystem.B.dylib (c)\n\t/tmp/evil.dylib (c)\n",
+            "/x:\n\t/usr/lib/a (b)/../../../opt/homebrew/evil.dylib (compatibility version 1.0.0)\n",
+            "/x:\n/opt/homebrew/evil.dylib (compatibility version 1.0.0)\n",
             "",
             "not otool output",
         ] {
@@ -821,6 +879,10 @@ mod tests {
     #[test]
     fn acl_listing_parser() {
         let plain = "-rwxr-xr-x  1 root  wheel  100 Oct 30 12:00 /a/wg\n";
+        assert!(listing_has_acl("drwxr-xr-x+ 2 root  wheel  64 Oct 30 /x\n"));
+        assert!(!listing_has_acl(
+            "drwxr-xr-x  2 root  wheel  64 Oct 30 /x+\n"
+        ));
         let acl =
             "-rwxr-xr-x+ 1 root  wheel  100 Oct 30 12:00 /a/wg\n 0: user:evil allow write,delete\n";
         assert!(!listing_has_acl(plain));
@@ -870,5 +932,27 @@ mod tests {
         uninstall_at(&l).unwrap();
         uninstall_at(&l).unwrap();
         assert!(!l.helper.exists() && !l.sudoers.exists() && !l.tools.exists());
+    }
+
+    #[test]
+    fn run_dir_chain_allows_daemon_group_but_not_users_or_others() {
+        let dir = Path::new("/private/var/run/wireguard");
+        let stat = |gid_run: u32, mode_run: u32, uid_leaf: u32, mode_leaf: u32| {
+            move |p: &Path| -> io::Result<(u32, u32, u32)> {
+                Ok(match p.to_str().unwrap() {
+                    "/private/var/run/wireguard" => (uid_leaf, 0, mode_leaf),
+                    "/private/var/run" => (0, gid_run, mode_run),
+                    _ => (0, 0, 0o40755),
+                })
+            }
+        };
+        let check = |s| require_dir_chain(dir, Path::new("/"), 0, s);
+        // macOS's real layout: /var/run is root:daemon 0775.
+        assert!(check(stat(1, 0o40775, 0, 0o40755)).is_ok());
+        // Group write for any other group, world write, or a user-owned leaf.
+        assert!(check(stat(20, 0o40775, 0, 0o40755)).is_err());
+        assert!(check(stat(1, 0o40777, 0, 0o40755)).is_err());
+        assert!(check(stat(1, 0o40775, 501, 0o40755)).is_err());
+        assert!(check(stat(1, 0o40775, 0, 0o40757)).is_err());
     }
 }

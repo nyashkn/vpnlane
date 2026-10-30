@@ -73,6 +73,27 @@ every parent directory is root-owned, not group/other-writable and has no ACL.
 After upgrading `wireguard-tools` or `wireguard-go`, re-run
 `sudo wglane install-helper`. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## Security model and known limits
+
+wglane is pre-alpha and has not been audited. What it does not protect against:
+
+- The sudo rule is a capability of your account. Any process running as you can
+  use the helper to send host traffic (`0.0.0.0/1` + `128.0.0.0/1`) to any
+  WireGuard peer on the NordLynx port, with keys that process chooses.
+  Endpoints are not limited to Nord servers.
+- `install-helper` trusts the `/opt/homebrew/bin` symlinks and the running
+  executable (`current_exe`) at install time. If either was already replaced,
+  root copies the replacement. `otool -L` does not see `dlopen`,
+  `LC_DYLD_ENVIRONMENT` or `LC_LOAD_DYLINKER`, so the dependency check is a
+  filter, not a proof.
+- Tunnel records survive reboot but `utunN` numbers are reused. A record is
+  trusted only while its control socket is the same file (device, inode) from
+  the same boot; otherwise it is dropped and nothing is torn down. A tunnel
+  whose `wireguard-go` died on its own therefore leaves its endpoint host route
+  behind until you remove it (`sudo route delete <endpoint>`).
+- `/var/run` is `root:daemon 0775` on macOS; the helper accepts that and trusts
+  the `daemon` group. A user added to `daemon` defeats the run-dir check.
+
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and
