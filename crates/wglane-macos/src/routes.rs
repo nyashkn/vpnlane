@@ -37,8 +37,12 @@ fn check_gateway(gw: IpAddr) -> Result<()> {
 
 /// A bypass entry must be a specific unicast destination of the gateway's
 /// family: never a default route, which would hijack all traffic as root.
-fn check_dest(net: &IpNet, gw: IpAddr) -> Result<()> {
+pub(crate) fn check_dest(net: &IpNet, gw: IpAddr) -> Result<()> {
     check_dest_family(net)?;
+    // A route covering the gateway would hijack the next hop's own route.
+    if net.contains(&gw) {
+        return Err(invalid(&format!("{net} contains the gateway {gw}")));
+    }
     if net.addr().is_ipv4() != gw.is_ipv4() {
         return Err(invalid(&format!(
             "{net} is not in the gateway's address family"
@@ -119,8 +123,8 @@ impl<R: CommandRunner> RouteBypass for RouteTable<R> {
         }
         let mut added = 0;
         for net in set.iter() {
-            // Replace semantics: drop any stale route, ignoring "not in table".
-            self.route("delete", net, None)?;
+            // Never delete here: a route that already exists is not ours (the
+            // caller clears what bypass.json recorded), so `add` must fail on it.
             let out = self.route("add", net, Some(gateway))?;
             if !out.success() {
                 return Err(Error::Command {
@@ -214,7 +218,7 @@ default            link#14            UCSIg                 en0
     }
 
     #[test]
-    fn apply_deletes_then_adds_with_exact_argv() {
+    fn apply_only_adds_with_exact_argv() {
         let t = RouteTable::new(FakeRunner::new());
         let n = t
             .apply(&set(&["203.0.113.7/32", "198.51.100.0/24"]), gw())
@@ -223,12 +227,27 @@ default            link#14            UCSIg                 en0
         assert_eq!(
             t.runner.calls(),
             vec![
-                vec!["route", "-n", "delete", "-net", "198.51.100.0/24"],
                 vec!["route", "-n", "add", "-net", "198.51.100.0/24", "192.0.2.1"],
-                vec!["route", "-n", "delete", "-host", "203.0.113.7"],
                 vec!["route", "-n", "add", "-host", "203.0.113.7", "192.0.2.1"],
             ]
         );
+    }
+
+    // Reviewer's case: the LAN subnet and the gateway host route already exist
+    // and are not ours; nothing may be deleted or added.
+    #[test]
+    fn apply_refuses_cidrs_containing_the_gateway() {
+        let g: IpAddr = "192.168.1.1".parse().unwrap();
+        for nets in [
+            &["192.168.1.0/24", "192.168.1.1/32"][..],
+            &["203.0.113.7/32", "192.168.1.0/24"],
+            &["192.168.1.1/32"],
+            &["192.0.0.0/8"],
+        ] {
+            let t = RouteTable::new(FakeRunner::new());
+            assert!(t.apply(&set(nets), g).is_err(), "{nets:?}");
+            assert!(t.runner.calls().is_empty(), "{nets:?}");
+        }
     }
 
     #[test]
@@ -237,7 +256,7 @@ default            link#14            UCSIg                 en0
         let g: IpAddr = "2001:db8::1".parse().unwrap();
         t.apply(&set(&["2001:db8:1::5/128"]), g).unwrap();
         assert_eq!(
-            t.runner.calls()[1],
+            t.runner.calls()[0],
             vec![
                 "route",
                 "-n",
@@ -253,7 +272,6 @@ default            link#14            UCSIg                 en0
     #[test]
     fn apply_add_failure_is_error_and_not_counted() {
         let t = RouteTable::new(FakeRunner::new());
-        t.runner.push_stdout("");
         t.runner.push(CommandOutput {
             code: Some(1),
             stderr: "route: writing to routing socket: File exists\n".into(),

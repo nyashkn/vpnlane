@@ -274,6 +274,8 @@ fn check_route_calls(
         }
     }
     prop_assert!(is_apply || calls.iter().all(|c| c[2] == "delete"));
+    // `apply` only adds: it must never delete a route it did not install.
+    prop_assert!(!is_apply || calls.iter().all(|c| c[2] == "add"));
     Ok(())
 }
 
@@ -304,6 +306,7 @@ fn check_routes(nets: &[IpNet], gw: IpAddr, strict: bool) -> Result<(), TestCase
     let rec = Recorder::default();
     let applied = RouteTable::new(&rec).apply(&set, gw);
     check_route_calls(&rec, applied.is_ok(), gw, true, strict)?;
+    prop_assert!(applied.is_err() || nets.iter().all(|n| !n.contains(&gw)));
     let rec = Recorder::default();
     let cleared = RouteTable::new(&rec).clear(&set);
     check_route_calls(&rec, cleared.is_ok(), gw, false, strict)
