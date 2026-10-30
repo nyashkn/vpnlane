@@ -65,8 +65,8 @@ mac-test cc="US":
     ./target/release/wglane status   # also pings a tailnet peer
     ./target/release/wglane down
 
-# Re-record docs/media/{cli,tui}.gif (not part of ci). Needs node >= 22.18, ffmpeg and a
-# one-time sprintshow setup: see demos/README.md. Hits api.nordvpn.com; no token or sudo.
+# Re-record docs/media/{cli,tui}.gif with VHS (not part of ci). Needs `brew install vhs` and node; see
+# demos/README.md. Hits api.nordvpn.com; no token or sudo.
 demo:
     cargo build -p wglane-cli
     demos/record.sh
