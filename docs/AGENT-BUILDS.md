@@ -66,7 +66,15 @@ With `SCCACHE_BUCKET` set, sccache stores in the bucket instead of
 `~/.cache/sccache`; `SCCACHE_CACHE_SIZE` then does not apply, so cap the bucket
 with an R2 lifecycle rule. Each agent's `target/` still holds its own build
 output: sccache saves compile time and the local cache, not per-agent target
-space. Untested against a live R2 bucket.
+space.
+
+Tested against a live R2 bucket (`vpnlane-core` + `vpnlane-nord`, `agent`
+profile): a rebuild into the **same** `CARGO_TARGET_DIR` hit 49/49 and wrote no
+errors, but a build into a **different** target dir hit 0/49. Build-script
+crates bake `OUT_DIR` into the cache key, so agents only share hits when their
+`CARGO_TARGET_DIR` path is identical (one container or user per agent, same
+path). With `/var/build/<agent>/target` per agent, expect warm hits per agent
+only.
 
 R2 speaks the S3 API and has no egress fee. Skip sccache while one agent builds
 at a time; add it when agents start sharing a host or CI runners.
