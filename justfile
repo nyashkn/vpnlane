@@ -23,6 +23,15 @@ test:
 deny:
     cargo deny check
 
+# Unused dependencies (cargo install cargo-machete). Not in `ci` until clean.
+machete:
+    cargo machete
+
+# Check the code compiles on an older toolchain. --ignore-rust-version because
+# Cargo otherwise refuses any toolchain below the declared rust-version.
+msrv version="1.99":
+    cargo +{{version}} check --workspace --all-features --ignore-rust-version
+
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 

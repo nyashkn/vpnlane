@@ -68,3 +68,10 @@ strip = true
 inherits = "release"
 lto = "thin"
 
+[profile.agent]
+# Agent / one-shot builds: no debug info, no incremental state.
+# Pair with CARGO_TARGET_DIR outside the worktree and
+# CARGO_BUILD_JOBS = cores / active agents.
+inherits = "dev"
+debug = 0
+incremental = false
