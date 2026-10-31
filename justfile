@@ -27,9 +27,10 @@ deny:
 machete:
     cargo machete
 
-# Verify the MSRV declared in Cargo.toml. Update the default when it changes.
+# Check the code compiles on an older toolchain. --ignore-rust-version because
+# Cargo otherwise refuses any toolchain below the declared rust-version.
 msrv version="1.99":
-    cargo +{{version}} check --workspace --all-features
+    cargo +{{version}} check --workspace --all-features --ignore-rust-version
 
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
