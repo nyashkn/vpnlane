@@ -9,7 +9,7 @@ link contention.
 ```
 remote host
   ~/.cargo/registry                 shared, ~2 GB
-  ~/.cache/sccache                  local cache, cap 20 GB (optional)
+  ~/.cache/sccache                  local cache, cap 20 GB (only without R2)
   /var/build/<agent>/target         one per agent, outside the worktree
   <worktree>/                       source only
 ```
@@ -39,13 +39,14 @@ target directory and agents rarely consume either.
 ## Disk budget
 
 ```
-disk = N_AGENTS x target_agent + sccache_cap + registry + slack
+disk = N_AGENTS x target_agent + local_sccache (0 with R2) + registry + slack
 ```
 
 Measured on a clean build plus tests: `agent` ~0.55 GB, `dev` ~1.3 GB.
 
-Example: 8 agents x 0.6 GB + 20 GB sccache cap + 2 GB registry = ~27 GB.
-Without `[profile.agent]` the same setup is 8 x 1.3 + 22 = ~33 GB.
+Example, local sccache: 8 agents x 0.6 GB + 20 GB cache + 2 GB registry = ~27 GB.
+Example, R2 sccache: 8 x 0.6 + 2 = ~7 GB local (the cache lives in the bucket).
+Without `[profile.agent]` the local-cache setup is 8 x 1.3 + 22 = ~33 GB.
 
 ## Shared compiler cache (optional)
 
@@ -61,8 +62,11 @@ export AWS_ACCESS_KEY_ID=...        # R2 API token, from your secret store
 export AWS_SECRET_ACCESS_KEY=...
 ```
 
-`SCCACHE_CACHE_SIZE` only caps the local disk cache (`~/.cache/sccache`); the
-bucket is capped by an R2 lifecycle rule.
+With `SCCACHE_BUCKET` set, sccache stores in the bucket instead of
+`~/.cache/sccache`; `SCCACHE_CACHE_SIZE` then does not apply, so cap the bucket
+with an R2 lifecycle rule. Each agent's `target/` still holds its own build
+output: sccache saves compile time and the local cache, not per-agent target
+space. Untested against a live R2 bucket.
 
 R2 speaks the S3 API and has no egress fee. Skip sccache while one agent builds
 at a time; add it when agents start sharing a host or CI runners.
