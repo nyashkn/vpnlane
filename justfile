@@ -3,8 +3,8 @@
 default:
     @just --list
 
-# The gate: format, lint, test, licenses/advisories, docs, slim build.
-ci: check-versions fmt-check clippy test deny doc check-no-tui
+# The gate: format, lint, test, licenses/advisories, docs, slim build, helper surface.
+ci: check-versions fmt-check clippy test deny doc check-no-tui check-helper
 
 # Format everything.
 fmt:
@@ -38,6 +38,13 @@ doc:
 # The binary must still build without the optional TUI.
 check-no-tui:
     cargo check -p vpnlane-cli --no-default-features
+
+# The root helper must stay a thin binary: no TUI linkage, bounded size.
+# Ceiling is debug-only: 2.4 MB today, 617 KB stripped release.
+check-helper:
+    cargo build -p vpnlane-cli --bin vpnlane-helper
+    @bytes=$(wc -c < target/debug/vpnlane-helper | tr -d ' '); test "$bytes" -le 4194304 || { echo "vpnlane-helper is $bytes bytes (budget 4 MiB); it must not pull in the TUI or an HTTP stack" >&2; exit 1; }
+    @! nm -a target/debug/vpnlane-helper 2>/dev/null | grep -qi ratatui || { echo "vpnlane-helper links ratatui; root code must stay independent of the TUI" >&2; exit 1; }
 
 # Release-please manifest, workspace version and Cargo.lock must agree.
 # --locked: cargo must not quietly rewrite Cargo.lock before the check reads it.
